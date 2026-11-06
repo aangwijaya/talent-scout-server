@@ -12,6 +12,8 @@ import (
 
 	"github.com/aangwijaya/talent-scout-server/internal/config"
 	httpapi "github.com/aangwijaya/talent-scout-server/internal/http"
+	"github.com/aangwijaya/talent-scout-server/internal/http/handlers"
+	"github.com/aangwijaya/talent-scout-server/internal/store"
 )
 
 func main() {
@@ -24,9 +26,22 @@ func main() {
 		os.Exit(1)
 	}
 
+	var db handlers.DBPinger
+	if cfg.DatabaseURL != "" {
+		openCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		pool, err := store.OpenPool(openCtx, cfg.DatabaseURL)
+		cancel()
+		if err != nil {
+			logger.Error("open database", "error", err)
+			os.Exit(1)
+		}
+		defer pool.Close()
+		db = pool
+	}
+
 	server := &http.Server{
 		Addr:              ":" + cfg.Port,
-		Handler:           httpapi.NewRouter(cfg, nil),
+		Handler:           httpapi.NewRouter(cfg, db),
 		ReadHeaderTimeout: 5 * time.Second,
 	}
 

@@ -1,6 +1,6 @@
 # PLAN — Backend (talent-scout-server), 7 Days
 
-Built by OpenCode + DeepSeek. References: `AGENTS.md`, `docs/*`, `../WORKFLOW.md` (a copy of the rules is in `AGENTS.md`). Each block below = one or more GitHub issues labeled `agent:opencode` + `day:N`; work through issues, not from this list. Tick when the DoD is met.
+Built by OpenCode + DeepSeek. References: `AGENTS.md`, `docs/*`; rules are in `AGENTS.md`, and the order of work comes from `ops/next` in `aangwijaya/talent-scout`. Each block below = one or more GitHub issues labeled `agent:opencode` + `day:N`; work through issues, not from this list. Tick when the DoD is met.
 
 1-week scope: 1 seeded job (no `POST/PATCH /jobs`), `EMAIL_MODE=log` by default (Gmail optional), 1 recruiter password from env, no model fallback. Kept: evidence check max 3 attempts in total, Judge max 2 follow-ups.
 

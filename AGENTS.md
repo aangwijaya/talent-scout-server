@@ -28,7 +28,7 @@ talent-scout-server/
 │   ├── domain/                   # types & enums: Job, Application, Session, Topic, Message, Score
 │   ├── session/                  # token generate/hash, lifecycle, sweeper
 │   ├── cv/                       # store PDF + extract text
-│   ├── email/                    # Sender interface: log (default), resend (optional)
+│   ├── email/                    # Mailer interface: log (default), gmail (optional)
 │   ├── llm/                      # OpenAI-compatible client, streaming, 1× HTTP retry, fake (no model fallback)
 │   ├── graph/                    # runner, node & edge definitions, event bus
 │   │   └── nodes/                # planner, plan_check, interviewer, judge, guard, scorer, evidence_check
@@ -52,7 +52,8 @@ talent-scout-server/
 - HTTP errors always use the format `{"error":{"code","message","details"}}` with codes from `docs/API.md`.
 - JSON fields `snake_case`, UUID IDs (`gen_random_uuid()`), times `timestamptz` → ISO-8601 UTC, structured data `jsonb`.
 - All LLM access goes through the interface in `internal/llm`; nodes never call HTTP directly.
-- All graph events: persist to `node_events` **first**, then publish to the bus.
+- All email goes through the `internal/email` interface: `log` (default) or `gmail` (Gmail API, OAuth2 refresh token; no SMTP).
+- All graph events except `message.delta`: persist to `node_events` **first**, then publish to the bus.
 - Code nodes (`plan_check`, `guard`, `evidence_check`) **must not** call the LLM.
 - Prompts are stored as templates, not long strings inside functions.
 - Small commits, Conventional Commits messages (`feat:`, `fix:`, `test:`, `docs:`, `chore:`).
@@ -62,7 +63,7 @@ talent-scout-server/
 2. **Tests are mandatory.** Every handler & node has tests. `go test ./...` uses the in-memory store, fake storage, `LLM_MODE=fake`, `EMAIL_MODE=log` — no network. Postgres store integration tests are skipped when `TEST_DATABASE_URL` is empty (`test` schema in the same Supabase project; see `docs/TECH-STACK.md` §7).
 3. **No secrets in the repo.** Only `.env.example`. `.env` is in `.gitignore`. Never print `DATABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`, or API keys to the log.
 4. **RLS is mandatory.** Every table (including `goose_db_version`) gets `ENABLE ROW LEVEL SECURITY` in the migration that creates it, **with no policy**, and `anon`/`authenticated` privileges revoked. Don't use `FORCE ROW LEVEL SECURITY` (backend = owner, must bypass). Never create a public policy. Bucket `cvs` is private; the service role key lives only on the server.
-5. **Session tokens:** store only the SHA-256 hash; the raw token only appears in the email (`resend`) or in the log + `resend-invite` response (`EMAIL_MODE=log`).
+5. **Session tokens:** store only the SHA-256 hash; the raw token only appears in the email (`gmail`) or in the log + `resend-invite` response (`EMAIL_MODE=log`).
 6. **Loop limits** follow `docs/ARCHITECTURE.md` §3 — constants/config, not scattered numbers.
 7. Don't add large dependencies without justification in the PR. No ORM.
 8. Out of scope: multi-tenant, applicant accounts, Ollama, payments, OCR. Post-MVP (don't build): `POST/PATCH /jobs`, model fallback, advanced retries, resuming the runner after restart.

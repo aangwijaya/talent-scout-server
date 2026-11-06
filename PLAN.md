@@ -2,7 +2,7 @@
 
 Built by OpenCode + DeepSeek. References: `AGENTS.md`, `docs/*`, `../WORKFLOW.md` (a copy of the rules is in `AGENTS.md`). Each block below = one or more GitHub issues labeled `agent:opencode` + `day:N`; work through issues, not from this list. Tick when the DoD is met.
 
-1-week scope: 1 seeded job (no `POST/PATCH /jobs`), `EMAIL_MODE=log` by default (Resend optional), 1 recruiter password from env, no model fallback. Kept: evidence check max 3 retries, Judge max 2 follow-ups.
+1-week scope: 1 seeded job (no `POST/PATCH /jobs`), `EMAIL_MODE=log` by default (Gmail optional), 1 recruiter password from env, no model fallback. Kept: evidence check max 3 attempts in total, Judge max 2 follow-ups.
 
 ## Day 1 — Contract, Schema, Skeleton
 - [ ] `api/openapi.yaml` from `docs/API.md` (OpenAPI 3.1), lint passes
@@ -18,15 +18,15 @@ Built by OpenCode + DeepSeek. References: `AGENTS.md`, `docs/*`, `../WORKFLOW.md
 - [ ] `POST /auth/login` (compare `RECRUITER_PASSWORD`, 12-hour HMAC token) + bearer middleware (header only)
 - [ ] `GET /jobs`, `GET /jobs/{jobId}`, `GET /jobs/{jobId}/public`
 - [ ] `internal/storage` (private bucket `cvs`) + fake; `POST /jobs/{jobId}/applications` (PDF ≤ 2 MB, text extraction), rate limit 5/IP/hour using the trusted client IP (#21: `X-Forwarded-For` only with a valid `X-BFF-Secret`)
-- [ ] 32-byte session token (store hash, TTL 168 hours); `email.Sender` `log` (default) + `resend` (optional); `GET /sessions/{token}`, `POST /sessions/{token}/start`; expiry sweeper
+- [ ] 32-byte session token (store hash, TTL 168 hours); `email.Mailer` `log` (default) + `gmail` (optional); `GET /sessions/{token}`, `POST /sessions/{token}/start`; expiry sweeper
 - [ ] `internal/llm` (chat, stream, 1× HTTP retry, `fake`) + `config/models.yaml`; graph runner + event bus + `node_events` `seq`
-- [ ] `planner` + `plan_check` (retry 1×); streaming `interviewer`; `POST/GET /sessions/{token}/messages`; SSE `GET /sessions/{token}/events`
+- [ ] `planner` + `plan_check` (max 2 attempts total); streaming `interviewer` (stops at 120 words); `POST/GET /sessions/{token}/messages`; `POST /sessions/{token}/retry`; SSE `GET /sessions/{token}/events` (accepts `invited`, replay filter)
 - **Done:** tests for apply validation, token lifecycle 404/410/409, event order with `LLM_MODE=fake`
 
 ## Day 3 — Judge, Guard, Scorer, Recruiter API
 - [ ] `judge` (invalid JSON → default `sufficient`) + `guard` (follow-ups ≤ 2, questions ≤ 15, time ≤ 15 minutes)
-- [ ] `scorer` + `evidence_check`; retry failed criteria ≤ 3 → `needs_manual`; events `check.failed` + `loop.retry`; `cost_usd`
-- [ ] `GET /jobs/{jobId}/applications`, `GET /applications/{id}`, `/cv`, `/decision`, `/resend-invite` (returns `invite_url` in log mode)
+- [ ] `scorer` + `evidence_check`; max 3 attempts total → `needs_manual`; events `check.failed` + `loop.retry`; `cost_usd`
+- [ ] `GET /jobs/{jobId}/applications`, `GET /applications/{id}`, `/cv`, `/decision`, `/resend-invite` (returns `invite_url` in log mode; accepts `failed` applications)
 - [ ] `POST /auth/sse-token` + `sse_token` auth on run SSE + query-string log redaction (#19)
 - [ ] `GET /graph-runs/{runId}` + SSE `/graph-runs/{runId}/events?sse_token=` (`Last-Event-ID`/`since_seq` replay, heartbeat)
 - [ ] Contract conformance tests for all endpoints
@@ -52,4 +52,4 @@ Built by OpenCode + DeepSeek. References: `AGENTS.md`, `docs/*`, `../WORKFLOW.md
 - [ ] Bug fixes only, no new features
 
 ## Post-MVP
-`POST/PATCH /jobs`, Resend as default + domain, model fallback, advanced retries, runner resume after restart.
+`POST/PATCH /jobs`, Gmail as default + domain, model fallback, advanced retries, runner resume after restart.

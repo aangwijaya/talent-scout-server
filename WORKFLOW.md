@@ -299,11 +299,11 @@ All issues are created with the `status:todo` label. Each issue body contains Go
 | [4](https://github.com/aangwijaya/talent-scout-server/issues/4) | Job seed: cmd/seed + config/seed-job.yaml with rubric validation | opencode | 1 | #3 |
 | [5](https://github.com/aangwijaya/talent-scout-server/issues/5) | Recruiter auth (POST /auth/login, HMAC token) + GET jobs endpoints | opencode | 2 | #4 |
 | [6](https://github.com/aangwijaya/talent-scout-server/issues/6) | Apply flow: POST /jobs/{jobId}/applications + CV storage + rate limit | opencode | 2 | #4, #1 |
-| [7](https://github.com/aangwijaya/talent-scout-server/issues/7) | Session token + email sender (log/resend) + GET/start session + expiry sweeper | opencode | 2 | #6 |
+| [7](https://github.com/aangwijaya/talent-scout-server/issues/7) | Session token + email sender (log/gmail) + GET/start session + expiry sweeper | opencode | 2 | #6 |
 | [8](https://github.com/aangwijaya/talent-scout-server/issues/8) | LLM client (OpenRouter + fake) + models.yaml + graph runner + event bus | opencode | 2 | #3 |
 | [9](https://github.com/aangwijaya/talent-scout-server/issues/9) | Planner + plan_check + streaming interviewer + messages endpoints + session SSE | opencode | 2 | #7, #8 |
 | [10](https://github.com/aangwijaya/talent-scout-server/issues/10) | Judge (JSON verdict) + deterministic guard (follow-up/question/time limits) | opencode | 3 | #9 |
-| [11](https://github.com/aangwijaya/talent-scout-server/issues/11) | Scorer + evidence_check with per-criterion retry (max 3) + run cost | opencode | 3 | #10 |
+| [11](https://github.com/aangwijaya/talent-scout-server/issues/11) | Scorer + evidence_check with per-criterion retry (max 3 attempts) + run cost | opencode | 3 | #10 |
 | [12](https://github.com/aangwijaya/talent-scout-server/issues/12) | Recruiter application endpoints: list, detail, CV, decision, resend-invite | opencode | 3 | #5, #7 |
 | [13](https://github.com/aangwijaya/talent-scout-server/issues/13) | Graph-runs snapshot + live SSE with replay + full contract conformance | opencode | 3 | #11, #12, #19, #20 |
 | [14](https://github.com/aangwijaya/talent-scout-server/issues/14) | Local integration with client + prompt tuning on OpenRouter | opencode | 4 | #13 (related: client#10) |

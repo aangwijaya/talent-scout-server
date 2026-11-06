@@ -9,8 +9,8 @@ Talent Scout: recruiter-side AI screening. Applicant applies (name, email, CV PD
 3. `docs/API.md` — **REST contract**
 4. `docs/EVENTS.md` — **SSE contract**
 5. `docs/TECH-STACK.md` — libraries, env vars, model config
-6. `PLAN.md` — 7-day checklist
-7. `docs/LESSONS.md` — lessons from previous issues (read before starting a new issue)
+6. `PLAN.md` — scope summary; the order of work comes from the graph, not this file
+7. `docs/LESSONS.md` — lessons from previous issues (read before starting a new node)
 8. The GitHub issue being worked on (`gh issue view <n>`) — the source of the task
 
 ## Folder Structure (proposed)
@@ -78,27 +78,15 @@ talent-scout-server/
 - [ ] All acceptance criteria in the issue checked
 - [ ] New lessons (if any) added to `docs/LESSONS.md`
 
-## Tasks (7 days)
-Tasks are **no longer** listed here. Source of tasks = GitHub issues in this repo labeled `agent:opencode` (order & dependencies via "Blocked by #N", day via the `day:N` label). A per-day summary is in `PLAN.md`.
+## How work runs (mandatory)
+Work is scheduled by the control plane in `aangwijaya/talent-scout` (`WORKFLOW.md`, `ops/`), not by picking issues by hand. You receive one node: a GitHub issue with a `fence`, `blocked_by`, and `checks` block. `ops/brief server#<n>` prints the exact context, including the previous session's handoff.
 
-## Agentic Workflow (mandatory)
-Supporting skills live in `.opencode/skills/` (loaded with the `skill` tool): `issue-workflow`, `add-endpoint-from-contract`, `migration-with-rls`. Review & CI skills (adapted from cursor/plugins, MIT, see `LICENSE-THIRD-PARTY.md` there): `verify-this`, `deslop`, `thermo-nuclear-review`, `thermo-nuclear-code-quality-review`, `loop-on-ci`, `fix-ci`, `get-pr-comments` (order in the work loop below). Backend reference skills (load only when the task matches; licenses in the same file): `supabase-postgres-best-practices` (query/index/pool review, new migration), `go-error-handling`, `go-context`, `go-concurrency`, `go-testing`, `systematic-debugging` (only after the first failed fix attempt or an unexplained failure).
+**Order:** SCOPE (confirm dependencies exist) → RED (write checks, watch them fail) → GREEN → HANDOFF. Stay inside the fence. When docs and the installed framework disagree, the installed code and types win.
 
-**Labels:** `agent:opencode` (your tasks) · `agent:claude` (client) · `agent:human` (repo owner) · `status:todo` → `status:in-progress` → `status:review` · `status:blocked` · `contract-change` · `skill-update` · `type:feat|bug|chore` · `day:1`…`day:7`.
+**Findings:** fix it here if it is inside the fence and blocking. Outside the fence and blocking: create a `type:gap` issue with a node block, set `STATUS: gap`, and stop. Not blocking: comment the exact fix on the issue that owns it, or create a `type:gap` issue if none does. Needs a decision: `STATUS: needs_human`. Nothing goes in a PR body as "not fixed".
 
-**Work loop (repeat until no issues remain):**
-1. Pick a `status:todo` + `agent:opencode` issue with the lowest `day:N` whose "Blocked by" issues are all **closed** (`gh issue list --label agent:opencode --label status:todo --state open`, then `gh issue view <n>` to check blockers). Cross-repo blockers (`aangwijaya/talent-scout-client#N`) are checked with `gh issue view N -R aangwijaya/talent-scout-client`.
-2. Switch the label to `status:in-progress` (`gh issue edit <n> --remove-label status:todo --add-label status:in-progress`).
-3. Work **only in a git worktree** (see `WORKFLOW.md` §11): check that `git rev-parse --git-dir` contains `/worktrees/`. If not → stop and ask a human to run `git worktree add ../wt/server-<n> -b feat/<n>-<slug> origin/main`. Don't create branches in the main checkout. 1 issue = 1 worktree = 1 branch = 1 PR. If the worktree has no branch yet, create it from `origin/main`: `feat/<n>-<slug>` (`fix/…` for bugs, `chore/…` for chores).
-4. Implement only the acceptance criteria. Claiming a fix (type:bug, "fixes X") → run `verify-this` and put the verdict in the PR body.
-5. Run `deslop` on the branch diff, then the green checks: `gofmt -l .` empty, `go build ./...`, `go vet ./...`, `go test ./...`.
-6. Run `thermo-nuclear-review` + `thermo-nuclear-code-quality-review` — **report-only, once per PR** (no review→edit loop; token cost). Fix only High findings / presumptive blockers and re-run the green checks; list the rest in the PR body under "Review findings (not fixed)".
-7. Failing (checks or blocker fixes) → **max 3 attempts** in total. Still failing → label `status:blocked`, comment on the issue (what was tried, the last error, the suspected cause), push a WIP branch if useful, move to the next issue.
-8. Green → push, `gh pr create` with the template and a `Closes #<n>` line; switch the issue label to `status:review`.
-9. `loop-on-ci` (+ `fix-ci`) until all PR checks are green — active once CI exists (server #2); same max-3 rule.
-10. Human review → `get-pr-comments` → fix → green checks → push (no force) → back to step 9. The human merges.
-11. Add an entry to `docs/LESSONS.md` if there was a lesson (recurring review/CI findings included), then go back to step 1.
+**Walls:** the runner pushes, opens PRs, and merges; these commands are denied to you. Don't edit contract documents without an approved `contract-change` issue. Don't use production credentials.
 
-**Limits:** never merge a PR, never force-push, never push directly to `main`; don't edit contract documents without an approved `contract-change` issue; don't close issues yourself (they close automatically when a human merges the PR); don't create new feature issues (you may create a `type:bug` or `contract-change` issue and stop to wait for approval). Restart the OpenCode session every 2–4 issues to keep the context clean (start the new session by reading `AGENTS.md` + `docs/LESSONS.md`). All GitHub operations go through the `gh` CLI.
+**Skills:** `add-endpoint-from-contract`, `migration-with-rls`, and the backend reference skills when the task matches, `systematic-debugging` after a failed attempt, `verify-this` when claiming a fix, `deslop` before committing. The `thermo-nuclear-*` reviews run in a separate session, not by the author.
 
-**Learning loop:** the same lesson appearing 2× in `docs/LESSONS.md` → open a separate PR labeled `skill-update` that updates the skill in `.opencode/skills/` or the rules in this file. Prefer turning lessons into tests or CI checks over text. A human merges.
+**Learning:** add an entry to `docs/LESSONS.md` when there is a real lesson. Repeats become `skill-update` nodes through `ops/triage`. Prefer a test, lint rule, or CI check over text.

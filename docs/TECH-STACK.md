@@ -13,7 +13,7 @@
 | CV files | **Supabase Storage**, private bucket `cvs`, object `{application_id}.pdf`; extracted text in column `applications.cv_text` | Free (1 GB). The backend uploads/downloads with the service role key; the client never touches Supabase. |
 | PDF text | `github.com/ledongthuc/pdf` | Pure Go. Scanned (image) PDFs are out of scope. |
 | LLM gateway | OpenRouter (OpenAI-compatible `/chat/completions`) | One key, many models, model per node. The base URL can be switched to Ollama **after the MVP**. |
-| Email | **Default `EMAIL_MODE=log`** (link printed to the log + shown in the dashboard). Resend (free: 3,000/month, 100/day) **optional** | Without a verified domain Resend can only send to the account owner's email (see §6), so email is not required for the 1-week MVP. |
+| Email | **Default `EMAIL_MODE=log`** (link printed to the log + shown in the dashboard). Gmail API (`users.messages.send`, OAuth2 refresh token, scope `gmail.send`) **optional** | No SMTP (Railway blocks outbound SMTP). The Google OAuth consent screen must be **In production**: refresh tokens created in *Testing* expire after 7 days. Email is not required for the 1-week MVP. |
 | Realtime | Server-Sent Events (SSE) from Go | One-way server→client is enough; no Supabase Realtime (the client doesn't talk to Supabase). |
 | Contract | `docs/API.md` → `api/openapi.yaml` (Day 1) | Contract-first; conformance tests (server) and TS types (client, `openapi-typescript`). |
 | Test | Go `testing` + `httptest`; client `svelte-check` + **1 Playwright smoke test** (mock) | Green checks that code can evaluate (details §7). |
@@ -41,8 +41,8 @@
 | Vercel Hobby (client) | $0 |
 | Railway Hobby (Go server, no volume) | $5/month (usage usually < $5 credit) |
 | Supabase Free (Postgres 500 MB, Storage 1 GB) | $0 |
-| Resend free (optional) | $0 |
-| Custom domain (optional, for Resend to anyone + `apply.` subdomain) | ~$10–15/year, optional |
+| Gmail API (optional) | $0 (within the free Google quota) |
+| Custom domain (optional, for `apply.` subdomain or branded links) | ~$10–15/year, optional |
 | LLM per session (estimate, see §8) | ~$0.003–0.008 |
 | 100 demo sessions | < $1 |
 | OpenCode (coding agent, separate key) | capped by credit limit, e.g. $3 |
@@ -70,9 +70,11 @@
 | `LLM_BASE_URL` | `https://openrouter.ai/api/v1` | Later can be `http://localhost:11434/v1` (Ollama, post-MVP). |
 | `OPENROUTER_API_KEY` | (secret) | **Key #2 `talent-scout-app`**, not the OpenCode key. |
 | `MODELS_CONFIG_PATH` | `./config/models.yaml` | |
-| `EMAIL_MODE` | `log` (default) \| `resend` | `log` = link printed to the log and returned by `resend-invite` for the dashboard. `resend` is optional. |
-| `RESEND_API_KEY` | (secret) | Only when `EMAIL_MODE=resend`. |
-| `EMAIL_FROM` | `Talent Scout <noreply@talentscout.com>` | Without a domain: `onboarding@resend.dev` (only to the account owner's email). |
+| `EMAIL_MODE` | `log` (default) \| `gmail` | `log` = link printed to the log and returned by `resend-invite` for the dashboard. `gmail` = send via the Gmail API. |
+| `GMAIL_CLIENT_ID` | (OAuth client) | Only when `EMAIL_MODE=gmail`. |
+| `GMAIL_CLIENT_SECRET` | (secret) | Only when `EMAIL_MODE=gmail`. |
+| `GMAIL_REFRESH_TOKEN` | (secret) | Only when `EMAIL_MODE=gmail`. Scope `https://www.googleapis.com/auth/gmail.send`; consent screen **In production** (Testing tokens expire after 7 days). |
+| `EMAIL_FROM` | `Talent Scout <you@gmail.com>` | Must be the Gmail account or a verified send-as alias. |
 | `SESSION_TTL_HOURS` | `168` | 7 days. |
 | `SESSION_MAX_MINUTES` | `15` | |
 | `SESSION_MAX_QUESTIONS` | `15` | |
@@ -100,14 +102,14 @@ flowchart LR
   RW -->|pgx · session pooler| PG[(Supabase Postgres<br/>RLS on, no public policy)]
   RW -->|Storage API · service role| ST[(Supabase Storage<br/>private bucket cvs)]
   RW -->|chat/completions| OR[OpenRouter]
-  RW -.->|send email (optional)| RS[Resend]
-  RS -.->|link /s/token| A
+  RW -.->|Gmail API (optional)| GM[Gmail]
+  GM -.->|link /s/token| A
 ```
 
 - **One frontend app, routed by path:** `/dashboard/...` (recruiter), `/apply/[jobId]` (apply form), `/s/[token]` (AI session).
 - Default domain: `talentscout.vercel.app` (or another name still available when creating the Vercel project; adjust `PUBLIC_APP_URL` & `FRONTEND_ORIGIN`).
 - Vercel's free subdomain is single-level, so `apply.talentscout.vercel.app` is **not possible**.
-- Optional later: buy a domain (e.g. `talentscout.com`), point the root and `apply.` to the same Vercel project, and verify that domain in Resend → email can be sent to any applicant. Just change `PUBLIC_APP_URL`, `FRONTEND_ORIGIN`, `EMAIL_FROM`; no code changes.
+- Optional later: buy a domain (e.g. `talentscout.com`) and point the root and `apply.` to the same Vercel project. Just change `PUBLIC_APP_URL`, `FRONTEND_ORIGIN`, `EMAIL_FROM`; no code changes.
 
 ## 7. Local Development & Tests
 

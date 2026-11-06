@@ -23,4 +23,10 @@ Rules:
 
 ## Entries
 
-_(none yet)_
+### 2026-11-06 — #22 Contract sweep: gmail + failure/replay/event sequence
+- **Context:** Applying the approved contract-change proposals across `docs/API.md`, `docs/EVENTS.md`, `docs/PRD.md`, the supporting docs, and the affected server issues.
+- **Problem:** The email channel had drifted (`resend` vs `gmail`) across docs and issues, and the normative event example omitted node lifecycles and edge traversals.
+- **Cause:** Contract decisions were applied locally without a repo-wide sweep or one normative example.
+- **Lesson:** For a contract-change issue, grep the old term across all docs/issues and update the normative example in the same PR; supporting docs and issue acceptance criteria are part of the contract surface.
+- **Follow-up:** none
+- **Repeated?:** first time

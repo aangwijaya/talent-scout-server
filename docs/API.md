@@ -46,11 +46,12 @@
 | GET | `/applications/{applicationId}` | recruiter | Applicant detail + session + transcript + scores |
 | GET | `/applications/{applicationId}/cv` | recruiter | Download CV (PDF) |
 | POST | `/applications/{applicationId}/decision` | recruiter | Shortlist / reject |
-| POST | `/applications/{applicationId}/resend-invite` | recruiter | New invite link (new token; `invited` sessions only); in `EMAIL_MODE=log` the link is returned for display in the dashboard |
+| POST | `/applications/{applicationId}/resend-invite` | recruiter | New invite link (new token; `invited` sessions or `failed` applications); in `EMAIL_MODE=log` the link is returned for display in the dashboard |
 | GET | `/sessions/{token}` | token | Session info for the applicant |
 | POST | `/sessions/{token}/start` | token | Start the session (once) |
 | GET | `/sessions/{token}/messages` | token | Chat history (resume) |
 | POST | `/sessions/{token}/messages` | token | Send an answer |
+| POST | `/sessions/{token}/retry` | token | Re-run the failed graph step |
 | GET | `/sessions/{token}/events` | token | Chat SSE (see EVENTS.md) |
 | GET | `/graph-runs/{runId}` | recruiter | Graph run snapshot |
 | GET | `/graph-runs/{runId}/events` | `sse_token` (query) | Live graph SSE + replay |
@@ -84,7 +85,9 @@
   "evidence": [ { "message_id": "7c9e6679-…", "quote": "I moved the state into a separate store" } ] }
 ```
 
-Enum: `Application.status` = `applied|invited|in_session|scoring|review|shortlisted|rejected|failed`; `Session.status` = `invited|active|completed|expired|revoked`; `finish_reason` = `completed|time_limit|question_limit|abandoned`; `Score.status` = `valid|needs_manual` (when `needs_manual`, `score` = `null`).
+Enum: `Application.status` = `applied|invited|in_session|scoring|review|shortlisted|rejected|failed`; `Session.status` = `invited|active|completed|expired|revoked`; `finish_reason` = `completed|time_limit|question_limit|abandoned|failed`; `Score.status` = `valid|needs_manual` (when `needs_manual`, `score` = `null`).
+
+`ApplicationSummary.overall_score` is the weighted average of the criteria scores (`score × rubric weight`), counting only `Score.status = valid`; `needs_manual` criteria are excluded. It is `null` when no criterion has a valid score.
 
 ## Endpoint Details
 
@@ -119,8 +122,9 @@ One demo job is created by `go run ./cmd/seed` from `config/seed-job.yaml` (idem
 Field: `name` (2–100), `email`, `cv` (`application/pdf` file, ≤ 2 MB).
 → 201
 ```json
-{ "application_id": "7c9e6679-…", "status": "invited", "message": "Thanks! Your screening link will be sent to you shortly." }
+{ "application_id": "7c9e6679-…", "status": "invited", "message": "..." }
 ```
+`message` is mode-aware: with `EMAIL_MODE=log` it is `"Thanks! Your application was received. The recruiter will send your screening link."`; with `EMAIL_MODE=gmail` it is `"Thanks! Your screening link will be sent to you shortly."`. A Gmail send failure is logged (redacted) and still returns 201; the recruiter can re-issue the link with `resend-invite`.
 Error: 400 `validation_failed`/`invalid_file` (not a PDF / text cannot be extracted), 413 `file_too_large`, 409 `already_applied`, 409 `invalid_state` (job closed), 429 `rate_limited` (max 5 applies/IP/hour).
 
 ### `GET /jobs/{jobId}/applications?status=` → 200 `{ "items": [ApplicationSummary], "next_cursor": null }`
@@ -149,19 +153,20 @@ The server fetches the file from Supabase Storage (private bucket) and streams i
 Req `{ "decision": "shortlist" | "reject", "note": "optional, ≤ 1000" }` → 200 `ApplicationSummary` (status `shortlisted`/`rejected`). 409 `invalid_state` if the status is not `review` yet (may be changed again between `shortlisted`↔`rejected`).
 
 ### `POST /applications/{applicationId}/resend-invite`
-→ 200 `{ "session_id": "7c9e6679-…", "expires_at": "...", "invite_url": "..." | null }`. The old `invited` session is revoked (`revoked`) and a new token is created. `invite_url` (`${PUBLIC_APP_URL}/s/{token}`) is filled when `EMAIL_MODE=log` (**MVP default**): the dashboard shows it via the "Get invite link" button for the recruiter to copy. With `EMAIL_MODE=resend` (optional) the link is sent by email and `invite_url` is always `null`. 409 `invalid_state` if the session is already `active`/`completed`. Because the DB stores only the hash, an old link cannot be shown again; every click creates a new link.
+→ 200 `{ "session_id": "7c9e6679-…", "expires_at": "...", "invite_url": "..." | null }`. Allowed when the current session is `invited`, or when `application.status` is `failed`. For an `invited` session the old session is revoked (`revoked`) and a new token is created. For a `failed` application a new `invited` session is created and the application returns to `invited`; the old session keeps its terminal status. `invite_url` (`${PUBLIC_APP_URL}/s/{token}`) is filled when `EMAIL_MODE=log` (**MVP default**): the dashboard shows it via the "Get invite link" button for the recruiter to copy. With `EMAIL_MODE=gmail` (optional) the link is sent by email and `invite_url` is always `null`; a send failure is logged (redacted) and the endpoint can be called again. 409 `invalid_state` if the application is not `failed` and the current session is not `invited` (`active`/`completed`/`expired`/`revoked`). Because the DB stores only the hash, an old link cannot be shown again; every click creates a new link.
 
 ### `GET /sessions/{token}` → 200
 ```json
 { "status": "invited", "job_title": "Senior Frontend Engineer", "applicant_name": "Budi",
   "expires_at": "...", "started_at": null, "deadline_at": null,
-  "max_minutes": 15, "topic_count": null, "current_topic": null }
+  "max_minutes": 15, "topic_count": null,
+  "question_count": 0, "max_questions": 15, "current_topic": null }
 ```
-`deadline_at` = `started_at + 15 minutes` (when `active`). `current_topic` = `{ "position": 2, "title": "..." }` when `active`.
-Error: 404 `session_not_found`, 410 `session_expired`, 410 `session_completed`.
+`deadline_at` = `started_at + 15 minutes` (when `active`). `current_topic` = `{ "position": 2, "title": "...", "total": 4 }` when `active`. `question_count`, `max_questions`, and `current_topic.total` are the same fields as `session.updated` (EVENTS.md §3).
+Error: 404 `session_not_found`, 410 `session_expired`, 410 `session_completed` (including a session that ended with `finish_reason=failed`).
 
 ### `POST /sessions/{token}/start` → 200 (same shape as `GET /sessions/{token}`, status `active`)
-The AI opening message is sent via SSE (`message.delta` → `message.completed`). 409 `session_already_started`.
+The AI opening message is sent via SSE (`message.delta` → `message.completed`). The client opens `GET /sessions/{token}/events` **before** calling `start` so no deltas are lost (the stream accepts `invited` sessions). 409 `session_already_started`, 410 `session_expired`/`session_completed`.
 
 ### `GET /sessions/{token}/messages` → 200 `{ "items": [Message] }`
 Only `assistant` and `applicant` messages (no `system`). For resuming after a refresh.
@@ -171,9 +176,16 @@ Req `{ "content": "..." }` (1–2000 char) → 202
 ```json
 { "message": Message, "awaiting": "assistant" }
 ```
-The AI reply arrives via SSE. 409 `invalid_state` if the AI has not finished replying (the applicant must wait for `message.completed`), 410 if the session is finished/time is up.
+The AI reply arrives via SSE. 409 `invalid_state` if the AI has not finished replying (the applicant must wait for `message.completed`) or if the session is waiting for `POST /sessions/{token}/retry`; 410 if the session is finished/time is up.
+
+### `POST /sessions/{token}/retry` → 202
+```json
+{ "status": "retrying" }
+```
+Re-runs the graph step that failed for this session (the step that emitted the last retryable `error`). The result is streamed on the session SSE like the original step; input stays locked until `message.completed` or `session.ended`. The same loop budgets apply (`docs/ARCHITECTURE.md` §3), and each retry emits `loop.retry` on the run stream. 409 `invalid_state` if no step is waiting for a retry; 410 `session_expired`/`session_completed`. If the step fails permanently (attempt budget exhausted or a non-retryable error), the server sends `session.ended` with `finish_reason: "failed"`, sets the application to `failed`, and the recruiter can issue a new invite via `resend-invite`.
 
 ### `GET /sessions/{token}/events` → `text/event-stream` (see EVENTS.md §3)
+Accepts sessions in `invited` and `active` status. The client opens it before `POST /start`. After a reconnect the replay contains only `session.*`, `message.completed`, and `error`; `message.delta` is never persisted or replayed (rebuild the transcript with `GET /messages`).
 
 ### `GET /graph-runs/{runId}` → 200
 ```json
@@ -184,7 +196,7 @@ The AI reply arrives via SSE. 409 `invalid_state` if the AI has not finished rep
   "last_seq": 42, "total_tokens_in": 12000, "total_tokens_out": 1800, "cost_usd": 0.0021
 }
 ```
-`nodes[].id` ∈ `planner|plan_check|interviewer|judge|guard|scorer|evidence_check|recruiter_gate`; `type` ∈ `splitter|worker|gate|code|human_gate`.
+`nodes[].id` ∈ `planner|plan_check|interviewer|judge|guard|scorer|evidence_check|recruiter_gate`; `type` ∈ `splitter|worker|gate|code|human_gate`; `status` ∈ `pending|running|succeeded|failed|skipped`.
 
 ### `GET /graph-runs/{runId}/events?sse_token=...&since_seq=0` → `text/event-stream` (see EVENTS.md §4)
 Missing/invalid/expired `sse_token`, wrong `aud`, or a `run_id` mismatch → 401 `unauthorized`. `?access_token=` is no longer accepted.

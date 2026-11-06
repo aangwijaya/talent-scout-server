@@ -1,0 +1,13 @@
+.git
+.gitignore
+.env
+.env.*
+*.log
+bin/
+dist/
+tmp/
+README.md
+docs/
+.opencode/
+.github/
+supabase/

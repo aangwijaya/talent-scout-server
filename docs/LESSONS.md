@@ -23,6 +23,14 @@ Rules:
 
 ## Entries
 
+### 2026-11-06 — #3 DB migration + store: Supabase pooler DSN normalization
+- **Context:** Wiring pgx/goose to Supabase and running `00001_init.sql`.
+- **Problem:** A transaction-pooler DSN (`:6543?pgbouncer=true`) breaks pgx prepared statements, and `pgbouncer` is not a valid Postgres runtime parameter, so parsing/connecting fails unless handled.
+- **Cause:** pgx forwards unknown query params as runtime settings and defaults to statement caching, which PgBouncer transaction mode does not support.
+- **Lesson:** Normalize Supabase DSNs in one place: strip `pgbouncer`, and when the port is `6543` or `pgbouncer=true`, set pgx `DefaultQueryExecMode = simple_protocol`; prefer the session pooler (`:5432`) per `docs/TECH-STACK.md`.
+- **Follow-up:** none
+- **Repeated?:** first time
+
 ### 2026-11-06 — #2 Contract + Go skeleton: OpenAPI 3.1 validator on Go 1.23
 - **Context:** Choosing a conformance harness that validates responses against the OpenAPI 3.1 contract while keeping the server on Go 1.23.
 - **Problem:** `kin-openapi` only gained OpenAPI 3.1 support in v0.136.0, and every 3.1-capable release requires Go 1.25 or newer; the latest requires Go 1.25.

@@ -1,0 +1,26 @@
+id: 7c9e6679-7425-40de-944b-e07fc1f90ae7
+title: Senior Frontend Engineer
+description: |
+  We are hiring a Senior Frontend Engineer to own the applicant and recruiter
+  experiences of an AI-assisted hiring product. You will design and build
+  accessible, fast interfaces in SvelteKit and TypeScript, shape component and
+  state architecture, and collaborate closely with product and backend
+  engineers. Strong candidates can reason about trade-offs, communicate clearly,
+  and care about correctness, testing, and the people using the product.
+rubric:
+  - key: frontend_depth
+    label: Frontend depth
+    description: Svelte/React, state management, rendering, and performance.
+    weight: 3
+  - key: system_design
+    label: System design
+    description: Component boundaries, data flow, API contracts, and trade-offs.
+    weight: 2
+  - key: testing_quality
+    label: Testing and quality
+    description: Unit/integration tests, accessibility, and attention to detail.
+    weight: 2
+  - key: communication
+    label: Communication
+    description: Clarity, collaboration, and explaining decisions.
+    weight: 1

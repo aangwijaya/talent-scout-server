@@ -1,0 +1,25 @@
+# secrets
+.env
+.env.*
+!.env.example
+
+# build
+/bin/
+/dist/
+*.exe
+*.test
+*.out
+coverage*
+coverage.html
+
+# tooling / OS
+.idea/
+.vscode/
+*.swp
+.DS_Store
+tmp/
+air.toml.bak
+
+# local scratch
+*.log
+vendor/

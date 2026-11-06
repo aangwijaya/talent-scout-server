@@ -1,0 +1,1256 @@
+openapi: 3.1.0
+info:
+  title: Talent Scout API
+  version: 1.0.0
+  description: |
+    Recruiter-side AI screening API. Derived from `docs/API.md` and `docs/EVENTS.md`.
+    The MVP does not implement `POST /jobs` or `PATCH /jobs/{jobId}`.
+servers:
+  - url: /api/v1
+tags:
+  - name: health
+    description: Service liveness and readiness.
+  - name: auth
+    description: Recruiter authentication and SSE token minting.
+  - name: jobs
+    description: Seeded job listings and public apply-page data.
+  - name: applications
+    description: Applicant intake, review, CV download, and decisions.
+  - name: sessions
+    description: Applicant screening sessions and chat.
+  - name: graph-runs
+    description: Graph execution snapshots and live event streams.
+paths:
+  /health:
+    get:
+      tags: [health]
+      operationId: getHealth
+      summary: Health check
+      security: []
+      parameters:
+        - name: deep
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: ["1"]
+          description: When set to `1`, the server also checks the database.
+      responses:
+        "200":
+          description: Service is healthy.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Health"
+        "503":
+          description: The database is unreachable (only when `deep=1`).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /auth/login:
+    post:
+      tags: [auth]
+      operationId: login
+      summary: Recruiter login
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/LoginRequest"
+      responses:
+        "200":
+          description: Authenticated.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LoginResponse"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /auth/sse-token:
+    post:
+      tags: [auth]
+      operationId: mintSSEToken
+      summary: Mint a short-lived SSE token for one graph run
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SSETokenRequest"
+      responses:
+        "200":
+          description: Token minted.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SSETokenResponse"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /jobs:
+    get:
+      tags: [jobs]
+      operationId: listJobs
+      summary: List jobs
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/Cursor"
+      responses:
+        "200":
+          description: Job list.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items, next_cursor]
+                properties:
+                  items:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/Job"
+                  next_cursor:
+                    type: [string, "null"]
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /jobs/{jobId}:
+    get:
+      tags: [jobs]
+      operationId: getJob
+      summary: Job detail
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/JobId"
+      responses:
+        "200":
+          description: Job detail.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Job"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /jobs/{jobId}/public:
+    get:
+      tags: [jobs]
+      operationId: getPublicJob
+      summary: Public job information for the apply page
+      security: []
+      parameters:
+        - $ref: "#/components/parameters/JobId"
+      responses:
+        "200":
+          description: Public job detail.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PublicJob"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /jobs/{jobId}/applications:
+    post:
+      tags: [applications]
+      operationId: createApplication
+      summary: Apply to a job
+      security: []
+      parameters:
+        - $ref: "#/components/parameters/JobId"
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [name, email, cv]
+              properties:
+                name:
+                  type: string
+                  minLength: 2
+                  maxLength: 100
+                email:
+                  type: string
+                  format: email
+                cv:
+                  type: string
+                  format: binary
+                  description: PDF file, at most 2 MB.
+      responses:
+        "201":
+          description: Application accepted.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApplyResponse"
+        "400":
+          $ref: "#/components/responses/ValidationFailed"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "413":
+          $ref: "#/components/responses/FileTooLarge"
+        "429":
+          $ref: "#/components/responses/RateLimited"
+    get:
+      tags: [applications]
+      operationId: listApplications
+      summary: List applicants for a job
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/JobId"
+        - name: status
+          in: query
+          required: false
+          schema:
+            $ref: "#/components/schemas/ApplicationStatus"
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/Cursor"
+      responses:
+        "200":
+          description: Application list.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items, next_cursor]
+                properties:
+                  items:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/ApplicationSummary"
+                  next_cursor:
+                    type: [string, "null"]
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /applications/{applicationId}:
+    get:
+      tags: [applications]
+      operationId: getApplication
+      summary: Applicant detail with session, transcript, and scores
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/ApplicationId"
+      responses:
+        "200":
+          description: Application detail.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApplicationDetail"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /applications/{applicationId}/cv:
+    get:
+      tags: [applications]
+      operationId: downloadApplicationCV
+      summary: Download the applicant CV
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/ApplicationId"
+      responses:
+        "200":
+          description: CV PDF.
+          content:
+            application/pdf:
+              schema:
+                type: string
+                format: binary
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /applications/{applicationId}/decision:
+    post:
+      tags: [applications]
+      operationId: decideApplication
+      summary: Shortlist or reject an applicant
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/ApplicationId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/DecisionRequest"
+      responses:
+        "200":
+          description: Updated application.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApplicationSummary"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+
+  /applications/{applicationId}/resend-invite:
+    post:
+      tags: [applications]
+      operationId: resendInvite
+      summary: Issue a new invite link
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/ApplicationId"
+      responses:
+        "200":
+          description: Invite issued.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ResendInviteResponse"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+
+  /sessions/{token}:
+    get:
+      tags: [sessions]
+      operationId: getSession
+      summary: Session info for the applicant
+      security: []
+      parameters:
+        - $ref: "#/components/parameters/SessionToken"
+      responses:
+        "200":
+          description: Session info.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SessionDetail"
+        "404":
+          $ref: "#/components/responses/SessionNotFound"
+        "410":
+          $ref: "#/components/responses/SessionGone"
+
+  /sessions/{token}/start:
+    post:
+      tags: [sessions]
+      operationId: startSession
+      summary: Start the screening session
+      security: []
+      parameters:
+        - $ref: "#/components/parameters/SessionToken"
+      responses:
+        "200":
+          description: Session started.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SessionDetail"
+        "404":
+          $ref: "#/components/responses/SessionNotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "410":
+          $ref: "#/components/responses/SessionGone"
+
+  /sessions/{token}/messages:
+    get:
+      tags: [sessions]
+      operationId: listMessages
+      summary: Chat history for resume
+      security: []
+      parameters:
+        - $ref: "#/components/parameters/SessionToken"
+      responses:
+        "200":
+          description: Transcript.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items]
+                properties:
+                  items:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/Message"
+        "404":
+          $ref: "#/components/responses/SessionNotFound"
+        "410":
+          $ref: "#/components/responses/SessionGone"
+    post:
+      tags: [sessions]
+      operationId: sendMessage
+      summary: Send an applicant answer
+      security: []
+      parameters:
+        - $ref: "#/components/parameters/SessionToken"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SendMessageRequest"
+      responses:
+        "202":
+          description: Answer accepted; the reply streams over SSE.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SendMessageResponse"
+        "400":
+          $ref: "#/components/responses/ValidationFailed"
+        "404":
+          $ref: "#/components/responses/SessionNotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "410":
+          $ref: "#/components/responses/SessionGone"
+
+  /sessions/{token}/retry:
+    post:
+      tags: [sessions]
+      operationId: retrySession
+      summary: Retry the failed graph step
+      security: []
+      parameters:
+        - $ref: "#/components/parameters/SessionToken"
+      responses:
+        "202":
+          description: Retry accepted; the result streams over SSE.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RetryResponse"
+        "404":
+          $ref: "#/components/responses/SessionNotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "410":
+          $ref: "#/components/responses/SessionGone"
+
+  /sessions/{token}/events:
+    get:
+      tags: [sessions]
+      operationId: streamSessionEvents
+      summary: Session chat SSE stream
+      description: |
+        Accepts `invited` and `active` sessions. The client opens the stream before
+        `POST /sessions/{token}/start`. Replay contains only `session.*`,
+        `message.completed`, and `error`.
+      security: []
+      parameters:
+        - $ref: "#/components/parameters/SessionToken"
+      responses:
+        "200":
+          description: Server-Sent Events stream.
+          content:
+            text/event-stream:
+              schema:
+                type: string
+        "404":
+          $ref: "#/components/responses/SessionNotFound"
+        "410":
+          $ref: "#/components/responses/SessionGone"
+
+  /graph-runs/{runId}:
+    get:
+      tags: [graph-runs]
+      operationId: getGraphRun
+      summary: Graph run snapshot
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/RunId"
+      responses:
+        "200":
+          description: Graph run snapshot.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/GraphRun"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /graph-runs/{runId}/events:
+    get:
+      tags: [graph-runs]
+      operationId: streamGraphRunEvents
+      summary: Live graph SSE with replay
+      security:
+        - sseToken: []
+      parameters:
+        - $ref: "#/components/parameters/RunId"
+        - name: sse_token
+          in: query
+          required: true
+          schema:
+            type: string
+        - name: since_seq
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 0
+            default: 0
+        - name: Last-Event-ID
+          in: header
+          required: false
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Server-Sent Events stream.
+          content:
+            text/event-stream:
+              schema:
+                type: string
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+    sseToken:
+      type: apiKey
+      in: query
+      name: sse_token
+
+  parameters:
+    Limit:
+      name: limit
+      in: query
+      required: false
+      schema:
+        type: integer
+        minimum: 1
+        maximum: 100
+        default: 50
+    Cursor:
+      name: cursor
+      in: query
+      required: false
+      schema:
+        type: string
+    JobId:
+      name: jobId
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+    ApplicationId:
+      name: applicationId
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+    RunId:
+      name: runId
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+    SessionToken:
+      name: token
+      in: path
+      required: true
+      schema:
+        type: string
+        minLength: 1
+
+  responses:
+    ValidationFailed:
+      description: Invalid request.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+    Unauthorized:
+      description: Missing or invalid credentials.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+    NotFound:
+      description: Resource not found.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+    SessionNotFound:
+      description: Unknown or revoked session.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+    Conflict:
+      description: Request conflicts with the current state.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+    SessionGone:
+      description: Session expired or completed.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+    FileTooLarge:
+      description: Uploaded file is too large.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+    RateLimited:
+      description: Too many requests.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+
+  schemas:
+    Error:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: object
+          required: [code, message, details]
+          properties:
+            code:
+              type: string
+              enum:
+                - validation_failed
+                - invalid_file
+                - unauthorized
+                - not_found
+                - session_not_found
+                - already_applied
+                - session_already_started
+                - invalid_state
+                - session_expired
+                - session_completed
+                - file_too_large
+                - rate_limited
+                - internal_error
+                - llm_unavailable
+                - db_unavailable
+            message:
+              type: string
+            details:
+              type: [object, "null"]
+              additionalProperties: true
+
+    Health:
+      type: object
+      required: [status, version, llm_mode, email_mode]
+      properties:
+        status:
+          type: string
+          enum: [ok]
+        version:
+          type: string
+        llm_mode:
+          type: string
+          enum: [openrouter, fake]
+        email_mode:
+          type: string
+          enum: [log, gmail]
+        db:
+          type: string
+          enum: [ok]
+
+    LoginRequest:
+      type: object
+      required: [password]
+      properties:
+        password:
+          type: string
+          minLength: 1
+
+    LoginResponse:
+      type: object
+      required: [access_token, expires_at]
+      properties:
+        access_token:
+          type: string
+        expires_at:
+          type: string
+          format: date-time
+
+    SSETokenRequest:
+      type: object
+      required: [run_id]
+      properties:
+        run_id:
+          type: string
+          format: uuid
+
+    SSETokenResponse:
+      type: object
+      required: [sse_token, expires_at]
+      properties:
+        sse_token:
+          type: string
+        expires_at:
+          type: string
+          format: date-time
+
+    RubricCriterion:
+      type: object
+      required: [key, label, description, weight]
+      properties:
+        key:
+          type: string
+          pattern: "^[a-z][a-z0-9_]{1,39}$"
+        label:
+          type: string
+        description:
+          type: string
+        weight:
+          type: integer
+          minimum: 1
+          maximum: 3
+
+    JobStatus:
+      type: string
+      enum: [open, closed]
+
+    Job:
+      type: object
+      required:
+        - id
+        - title
+        - description
+        - rubric
+        - status
+        - apply_url
+        - application_count
+        - created_at
+        - updated_at
+      properties:
+        id:
+          type: string
+          format: uuid
+        title:
+          type: string
+        description:
+          type: string
+        rubric:
+          type: array
+          items:
+            $ref: "#/components/schemas/RubricCriterion"
+        status:
+          $ref: "#/components/schemas/JobStatus"
+        apply_url:
+          type: string
+          format: uri
+        application_count:
+          type: integer
+          minimum: 0
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+
+    PublicJob:
+      type: object
+      required: [id, title, description, status]
+      properties:
+        id:
+          type: string
+          format: uuid
+        title:
+          type: string
+        description:
+          type: string
+        status:
+          $ref: "#/components/schemas/JobStatus"
+
+    ApplicationStatus:
+      type: string
+      enum:
+        - applied
+        - invited
+        - in_session
+        - scoring
+        - review
+        - shortlisted
+        - rejected
+        - failed
+
+    SessionStatus:
+      type: string
+      enum: [invited, active, completed, expired, revoked]
+
+    FinishReason:
+      type: string
+      enum: [completed, time_limit, question_limit, abandoned, failed]
+
+    ApplicationSummary:
+      type: object
+      required:
+        - id
+        - job_id
+        - name
+        - email
+        - status
+        - session_status
+        - overall_score
+        - created_at
+      properties:
+        id:
+          type: string
+          format: uuid
+        job_id:
+          type: string
+          format: uuid
+        name:
+          type: string
+        email:
+          type: string
+          format: email
+        status:
+          $ref: "#/components/schemas/ApplicationStatus"
+        session_status:
+          type: [string, "null"]
+          enum: [invited, active, completed, expired, revoked, null]
+        overall_score:
+          type: [number, "null"]
+        created_at:
+          type: string
+          format: date-time
+
+    Message:
+      type: object
+      required: [id, role, kind, topic_id, content, created_at]
+      properties:
+        id:
+          type: string
+          format: uuid
+        role:
+          type: string
+          enum: [assistant, applicant, system]
+        kind:
+          type: string
+          enum: [opening, question, follow_up, answer, closing]
+        topic_id:
+          type: [string, "null"]
+          format: uuid
+        content:
+          type: string
+        created_at:
+          type: string
+          format: date-time
+
+    Topic:
+      type: object
+      required: [id, position, title, goal, rubric_keys, status, follow_up_count]
+      properties:
+        id:
+          type: string
+          format: uuid
+        position:
+          type: integer
+          minimum: 1
+        title:
+          type: string
+        goal:
+          type: string
+        rubric_keys:
+          type: array
+          items:
+            type: string
+        status:
+          type: string
+          enum: [pending, active, done]
+        follow_up_count:
+          type: integer
+          minimum: 0
+          maximum: 2
+
+    ScoreEvidence:
+      type: object
+      required: [message_id, quote]
+      properties:
+        message_id:
+          type: string
+          format: uuid
+        quote:
+          type: string
+          minLength: 3
+          maxLength: 300
+
+    Score:
+      type: object
+      required: [rubric_key, score, rationale, status, attempts, evidence]
+      properties:
+        rubric_key:
+          type: string
+        score:
+          type: [integer, "null"]
+          minimum: 1
+          maximum: 5
+        rationale:
+          type: string
+        status:
+          type: string
+          enum: [valid, needs_manual]
+        attempts:
+          type: integer
+          minimum: 1
+        evidence:
+          type: array
+          items:
+            $ref: "#/components/schemas/ScoreEvidence"
+
+    Decision:
+      type: object
+      required: [value, note, decided_at]
+      properties:
+        value:
+          type: string
+          enum: [shortlist, reject]
+        note:
+          type: string
+        decided_at:
+          type: string
+          format: date-time
+
+    SessionSummary:
+      type: object
+      required:
+        - id
+        - status
+        - expires_at
+        - started_at
+        - ended_at
+        - finish_reason
+        - question_count
+      properties:
+        id:
+          type: string
+          format: uuid
+        status:
+          $ref: "#/components/schemas/SessionStatus"
+        expires_at:
+          type: string
+          format: date-time
+        started_at:
+          type: [string, "null"]
+          format: date-time
+        ended_at:
+          type: [string, "null"]
+          format: date-time
+        finish_reason:
+          oneOf:
+            - $ref: "#/components/schemas/FinishReason"
+            - type: "null"
+        question_count:
+          type: integer
+          minimum: 0
+
+    GraphRunSummary:
+      type: object
+      required: [id, status, cost_usd]
+      properties:
+        id:
+          type: string
+          format: uuid
+        status:
+          type: string
+          enum: [running, succeeded, failed]
+        cost_usd:
+          type: number
+          minimum: 0
+
+    ApplicationDetail:
+      type: object
+      required:
+        - application
+        - job
+        - cv_text
+        - decision
+        - session
+        - graph_run
+        - topics
+        - messages
+        - scores
+      properties:
+        application:
+          $ref: "#/components/schemas/ApplicationSummary"
+        job:
+          type: object
+          required: [id, title, rubric]
+          properties:
+            id:
+              type: string
+              format: uuid
+            title:
+              type: string
+            rubric:
+              type: array
+              items:
+                $ref: "#/components/schemas/RubricCriterion"
+        cv_text:
+          type: string
+        decision:
+          oneOf:
+            - $ref: "#/components/schemas/Decision"
+            - type: "null"
+        session:
+          oneOf:
+            - $ref: "#/components/schemas/SessionSummary"
+            - type: "null"
+        graph_run:
+          oneOf:
+            - $ref: "#/components/schemas/GraphRunSummary"
+            - type: "null"
+        topics:
+          type: array
+          items:
+            $ref: "#/components/schemas/Topic"
+        messages:
+          type: array
+          items:
+            $ref: "#/components/schemas/Message"
+        scores:
+          type: array
+          items:
+            $ref: "#/components/schemas/Score"
+
+    ApplyResponse:
+      type: object
+      required: [application_id, status, message]
+      properties:
+        application_id:
+          type: string
+          format: uuid
+        status:
+          $ref: "#/components/schemas/ApplicationStatus"
+        message:
+          type: string
+
+    DecisionRequest:
+      type: object
+      required: [decision]
+      properties:
+        decision:
+          type: string
+          enum: [shortlist, reject]
+        note:
+          type: string
+          maxLength: 1000
+
+    ResendInviteResponse:
+      type: object
+      required: [session_id, expires_at, invite_url]
+      properties:
+        session_id:
+          type: string
+          format: uuid
+        expires_at:
+          type: string
+          format: date-time
+        invite_url:
+          type: [string, "null"]
+          format: uri
+
+    CurrentTopic:
+      type: object
+      required: [position, title, total]
+      properties:
+        position:
+          type: integer
+          minimum: 1
+        title:
+          type: string
+        total:
+          type: integer
+          minimum: 1
+
+    SessionDetail:
+      type: object
+      required:
+        - status
+        - job_title
+        - applicant_name
+        - expires_at
+        - started_at
+        - deadline_at
+        - max_minutes
+        - topic_count
+        - question_count
+        - max_questions
+        - current_topic
+      properties:
+        status:
+          $ref: "#/components/schemas/SessionStatus"
+        job_title:
+          type: string
+        applicant_name:
+          type: string
+        expires_at:
+          type: string
+          format: date-time
+        started_at:
+          type: [string, "null"]
+          format: date-time
+        deadline_at:
+          type: [string, "null"]
+          format: date-time
+        max_minutes:
+          type: integer
+          minimum: 1
+        topic_count:
+          type: [integer, "null"]
+          minimum: 1
+        question_count:
+          type: integer
+          minimum: 0
+        max_questions:
+          type: integer
+          minimum: 1
+        current_topic:
+          oneOf:
+            - $ref: "#/components/schemas/CurrentTopic"
+            - type: "null"
+
+    SendMessageRequest:
+      type: object
+      required: [content]
+      properties:
+        content:
+          type: string
+          minLength: 1
+          maxLength: 2000
+
+    SendMessageResponse:
+      type: object
+      required: [message, awaiting]
+      properties:
+        message:
+          $ref: "#/components/schemas/Message"
+        awaiting:
+          type: string
+          enum: [assistant]
+
+    RetryResponse:
+      type: object
+      required: [status]
+      properties:
+        status:
+          type: string
+          enum: [retrying]
+
+    GraphRun:
+      type: object
+      required:
+        - id
+        - session_id
+        - status
+        - nodes
+        - edges
+        - last_seq
+        - total_tokens_in
+        - total_tokens_out
+        - cost_usd
+      properties:
+        id:
+          type: string
+          format: uuid
+        session_id:
+          type: string
+          format: uuid
+        status:
+          type: string
+          enum: [running, succeeded, failed]
+        nodes:
+          type: array
+          items:
+            $ref: "#/components/schemas/GraphRunNode"
+        edges:
+          type: array
+          items:
+            $ref: "#/components/schemas/GraphRunEdge"
+        last_seq:
+          type: integer
+          minimum: 0
+        total_tokens_in:
+          type: integer
+          minimum: 0
+        total_tokens_out:
+          type: integer
+          minimum: 0
+        cost_usd:
+          type: number
+          minimum: 0
+
+    GraphRunNode:
+      type: object
+      required: [id, type, status, attempts, model]
+      properties:
+        id:
+          type: string
+          enum:
+            - planner
+            - plan_check
+            - interviewer
+            - judge
+            - guard
+            - scorer
+            - evidence_check
+            - recruiter_gate
+        type:
+          type: string
+          enum: [splitter, worker, gate, code, human_gate]
+        status:
+          type: string
+          enum: [pending, running, succeeded, failed, skipped]
+        attempts:
+          type: integer
+          minimum: 0
+        model:
+          type: [string, "null"]
+
+    GraphRunEdge:
+      type: object
+      required: [from, to]
+      properties:
+        from:
+          type: string
+        to:
+          type: string

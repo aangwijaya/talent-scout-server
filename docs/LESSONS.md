@@ -23,6 +23,14 @@ Rules:
 
 ## Entries
 
+### 2026-11-06 — #2 Contract + Go skeleton: OpenAPI 3.1 validator on Go 1.23
+- **Context:** Choosing a conformance harness that validates responses against the OpenAPI 3.1 contract while keeping the server on Go 1.23.
+- **Problem:** `kin-openapi` only gained OpenAPI 3.1 support in v0.136.0, and every 3.1-capable release requires Go 1.25 or newer; the latest requires Go 1.25.
+- **Cause:** 3.1 support landed only after the module raised its `go` directive, so a Go 1.23 module cannot use it.
+- **Lesson:** For OpenAPI 3.1 validation on Go 1.23, pin `pb33f/libopenapi` v0.22.2 with `pb33f/libopenapi-validator` v0.4.7 (both `go 1.23.0`); `go mod tidy` will otherwise bump the `go` line.
+- **Follow-up:** none
+- **Repeated?:** first time
+
 ### 2026-11-06 — #22 Contract sweep: gmail + failure/replay/event sequence
 - **Context:** Applying the approved contract-change proposals across `docs/API.md`, `docs/EVENTS.md`, `docs/PRD.md`, the supporting docs, and the affected server issues.
 - **Problem:** The email channel had drifted (`resend` vs `gmail`) across docs and issues, and the normative event example omitted node lifecycles and edge traversals.

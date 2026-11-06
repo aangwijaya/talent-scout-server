@@ -35,8 +35,8 @@ The stream can be opened for a session in `invited` status. The client opens it 
 | `session.updated` | `{ "status": "active", "deadline_at": "...", "question_count": 3, "max_questions": 15, "current_topic": { "position": 2, "title": "...", "total": 4 } }` | After start, on topic change, after each answer |
 | `message.delta` | `{ "message_id": "7c9e6679-…", "delta": "text chunk" }` | Streaming tokens of the Interviewer reply; the server stops at the 120-word limit |
 | `message.completed` | `{ "message": Message }` (shape from API.md) | AI reply finished → applicant input may be enabled again; `message.content` is the final text and is always rendered |
-| `session.ended` | `{ "finish_reason": "completed" \| "time_limit" \| "question_limit" \| "abandoned" \| "failed" }` | Session finished; show the thank-you screen. `failed` = permanent graph failure: the application becomes `failed` and the recruiter can issue a new invite |
-| `error` | `{ "code": "llm_unavailable", "message": "...", "retryable": true }` | Temporary failure; the UI shows "try again" and calls `POST /sessions/{token}/retry`. If the retry budget is exhausted, the server ends the session with `finish_reason: "failed"` |
+| `session.ended` | `{ "finish_reason": "completed" \| "time_limit" \| "question_limit" \| "abandoned" \| "failed" }` | Session finished; show the thank-you screen (or the failure screen for `failed`). `failed` = permanent graph failure: the application becomes `failed` and the recruiter can issue a new invite |
+| `error` | `{ "code": "llm_unavailable", "message": "...", "retryable": true }` | Temporary failure; when `retryable` is `true` the UI shows "try again" and calls `POST /sessions/{token}/retry`. If the retry budget is exhausted, the server ends the session with `finish_reason: "failed"` |
 
 The session stream does **not** send node/score events (applicants never see the assessment).
 
@@ -147,6 +147,6 @@ node.started(judge, attempt=2) → node.completed(judge, attempt=2)
 
 If the transport retry also fails (`will_retry=false`) or a node cannot continue, the run emits `node.failed` (and `node.skipped` for downstream machine nodes) → `run.failed`, and the session stream sends `session.ended` with `finish_reason: "failed"`. The application becomes `failed`.
 
-If `evidence_check` still fails on its final allowed attempt (`max_attempts=3`), no further `loop.retry` is emitted: the criterion becomes `needs_manual`, `evidence_check` completes, the transition to `recruiter_gate` is emitted, and `run.completed` reports `needs_manual_count > 0`.
+If `evidence_check` still fails on its final allowed attempt (`max_attempts=3`), no further `loop.retry` is emitted: `check.failed` is emitted for that final attempt, the criterion becomes `needs_manual`, `evidence_check` completes, the transition to `recruiter_gate` is emitted, and `run.completed` reports `needs_manual_count > 0`.
 
 The client mock (Day 1) must be able to replay these sequences from fixture files.

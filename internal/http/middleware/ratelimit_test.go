@@ -171,6 +171,23 @@ func TestClientIPIgnoresXFFWhenSecretEmpty(t *testing.T) {
 	}
 }
 
+func TestClientIPIgnoresXFFWhenSecretAndHeaderBothEmpty(t *testing.T) {
+	// An unset BFF_SHARED_SECRET must not match a missing or empty X-BFF-Secret
+	// header, or anyone could pick the IP the rate limit counts.
+	for _, header := range []*string{nil, new(string)} {
+		r := httptest.NewRequest(http.MethodPost, "/", nil)
+		r.RemoteAddr = "10.0.0.5:1234"
+		r.Header.Set("X-Forwarded-For", "203.0.113.7")
+		if header != nil {
+			r.Header.Set("X-BFF-Secret", *header)
+		}
+
+		if got := clientIP(r, ""); got != "10.0.0.5" {
+			t.Fatalf("clientIP = %q, want 10.0.0.5 (header set: %v)", got, header != nil)
+		}
+	}
+}
+
 func TestClientIPFallsBackToRemoteAddrWhenXFFEmpty(t *testing.T) {
 	r := httptest.NewRequest(http.MethodPost, "/", nil)
 	r.RemoteAddr = "10.0.0.5:1234"

@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"strings"
 
-	pdf "github.com/ledongthuc/pdf"
+	pdf "github.com/dslipak/pdf"
 )
 
 // ErrNotPDF indicates the input is not a parseable PDF or its text cannot be extracted.
@@ -17,7 +17,7 @@ type Extractor interface {
 	Extract(data []byte) (string, error)
 }
 
-// PDF extracts text from a PDF using ledongthuc/pdf. Scanned (image) PDFs are
+// PDF extracts text from a PDF using dslipak/pdf. Scanned (image) PDFs are
 // out of scope; an empty result is treated as ErrNotPDF.
 type PDF struct{}
 

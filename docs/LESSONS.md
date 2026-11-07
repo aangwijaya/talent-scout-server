@@ -25,9 +25,9 @@ Rules:
 
 ### 2026-11-07 — #6 Apply flow: `ledongthuc/pdf` forces the module onto Go 1.24
 - **Context:** Adding CV text extraction (`internal/cv`) with the `github.com/ledongthuc/pdf` library from `docs/TECH-STACK.md` §1.
-- **Problem:** `go get github.com/ledongthuc/pdf@latest` bumped the module's `go` directive from `1.23.0` to `1.24.1`, which looked like the "don't bump the go line" mistake from the libopenapi lesson. It also silently broke the Docker build: the Dockerfile pinned `golang:1.23-alpine` (GOTOOLCHAIN=local), so `go mod download` failed with "go.mod requires go >= 1.24.1". CI uses `go-version-file` and never caught it.
+- **Problem:** `go get github.com/ledongthuc/pdf@latest` bumped the module's `go` directive from `1.23.0` to `1.24.1`, which silently broke the Docker build (Dockerfile pinned `golang:1.23-alpine`, GOTOOLCHAIN=local, so `go mod download` failed with "go.mod requires go >= 1.24.1"). CI uses `go-version-file` and never caught it.
 - **Cause:** The library has no tagged releases; its single `go.mod` (added 2025-05) declares `go 1.24.1`, so *any* pinned pseudo-version requires ≥ 1.24.1 — there is no 1.23-compatible version.
-- **Lesson:** Bumping the module `go` directive is never "just CI": every place that builds Go must move too — check `Dockerfile`, `go.work`, and deploy configs for pinned toolchains, not only `go test`.
+- **Lesson:** A dependency whose `go.mod` declares no `go` directive (pre-modules) stays compatible with a `go 1.23` module. Here the parent `github.com/dslipak/pdf v0.0.2` (which `ledongthuc/pdf` forked, same `NewReader`/`GetPlainText` API) has no `go` directive, so use it to keep the module on Go 1.23 without touching the Dockerfile.
 - **Follow-up:** none
 - **Repeated?:** first time
 

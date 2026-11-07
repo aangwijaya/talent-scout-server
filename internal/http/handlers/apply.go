@@ -23,7 +23,10 @@ const (
 	multipartOverhead = 256 << 10
 )
 
-var emailPattern = regexp.MustCompile(`^[^@\s]+@[^@\s]+\.[^@\s]+$`)
+var (
+	emailPattern = regexp.MustCompile(`^[^@\s]+@[^@\s]+\.[^@\s]+$`)
+	uuidPattern  = regexp.MustCompile(`^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$`)
+)
 
 type Apply struct {
 	cfg     config.Config
@@ -61,7 +64,7 @@ func (h *Apply) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	defer r.MultipartForm.RemoveAll()
 
 	name := strings.TrimSpace(r.FormValue("name"))
-	email := strings.TrimSpace(r.FormValue("email"))
+	email := strings.ToLower(strings.TrimSpace(r.FormValue("email")))
 
 	if n := utf8.RuneCountInString(name); n < 2 || n > 100 {
 		apierror.Write(w, http.StatusBadRequest, apierror.CodeValidationFailed, "name must be 2-100 characters", map[string]string{"field": "name"})
@@ -85,6 +88,10 @@ func (h *Apply) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	jobID := chi.URLParam(r, "jobId")
+	if !uuidPattern.MatchString(jobID) {
+		apierror.Write(w, http.StatusNotFound, apierror.CodeNotFound, "job not found", nil)
+		return
+	}
 	job, err := h.store.GetJob(r.Context(), jobID)
 	if err != nil {
 		if errors.Is(err, store.ErrNotFound) {

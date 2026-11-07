@@ -52,6 +52,10 @@ func newApply(t *testing.T, emailMode string, extract cv.Extractor) (*handlers.A
 }
 
 func multipartBody(t *testing.T, name, email, filename string, content []byte) (*http.Request, string) {
+	return multipartBodyJob(t, jobID, name, email, filename, content), ""
+}
+
+func multipartBodyJob(t *testing.T, id, name, email, filename string, content []byte) *http.Request {
 	t.Helper()
 	var buf bytes.Buffer
 	mw := multipart.NewWriter(&buf)
@@ -78,13 +82,13 @@ func multipartBody(t *testing.T, name, email, filename string, content []byte) (
 		t.Fatalf("close multipart: %v", err)
 	}
 
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/jobs/"+jobID+"/applications", &buf)
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/jobs/"+id+"/applications", &buf)
 	req.Header.Set("Content-Type", mw.FormDataContentType())
 
 	rctx := chi.NewRouteContext()
-	rctx.URLParams.Add("jobId", jobID)
+	rctx.URLParams.Add("jobId", id)
 	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
-	return req, ""
+	return req
 }
 
 func decodeError(t *testing.T, rec *httptest.ResponseRecorder) (code, message string, details map[string]string) {
@@ -246,6 +250,47 @@ func TestApplyDuplicate(t *testing.T) {
 	code, _, _ := decodeError(t, rec)
 	if code != "already_applied" {
 		t.Errorf("code = %q, want already_applied", code)
+	}
+}
+
+func TestApplyEmailCaseInsensitiveDuplicate(t *testing.T) {
+	apply, _ := newApply(t, "log", fakeExtractor{text: "text"})
+
+	first, _ := multipartBody(t, "Budi", "Budi@Example.com", "cv.pdf", []byte("%PDF-1.4"))
+	apply.ServeHTTP(httptest.NewRecorder(), first)
+
+	second, _ := multipartBody(t, "Budi", "budi@example.com", "cv.pdf", []byte("%PDF-1.4"))
+	rec := httptest.NewRecorder()
+	apply.ServeHTTP(rec, second)
+
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("status = %d, want 409 (body: %s)", rec.Code, rec.Body.String())
+	}
+	code, _, _ := decodeError(t, rec)
+	if code != "already_applied" {
+		t.Errorf("code = %q, want already_applied", code)
+	}
+}
+
+type nonUUIDStore struct{ store.Store }
+
+func (nonUUIDStore) GetJob(context.Context, string) (domain.Job, error) {
+	return domain.Job{}, errors.New("invalid input syntax for type uuid")
+}
+
+func TestApplyJobIDNotUUID(t *testing.T) {
+	apply := handlers.NewApply(config.Config{EmailMode: "log"}, nonUUIDStore{}, storage.NewFake(), fakeExtractor{text: "text"})
+	req := multipartBodyJob(t, "abc", "Budi", "budi@example.com", "cv.pdf", []byte("%PDF-1.4"))
+	rec := httptest.NewRecorder()
+
+	apply.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("status = %d, want 404 (body: %s)", rec.Code, rec.Body.String())
+	}
+	code, _, _ := decodeError(t, rec)
+	if code != "not_found" {
+		t.Errorf("code = %q, want not_found", code)
 	}
 }
 

@@ -3,6 +3,7 @@ module github.com/aangwijaya/talent-scout-server
 go 1.23.0
 
 require (
+	github.com/dslipak/pdf v0.0.2
 	github.com/go-chi/chi/v5 v5.2.1
 	github.com/jackc/pgx/v5 v5.7.2
 	github.com/pb33f/libopenapi v0.22.2

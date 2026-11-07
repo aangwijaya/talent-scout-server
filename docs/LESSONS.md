@@ -23,6 +23,22 @@ Rules:
 
 ## Entries
 
+### 2026-11-07 — #6 Apply flow: `dslipak/pdf` panics on malformed input; non-UUID jobId reaches Postgres
+- **Context:** Hardening the apply endpoint after review of PR #34 (CV extraction + apply handler).
+- **Problem:** `dslipak/pdf`'s `Reader.NumPage()`/`Page()` panic on malformed object references (they only recover inside `GetPlainText`), so a crafted PDF drops the connection; and a non-UUID `jobId` reaches Postgres and fails with SQLSTATE 22P02 → 500 instead of the contract's 404.
+- **Cause:** Page-tree traversal is unprotected by the library, and the in-memory store masks the UUID cast error (it returns `ErrNotFound` for any unknown id).
+- **Lesson:** Recover panics inside `cv.Extract` and cap the pages read; validate UUID path params before any store call so a malformed id returns 404, not 500.
+- **Follow-up:** none
+- **Repeated?:** first time
+
+### 2026-11-07 — #6 Apply flow: `ledongthuc/pdf` forces the module onto Go 1.24
+- **Context:** Adding CV text extraction (`internal/cv`) with the `github.com/ledongthuc/pdf` library from `docs/TECH-STACK.md` §1.
+- **Problem:** `go get github.com/ledongthuc/pdf@latest` bumped the module's `go` directive from `1.23.0` to `1.24.1`, which silently broke the Docker build (Dockerfile pinned `golang:1.23-alpine`, GOTOOLCHAIN=local, so `go mod download` failed with "go.mod requires go >= 1.24.1"). CI uses `go-version-file` and never caught it.
+- **Cause:** The library has no tagged releases; its single `go.mod` (added 2025-05) declares `go 1.24.1`, so *any* pinned pseudo-version requires ≥ 1.24.1 — there is no 1.23-compatible version.
+- **Lesson:** A dependency whose `go.mod` declares no `go` directive (pre-modules) stays compatible with a `go 1.23` module. Here the parent `github.com/dslipak/pdf v0.0.2` (which `ledongthuc/pdf` forked, same `NewReader`/`GetPlainText` API) has no `go` directive, so use it to keep the module on Go 1.23 without touching the Dockerfile.
+- **Follow-up:** none
+- **Repeated?:** first time
+
 ### 2026-11-06 — #3 DB migration + store: Supabase pooler DSN normalization
 - **Context:** Wiring pgx/goose to Supabase and running `00001_init.sql`.
 - **Problem:** A transaction-pooler DSN (`:6543?pgbouncer=true`) breaks pgx prepared statements, and `pgbouncer` is not a valid Postgres runtime parameter, so parsing/connecting fails unless handled.

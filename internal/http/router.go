@@ -32,7 +32,7 @@ func NewRouter(cfg config.Config, deps Deps) http.Handler {
 
 		apply := handlers.NewApply(cfg, deps.Store, deps.Storage, deps.Extractor)
 		limiter := middleware.NewRateLimiter(middleware.ApplyRateLimit, middleware.ApplyRateLimitWindow)
-		r.With(middleware.RateLimit(limiter)).Method(http.MethodPost, "/jobs/{jobId}/applications", apply)
+		r.With(middleware.RateLimit(limiter, cfg.BFFSharedSecret)).Method(http.MethodPost, "/jobs/{jobId}/applications", apply)
 	})
 
 	return r

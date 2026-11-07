@@ -123,8 +123,8 @@ func TestApplySuccessLogMode(t *testing.T) {
 	if got.ApplicationID == "" {
 		t.Error("application_id is empty")
 	}
-	if got.Status != "applied" {
-		t.Errorf("status = %q, want applied", got.Status)
+	if got.Status != "invited" {
+		t.Errorf("status = %q, want invited", got.Status)
 	}
 	if got.Message != "Thanks! Your application was received. The recruiter will send your screening link." {
 		t.Errorf("message = %q", got.Message)

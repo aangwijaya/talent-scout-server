@@ -148,7 +148,7 @@ func (h *Apply) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	apierror.JSON(w, http.StatusCreated, applyResponse{
 		ApplicationID: app.ID,
-		Status:        domain.ApplicationStatusApplied,
+		Status:        domain.ApplicationStatusInvited,
 		Message:       applyMessage(h.cfg.EmailMode),
 	})
 }

@@ -1,6 +1,7 @@
 package httpapi
 
 import (
+	"log/slog"
 	"net/http"
 
 	"github.com/go-chi/chi/v5"
@@ -12,6 +13,7 @@ import (
 
 func NewRouter(cfg config.Config, db handlers.DBPinger) http.Handler {
 	r := chi.NewRouter()
+	r.Use(middleware.RequestLogger(slog.Default()))
 	r.Use(middleware.CORS(cfg.FrontendOrigins))
 
 	r.Route("/api/v1", func(r chi.Router) {

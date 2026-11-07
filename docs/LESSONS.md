@@ -23,6 +23,14 @@ Rules:
 
 ## Entries
 
+### 2026-11-07 — #6 Apply flow: `ledongthuc/pdf` forces the module onto Go 1.24
+- **Context:** Adding CV text extraction (`internal/cv`) with the `github.com/ledongthuc/pdf` library from `docs/TECH-STACK.md` §1.
+- **Problem:** `go get github.com/ledongthuc/pdf@latest` bumped the module's `go` directive from `1.23.0` to `1.24.1`, which looked like the "don't bump the go line" mistake from the libopenapi lesson.
+- **Cause:** The library has no tagged releases; its single `go.mod` (added 2025-05) declares `go 1.24.1`, so *any* pinned pseudo-version requires ≥ 1.24.1 — there is no 1.23-compatible version.
+- **Lesson:** The `go 1.23.0` floor only exists to keep `libopenapi` v0.22.2 usable; a dependency that itself requires 1.24 is fine to pull up to 1.24.1 (CI reads `go.mod`), just verify `go test ./...` still passes after the bump.
+- **Follow-up:** none
+- **Repeated?:** first time
+
 ### 2026-11-06 — #3 DB migration + store: Supabase pooler DSN normalization
 - **Context:** Wiring pgx/goose to Supabase and running `00001_init.sql`.
 - **Problem:** A transaction-pooler DSN (`:6543?pgbouncer=true`) breaks pgx prepared statements, and `pgbouncer` is not a valid Postgres runtime parameter, so parsing/connecting fails unless handled.

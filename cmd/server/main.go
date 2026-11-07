@@ -11,8 +11,10 @@ import (
 	"time"
 
 	"github.com/aangwijaya/talent-scout-server/internal/config"
+	"github.com/aangwijaya/talent-scout-server/internal/cv"
 	httpapi "github.com/aangwijaya/talent-scout-server/internal/http"
 	"github.com/aangwijaya/talent-scout-server/internal/http/handlers"
+	"github.com/aangwijaya/talent-scout-server/internal/storage"
 	"github.com/aangwijaya/talent-scout-server/internal/store"
 )
 
@@ -27,6 +29,7 @@ func main() {
 	}
 
 	var db handlers.DBPinger
+	var st store.Store
 	if cfg.DatabaseURL != "" {
 		openCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		pool, err := store.OpenPool(openCtx, cfg.DatabaseURL)
@@ -37,11 +40,17 @@ func main() {
 		}
 		defer pool.Close()
 		db = pool
+		st = store.NewPostgres(pool)
 	}
 
 	server := &http.Server{
-		Addr:              ":" + cfg.Port,
-		Handler:           httpapi.NewRouter(cfg, db),
+		Addr: ":" + cfg.Port,
+		Handler: httpapi.NewRouter(cfg, httpapi.Deps{
+			DB:        db,
+			Store:     st,
+			Storage:   storage.NewSupabase(cfg.SupabaseURL, cfg.SupabaseStorageBucket, cfg.SupabaseServiceRoleKey),
+			Extractor: cv.NewPDF(),
+		}),
 		ReadHeaderTimeout: 5 * time.Second,
 	}
 

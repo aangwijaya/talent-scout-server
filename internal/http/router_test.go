@@ -12,7 +12,7 @@ import (
 
 func TestHealthMatchesContract(t *testing.T) {
 	cfg := config.Config{Version: "0.1.0", LLMMode: "fake", EmailMode: "log"}
-	router := httpapi.NewRouter(cfg, nil)
+	router := httpapi.NewRouter(cfg, httpapi.Deps{})
 	validator := conformance.New(t)
 
 	tests := []struct {

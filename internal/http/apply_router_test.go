@@ -26,6 +26,11 @@ const applyJobID = "7c9e6679-0000-4000-8000-000000000002"
 
 func applyRouter(t *testing.T, emailMode string) http.Handler {
 	t.Helper()
+	return applyRouterCfg(t, config.Config{Version: "0.1.0", LLMMode: "fake", EmailMode: emailMode})
+}
+
+func applyRouterCfg(t *testing.T, cfg config.Config) http.Handler {
+	t.Helper()
 	st := store.NewMemory()
 	if err := st.CreateJob(context.Background(), domain.Job{
 		ID:          applyJobID,
@@ -35,7 +40,6 @@ func applyRouter(t *testing.T, emailMode string) http.Handler {
 	}); err != nil {
 		t.Fatalf("seed job: %v", err)
 	}
-	cfg := config.Config{Version: "0.1.0", LLMMode: "fake", EmailMode: emailMode}
 	return httpapi.NewRouter(cfg, httpapi.Deps{
 		Store:     st,
 		Storage:   storage.NewFake(),
@@ -111,5 +115,31 @@ func TestApplyRateLimit(t *testing.T) {
 	}
 	if got.Error.Code != "rate_limited" {
 		t.Errorf("error.code = %q, want rate_limited", got.Error.Code)
+	}
+}
+
+func TestApplyRateLimitKeysByTrustedIP(t *testing.T) {
+	cfg := config.Config{Version: "0.1.0", LLMMode: "fake", EmailMode: "log", BFFSharedSecret: "shared-secret"}
+	router := applyRouterCfg(t, cfg)
+
+	send := func(email, xff string) int {
+		req := applyRequest(t, email)
+		req.Header.Set("X-BFF-Secret", "shared-secret")
+		req.Header.Set("X-Forwarded-For", xff)
+		rec := httptest.NewRecorder()
+		router.ServeHTTP(rec, req)
+		return rec.Code
+	}
+
+	for i := 0; i < 5; i++ {
+		if code := send(fmt.Sprintf("a%d@example.com", i), "203.0.113.9"); code != http.StatusCreated {
+			t.Fatalf("IP A request %d status = %d, want 201", i+1, code)
+		}
+	}
+	if code := send("a-z@example.com", "203.0.113.9"); code != http.StatusTooManyRequests {
+		t.Fatalf("IP A 6th request status = %d, want 429", code)
+	}
+	if code := send("b@example.com", "203.0.113.10"); code != http.StatusCreated {
+		t.Fatalf("IP B status = %d, want 201 (trusted IPs must be independent)", code)
 	}
 }

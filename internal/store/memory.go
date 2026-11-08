@@ -583,9 +583,6 @@ func (m *Memory) AppendNodeEvent(_ context.Context, event domain.NodeEvent) (dom
 	if event.ID == "" {
 		event.ID = domain.NewID()
 	}
-	if event.Attempt == 0 {
-		event.Attempt = 1
-	}
 	if _, ok := m.nodeEvents[event.ID]; ok {
 		return domain.NodeEvent{}, ErrConflict
 	}

@@ -559,9 +559,6 @@ func (p *Postgres) AppendNodeEvent(ctx context.Context, event domain.NodeEvent) 
 	if event.ID == "" {
 		event.ID = domain.NewID()
 	}
-	if event.Attempt == 0 {
-		event.Attempt = 1
-	}
 	if event.CreatedAt.IsZero() {
 		event.CreatedAt = time.Now().UTC()
 	}

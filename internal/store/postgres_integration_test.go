@@ -269,11 +269,11 @@ func TestPostgresStore(t *testing.T) {
 	if err := s.CreateGraphRun(ctx, run); err != nil {
 		t.Fatalf("CreateGraphRun: %v", err)
 	}
-	first, err := s.AppendNodeEvent(ctx, domain.NodeEvent{RunID: run.ID, NodeID: "planner", Type: "node.started", Payload: []byte(`{"k":1}`)})
+	first, err := s.AppendNodeEvent(ctx, domain.NodeEvent{RunID: run.ID, NodeID: domain.StrPtr("planner"), Attempt: domain.IntPtr(1), Type: "node.started", Payload: []byte(`{"k":1}`)})
 	if err != nil {
 		t.Fatalf("AppendNodeEvent: %v", err)
 	}
-	second, err := s.AppendNodeEvent(ctx, domain.NodeEvent{RunID: run.ID, NodeID: "planner", Type: "node.completed"})
+	second, err := s.AppendNodeEvent(ctx, domain.NodeEvent{RunID: run.ID, NodeID: domain.StrPtr("planner"), Attempt: domain.IntPtr(1), Type: "node.completed"})
 	if err != nil {
 		t.Fatalf("AppendNodeEvent: %v", err)
 	}

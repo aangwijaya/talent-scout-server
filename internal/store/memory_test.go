@@ -377,11 +377,11 @@ func TestMemoryGraphRunsAndEvents(t *testing.T) {
 		t.Fatalf("GetGraphRunBySession ID = %q, want %q", got.ID, run.ID)
 	}
 
-	first, err := s.AppendNodeEvent(ctx, domain.NodeEvent{RunID: run.ID, NodeID: "planner", Type: "node.started", Payload: []byte(`{"a":1}`)})
+	first, err := s.AppendNodeEvent(ctx, domain.NodeEvent{RunID: run.ID, NodeID: domain.StrPtr("planner"), Attempt: domain.IntPtr(1), Type: "node.started", Payload: []byte(`{"a":1}`)})
 	if err != nil {
 		t.Fatalf("AppendNodeEvent: %v", err)
 	}
-	second, err := s.AppendNodeEvent(ctx, domain.NodeEvent{RunID: run.ID, NodeID: "planner", Type: "node.completed"})
+	second, err := s.AppendNodeEvent(ctx, domain.NodeEvent{RunID: run.ID, NodeID: domain.StrPtr("planner"), Attempt: domain.IntPtr(1), Type: "node.completed"})
 	if err != nil {
 		t.Fatalf("AppendNodeEvent: %v", err)
 	}

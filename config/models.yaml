@@ -1,0 +1,12 @@
+default:
+  temperature: 0.3
+  timeout_seconds: 30
+  max_retries_on_http_error: 1   # retry the same model, no fallback
+nodes:
+  planner:     { model: deepseek/deepseek-v4.1-flash, temperature: 0.2, max_tokens: 800 }
+  interviewer: { model: z-ai/glm-5.3-flash,           temperature: 0.6, max_tokens: 300, stream: true }
+  judge:       { model: deepseek/deepseek-v4.1-flash, temperature: 0.0, max_tokens: 200 }
+  scorer:      { model: deepseek/deepseek-v4.1-flash, temperature: 0.0, max_tokens: 1200 }
+prices:
+  deepseek/deepseek-v4.1-flash: { in: 0.045, out: 0.5 }
+  z-ai/glm-5.3-flash:           { in: 0.15,  out: 0.50 }

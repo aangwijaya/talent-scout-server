@@ -24,13 +24,15 @@ type Event struct {
 }
 
 // subscriberBuffer bounds how many events a slow subscriber can fall behind
-// before events are dropped. Persisted events are recoverable by replay, and
-// dropped message.delta chunks are superseded by message.completed, so dropping
-// is safe.
+// before delivery applies backpressure. Only message.delta may be dropped when
+// the buffer is full; every persisted event (run.*, node.*, check.*, edge.*,
+// loop.*, topic.*, message.completed) is delivered or the emit is cancelled, so
+// a subscriber never advances past a gap it cannot replay.
 const subscriberBuffer = 128
 
 type subscriber struct {
-	ch chan domain.NodeEvent
+	ch   chan domain.NodeEvent
+	done chan struct{}
 }
 
 // Bus persists every event (except message.delta) to node_events and fans it
@@ -55,15 +57,22 @@ func (b *Bus) Subscribe(runID string) (<-chan domain.NodeEvent, func()) {
 	defer b.mu.Unlock()
 	id := b.nextID
 	b.nextID++
-	sub := &subscriber{ch: make(chan domain.NodeEvent, subscriberBuffer)}
+	sub := &subscriber{
+		ch:   make(chan domain.NodeEvent, subscriberBuffer),
+		done: make(chan struct{}),
+	}
 	if b.subs[runID] == nil {
 		b.subs[runID] = make(map[int64]*subscriber)
 	}
 	b.subs[runID][id] = sub
+	var once sync.Once
 	return sub.ch, func() {
-		b.mu.Lock()
-		delete(b.subs[runID], id)
-		b.mu.Unlock()
+		once.Do(func() {
+			b.mu.Lock()
+			delete(b.subs[runID], id)
+			b.mu.Unlock()
+			close(sub.done)
+		})
 	}
 }
 
@@ -88,7 +97,7 @@ func (b *Bus) Emit(ctx context.Context, runID string, evt Event) (domain.NodeEve
 	}
 
 	if evt.Type == EventMessageDelta {
-		b.publish(runID, ne)
+		b.publish(ctx, runID, ne)
 		return ne, nil
 	}
 
@@ -96,22 +105,33 @@ func (b *Bus) Emit(ctx context.Context, runID string, evt Event) (domain.NodeEve
 	if err != nil {
 		return domain.NodeEvent{}, err
 	}
-	b.publish(runID, saved)
+	b.publish(ctx, runID, saved)
 	return saved, nil
 }
 
-func (b *Bus) publish(runID string, evt domain.NodeEvent) {
+func (b *Bus) publish(ctx context.Context, runID string, evt domain.NodeEvent) {
 	b.mu.RLock()
-	chans := make([]chan domain.NodeEvent, 0, len(b.subs[runID]))
+	subs := make([]*subscriber, 0, len(b.subs[runID]))
 	for _, sub := range b.subs[runID] {
-		chans = append(chans, sub.ch)
+		subs = append(subs, sub)
 	}
 	b.mu.RUnlock()
 
-	for _, ch := range chans {
+	droppable := evt.Type == EventMessageDelta
+	for _, sub := range subs {
+		if droppable {
+			select {
+			case sub.ch <- evt:
+			default: // message.delta is best-effort; message.completed supersedes it
+			}
+			continue
+		}
+		// Persisted events must not be dropped: block until the subscriber
+		// accepts the event, unsubscribes, or the emit is cancelled.
 		select {
-		case ch <- evt:
-		default: // drop; recoverable via replay / message.completed
+		case sub.ch <- evt:
+		case <-sub.done:
+		case <-ctx.Done():
 		}
 	}
 }

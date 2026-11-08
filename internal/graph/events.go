@@ -68,9 +68,12 @@ var nodeTypes = map[string]NodeType{
 	"recruiter_gate": NodeTypeHumanGate,
 }
 
-// Edges is the static machine-node graph reported in run.started.
+// Edges is the static machine-node graph reported in run.started. It includes
+// every transition the runner can traverse, including the plan_check→planner
+// retry (EVENTS.md §6.2).
 var Edges = []EdgeRef{
 	{From: "planner", To: "plan_check"},
+	{From: "plan_check", To: "planner"},
 	{From: "plan_check", To: "interviewer"},
 	{From: "interviewer", To: "judge"},
 	{From: "judge", To: "guard"},

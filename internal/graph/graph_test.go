@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"github.com/aangwijaya/talent-scout-server/internal/config"
 	"github.com/aangwijaya/talent-scout-server/internal/domain"
@@ -155,6 +156,28 @@ func TestRunStartedPayload(t *testing.T) {
 	if len(payload.Edges) == 0 {
 		t.Error("run.started edges is empty")
 	}
+}
+
+func TestRunStartedIncludesPlannerRetryEdge(t *testing.T) {
+	runner, st, ctx := newRunner(t)
+	if err := runner.Start(ctx); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	events, err := st.ListNodeEvents(ctx, runner.RunID(), 0)
+	if err != nil {
+		t.Fatalf("ListNodeEvents: %v", err)
+	}
+	var payload RunStarted
+	if err := json.Unmarshal(events[0].Payload, &payload); err != nil {
+		t.Fatalf("unmarshal run.started: %v", err)
+	}
+	want := EdgeRef{From: "plan_check", To: "planner"}
+	for _, e := range payload.Edges {
+		if e == want {
+			return
+		}
+	}
+	t.Errorf("run.started edges %v lack %+v (planner retry per EVENTS.md §6.2)", payload.Edges, want)
 }
 
 func TestNodeCompletedRecordsTokensAndCost(t *testing.T) {
@@ -455,5 +478,87 @@ func TestMessageDeltaNotPersisted(t *testing.T) {
 	}
 	if len(persisted) != 1 || persisted[0].Type != EventNodeStarted {
 		t.Errorf("persisted = %+v, want only node.started (no message.delta)", persisted)
+	}
+}
+
+func TestBusPersistedEventsAreNotDropped(t *testing.T) {
+	ctx := context.Background()
+	st := store.NewMemory()
+	runID := domain.NewID()
+	bus := NewBus(st)
+	ch, cancel := bus.Subscribe(runID)
+	defer cancel()
+
+	for i := 0; i < subscriberBuffer; i++ {
+		if _, err := bus.Emit(ctx, runID, Event{Type: EventNodeSkipped, Payload: NodeSkipped{Reason: "fill"}}); err != nil {
+			t.Fatalf("fill emit %d: %v", i, err)
+		}
+	}
+
+	emitted := make(chan error, 1)
+	go func() {
+		_, err := bus.Emit(ctx, runID, Event{Type: EventRunCompleted, Payload: RunCompleted{Status: "succeeded"}})
+		emitted <- err
+	}()
+
+	select {
+	case err := <-emitted:
+		t.Fatalf("Emit returned (err=%v) while the subscriber buffer was full; a persisted event was dropped", err)
+	case <-time.After(100 * time.Millisecond):
+	}
+
+	select {
+	case <-ch:
+	case <-time.After(time.Second):
+		t.Fatal("no buffered event to drain")
+	}
+	select {
+	case err := <-emitted:
+		if err != nil {
+			t.Fatalf("Emit: %v", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("Emit stayed blocked after the subscriber made room")
+	}
+
+	sawCompleted := false
+	for i := 0; i < subscriberBuffer; i++ {
+		select {
+		case ev := <-ch:
+			if ev.Type == EventRunCompleted {
+				sawCompleted = true
+			}
+		case <-time.After(time.Second):
+			t.Fatalf("delivered only %d events, want %d", i, subscriberBuffer+1)
+		}
+	}
+	if !sawCompleted {
+		t.Error("run.completed was never delivered to the subscriber")
+	}
+}
+
+func TestBusMessageDeltaIsDroppable(t *testing.T) {
+	ctx := context.Background()
+	st := store.NewMemory()
+	runID := domain.NewID()
+	bus := NewBus(st)
+	_, cancel := bus.Subscribe(runID)
+	defer cancel()
+
+	for i := 0; i < subscriberBuffer; i++ {
+		if _, err := bus.Emit(ctx, runID, Event{Type: EventMessageDelta, Payload: MessageDelta{Delta: "x"}}); err != nil {
+			t.Fatalf("emit delta %d: %v", i, err)
+		}
+	}
+
+	done := make(chan struct{})
+	go func() {
+		_, _ = bus.Emit(ctx, runID, Event{Type: EventMessageDelta, Payload: MessageDelta{Delta: "overflow"}})
+		close(done)
+	}()
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("message.delta blocked while the subscriber buffer was full; deltas must stay droppable")
 	}
 }

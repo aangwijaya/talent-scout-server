@@ -122,3 +122,43 @@ func TestGmailSendInviteTokenFailure(t *testing.T) {
 		t.Fatal("SendInvite returned nil, want error on token exchange failure")
 	}
 }
+
+func TestGmailSendFailureLogsNothingSensitive(t *testing.T) {
+	var buf bytes.Buffer
+	logger := slog.New(slog.NewTextHandler(&buf, nil))
+
+	tokenSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		io.WriteString(w, `{"access_token":"access-123"}`)
+	}))
+	defer tokenSrv.Close()
+
+	sendSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+		io.WriteString(w, `{"error":{"code":500}}`)
+	}))
+	defer sendSrv.Close()
+
+	g := NewGmail("client-id", "client-secret", "refresh-secret", "you@gmail.com", logger)
+	g.tokenURL = tokenSrv.URL
+	g.sendURL = sendSrv.URL
+
+	const link = "https://example.com/s/super-secret-token"
+	if err := g.SendInvite(context.Background(), "budi@example.com", "Budi", link); err == nil {
+		t.Fatal("SendInvite returned nil, want error")
+	}
+
+	out := buf.String()
+	for _, secret := range []string{
+		link,
+		"super-secret-token",
+		"client-id",
+		"client-secret",
+		"refresh-secret",
+		"Hi Budi",
+	} {
+		if strings.Contains(out, secret) {
+			t.Errorf("logger output leaked %q: %s", secret, out)
+		}
+	}
+}

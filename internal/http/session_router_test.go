@@ -27,10 +27,11 @@ func sessionRouter(t *testing.T) (http.Handler, string) {
 		t.Fatalf("seed job: %v", err)
 	}
 	if err := st.CreateApplication(context.Background(), domain.Application{
-		ID:    "7c9e6679-0000-4000-8000-000000000022",
-		JobID: "7c9e6679-0000-4000-8000-000000000021",
-		Name:  "Budi",
-		Email: "budi@example.com",
+		ID:     "7c9e6679-0000-4000-8000-000000000022",
+		JobID:  "7c9e6679-0000-4000-8000-000000000021",
+		Name:   "Budi",
+		Email:  "budi@example.com",
+		Status: domain.ApplicationStatusInvited,
 	}); err != nil {
 		t.Fatalf("seed application: %v", err)
 	}

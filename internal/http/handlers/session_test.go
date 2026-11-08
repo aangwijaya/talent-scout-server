@@ -33,7 +33,7 @@ func sessionStore(t *testing.T) (*store.Memory, domain.Session) {
 	if err := st.CreateJob(context.Background(), job); err != nil {
 		t.Fatalf("seed job: %v", err)
 	}
-	app := domain.Application{ID: "7c9e6679-0000-4000-8000-000000000012", JobID: job.ID, Name: "Budi", Email: "budi@example.com", CVText: "text"}
+	app := domain.Application{ID: "7c9e6679-0000-4000-8000-000000000012", JobID: job.ID, Name: "Budi", Email: "budi@example.com", CVText: "text", Status: domain.ApplicationStatusInvited}
 	if err := st.CreateApplication(context.Background(), app); err != nil {
 		t.Fatalf("seed app: %v", err)
 	}

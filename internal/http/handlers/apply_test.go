@@ -459,3 +459,35 @@ func TestApplySendFailureStill201(t *testing.T) {
 		t.Fatalf("session not created despite send failure: %v", err)
 	}
 }
+
+func TestApplySessionExpiresAtTTL(t *testing.T) {
+	const ttlHours = 24
+	st := store.NewMemory()
+	seedJob(t, st, domain.JobStatusOpen)
+	cfg := config.Config{EmailMode: "log", PublicAppURL: "https://talentscout.vercel.app", SessionTTLHours: ttlHours}
+	apply := handlers.NewApply(cfg, st, storage.NewFake(), fakeExtractor{text: "text"}, &fakeMailer{})
+
+	before := time.Now()
+	rec := httptest.NewRecorder()
+	req, _ := multipartBody(t, "Budi", "budi@example.com", "cv.pdf", []byte("%PDF-1.4 fake"))
+	apply.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("status = %d, want 201 (body: %s)", rec.Code, rec.Body.String())
+	}
+	var got struct {
+		ApplicationID string `json:"application_id"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+
+	sess, err := st.GetLatestSessionByApplication(context.Background(), got.ApplicationID)
+	if err != nil {
+		t.Fatalf("session not created: %v", err)
+	}
+	want := before.Add(ttlHours * time.Hour)
+	if sess.ExpiresAt.Before(want) || sess.ExpiresAt.After(want.Add(time.Minute)) {
+		t.Errorf("expires_at = %v, want ~%v (now + %dh TTL)", sess.ExpiresAt, want, ttlHours)
+	}
+}

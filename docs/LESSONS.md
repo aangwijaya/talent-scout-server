@@ -23,6 +23,14 @@ Rules:
 
 ## Entries
 
+### 2026-11-08 — #8 Graph events: node_events node_id/attempt must be nullable, not defaulted
+- **Context:** Building the graph runner + event bus that persist run/node/edge/check events into `node_events`.
+- **Problem:** The Day-1 schema had `node_id text NOT NULL` and `attempt integer NOT NULL DEFAULT 1`, and the store defaulted `attempt==0 → 1`; but EVENTS.md §2/§4 mark both `node_id` and `attempt` nullable, and run-level/edge events carry `null` for both — a default would silently turn `run.started` into `attempt=1`.
+- **Cause:** The table was written before the event envelope nullability was respected.
+- **Lesson:** Read the event envelope contract (EVENTS.md §2) before adding columns or defaults to `node_events`; a store-level default for a nullable contract field corrupts run-level events.
+- **Follow-up:** none
+- **Repeated?:** first time
+
 ### 2026-11-08 — #7 Apply: two sequential inserts strand an applicant without a session
 - **Context:** Review of the apply flow found `CreateApplication` then `CreateSession` as two independent store calls.
 - **Problem:** A `CreateSession` failure returned 500 but left the application row, so the applicant's retry hit 409 `already_applied` and `resend-invite` (which only covers `invited` sessions or `failed` applications) could never reach them.

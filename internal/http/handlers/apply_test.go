@@ -206,7 +206,7 @@ func TestApplyValidation(t *testing.T) {
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			apply, _ := newApply(t, "log", fakeExtractor{text: "text"}, nil)
+			apply, _ := newApply(t, "log", fakeExtractor{text: "text"})
 			req, _ := multipartBody(t, tc.fieldsName, tc.fieldsEmail, tc.filename, tc.content)
 			rec := httptest.NewRecorder()
 
@@ -243,7 +243,7 @@ func TestApplyInvalidFile(t *testing.T) {
 }
 
 func TestApplyFileTooLarge(t *testing.T) {
-	apply, _ := newApply(t, "log", fakeExtractor{text: "text"}, nil)
+	apply, _ := newApply(t, "log", fakeExtractor{text: "text"})
 	big := bytes.Repeat([]byte("a"), 2<<20+1)
 	req, _ := multipartBody(t, "Budi", "budi@example.com", "cv.pdf", big)
 	rec := httptest.NewRecorder()
@@ -260,7 +260,7 @@ func TestApplyFileTooLarge(t *testing.T) {
 }
 
 func TestApplyDuplicate(t *testing.T) {
-	apply, _ := newApply(t, "log", fakeExtractor{text: "text"}, nil)
+	apply, _ := newApply(t, "log", fakeExtractor{text: "text"})
 
 	first, _ := multipartBody(t, "Budi", "budi@example.com", "cv.pdf", []byte("%PDF-1.4"))
 	apply.ServeHTTP(httptest.NewRecorder(), first)
@@ -279,7 +279,7 @@ func TestApplyDuplicate(t *testing.T) {
 }
 
 func TestApplyEmailCaseInsensitiveDuplicate(t *testing.T) {
-	apply, _ := newApply(t, "log", fakeExtractor{text: "text"}, nil)
+	apply, _ := newApply(t, "log", fakeExtractor{text: "text"})
 
 	first, _ := multipartBody(t, "Budi", "Budi@Example.com", "cv.pdf", []byte("%PDF-1.4"))
 	apply.ServeHTTP(httptest.NewRecorder(), first)

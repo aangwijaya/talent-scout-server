@@ -3,9 +3,11 @@ package handlers
 import (
 	"errors"
 	"io"
+	"log/slog"
 	"net/http"
 	"regexp"
 	"strings"
+	"time"
 	"unicode/utf8"
 
 	"github.com/go-chi/chi/v5"
@@ -13,7 +15,9 @@ import (
 	"github.com/aangwijaya/talent-scout-server/internal/config"
 	"github.com/aangwijaya/talent-scout-server/internal/cv"
 	"github.com/aangwijaya/talent-scout-server/internal/domain"
+	"github.com/aangwijaya/talent-scout-server/internal/email"
 	"github.com/aangwijaya/talent-scout-server/internal/http/apierror"
+	"github.com/aangwijaya/talent-scout-server/internal/session"
 	"github.com/aangwijaya/talent-scout-server/internal/storage"
 	"github.com/aangwijaya/talent-scout-server/internal/store"
 )
@@ -33,10 +37,11 @@ type Apply struct {
 	store   store.Store
 	storage storage.Storage
 	extract cv.Extractor
+	mailer  email.Mailer
 }
 
-func NewApply(cfg config.Config, st store.Store, s storage.Storage, e cv.Extractor) *Apply {
-	return &Apply{cfg: cfg, store: st, storage: s, extract: e}
+func NewApply(cfg config.Config, st store.Store, s storage.Storage, e cv.Extractor, m email.Mailer) *Apply {
+	return &Apply{cfg: cfg, store: st, storage: s, extract: e, mailer: m}
 }
 
 type applyResponse struct {
@@ -151,6 +156,30 @@ func (h *Apply) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 		apierror.Write(w, http.StatusInternalServerError, apierror.CodeInternalError, "could not create application", nil)
 		return
+	}
+
+	token, tokenHash, err := session.NewToken()
+	if err != nil {
+		apierror.Write(w, http.StatusInternalServerError, apierror.CodeInternalError, "could not create session", nil)
+		return
+	}
+	sess := domain.Session{
+		ID:            domain.NewID(),
+		ApplicationID: app.ID,
+		TokenHash:     tokenHash,
+		Status:        domain.SessionStatusInvited,
+		ExpiresAt:     time.Now().UTC().Add(time.Duration(h.cfg.SessionTTLHours) * time.Hour),
+	}
+	if err := h.store.CreateSession(r.Context(), sess); err != nil {
+		apierror.Write(w, http.StatusInternalServerError, apierror.CodeInternalError, "could not create session", nil)
+		return
+	}
+
+	if h.mailer != nil {
+		link := session.InviteURL(h.cfg.PublicAppURL, token)
+		if err := h.mailer.SendInvite(r.Context(), app.Email, app.Name, link); err != nil {
+			slog.Error("send screening invite failed", "error", err)
+		}
 	}
 
 	apierror.JSON(w, http.StatusCreated, applyResponse{

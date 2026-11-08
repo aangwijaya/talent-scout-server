@@ -197,6 +197,24 @@ func (p *Postgres) GetLatestSessionByApplication(ctx context.Context, applicatio
 	return session, nil
 }
 
+func (p *Postgres) ListSessionsByStatus(ctx context.Context, status domain.SessionStatus) ([]domain.Session, error) {
+	rows, err := p.pool.Query(ctx, `SELECT `+sessionColumns+` FROM sessions WHERE status = $1 ORDER BY created_at, id`, status)
+	if err != nil {
+		return nil, mapError(err)
+	}
+	defer rows.Close()
+
+	sessions := make([]domain.Session, 0)
+	for rows.Next() {
+		session, err := scanSession(rows)
+		if err != nil {
+			return nil, err
+		}
+		sessions = append(sessions, session)
+	}
+	return sessions, mapError(rows.Err())
+}
+
 func (p *Postgres) UpdateSession(ctx context.Context, session domain.Session) error {
 	tag, err := p.pool.Exec(ctx, `
 		UPDATE sessions SET

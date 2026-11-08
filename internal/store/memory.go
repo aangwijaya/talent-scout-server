@@ -241,6 +241,25 @@ func (m *Memory) GetLatestSessionByApplication(_ context.Context, applicationID 
 	return latest, nil
 }
 
+func (m *Memory) ListSessionsByStatus(_ context.Context, status domain.SessionStatus) ([]domain.Session, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	sessions := make([]domain.Session, 0)
+	for _, session := range m.sessions {
+		if session.Status == status {
+			sessions = append(sessions, session)
+		}
+	}
+	sort.Slice(sessions, func(i, j int) bool {
+		if sessions[i].CreatedAt.Equal(sessions[j].CreatedAt) {
+			return sessions[i].ID < sessions[j].ID
+		}
+		return sessions[i].CreatedAt.Before(sessions[j].CreatedAt)
+	})
+	return sessions, nil
+}
+
 func (m *Memory) UpdateSession(_ context.Context, session domain.Session) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()

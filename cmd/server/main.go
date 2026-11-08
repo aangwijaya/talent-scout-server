@@ -12,8 +12,10 @@ import (
 
 	"github.com/aangwijaya/talent-scout-server/internal/config"
 	"github.com/aangwijaya/talent-scout-server/internal/cv"
+	"github.com/aangwijaya/talent-scout-server/internal/email"
 	httpapi "github.com/aangwijaya/talent-scout-server/internal/http"
 	"github.com/aangwijaya/talent-scout-server/internal/http/handlers"
+	"github.com/aangwijaya/talent-scout-server/internal/session"
 	"github.com/aangwijaya/talent-scout-server/internal/storage"
 	"github.com/aangwijaya/talent-scout-server/internal/store"
 )
@@ -43,6 +45,8 @@ func main() {
 		st = store.NewPostgres(pool)
 	}
 
+	mailer := newMailer(cfg, logger)
+
 	server := &http.Server{
 		Addr: ":" + cfg.Port,
 		Handler: httpapi.NewRouter(cfg, httpapi.Deps{
@@ -50,12 +54,18 @@ func main() {
 			Store:     st,
 			Storage:   storage.NewSupabase(cfg.SupabaseURL, cfg.SupabaseStorageBucket, cfg.SupabaseServiceRoleKey),
 			Extractor: cv.NewPDF(),
+			Mailer:    mailer,
 		}),
 		ReadHeaderTimeout: 5 * time.Second,
 	}
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
+
+	if st != nil {
+		sweeper := session.NewSweeper(st, time.Duration(cfg.SessionMaxMinutes)*time.Minute, logger)
+		go sweeper.Run(ctx)
+	}
 
 	errCh := make(chan error, 1)
 	go func() {
@@ -78,4 +88,11 @@ func main() {
 		logger.Error("graceful shutdown", "error", err)
 		os.Exit(1)
 	}
+}
+
+func newMailer(cfg config.Config, logger *slog.Logger) email.Mailer {
+	if cfg.EmailMode == "gmail" {
+		return email.NewGmail(cfg.GmailClientID, cfg.GmailClientSecret, cfg.GmailRefreshToken, cfg.EmailFrom, logger)
+	}
+	return email.NewLog(logger)
 }

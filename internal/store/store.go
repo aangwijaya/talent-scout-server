@@ -70,6 +70,7 @@ type Store interface {
 	GetSession(ctx context.Context, id string) (domain.Session, error)
 	GetSessionByTokenHash(ctx context.Context, tokenHash string) (domain.Session, error)
 	GetLatestSessionByApplication(ctx context.Context, applicationID string) (domain.Session, error)
+	ListSessionsByStatus(ctx context.Context, status domain.SessionStatus) ([]domain.Session, error)
 	UpdateSession(ctx context.Context, session domain.Session) error
 
 	CreateTopics(ctx context.Context, topics []domain.Topic) error

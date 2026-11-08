@@ -42,6 +42,9 @@ type ReasoningConfig struct {
 // and max_retries are normally filled by the runner from config/models.yaml;
 // the caller supplies messages and, for JSON nodes, ResponseFormat.
 type Request struct {
+	// Node is the graph node id (planner, judge, …). The runner sets it so the
+	// fake can return a node-specific reply even when nodes share a model.
+	Node           string
 	Model          string
 	Messages       []Message
 	Temperature    float64
@@ -73,6 +76,11 @@ type Response struct {
 // for a non-retryable error). The graph translates it into an `error` event
 // with code `llm_unavailable`.
 var ErrUnavailable = errors.New("llm unavailable")
+
+// ErrTruncated is returned when the model stops at its token limit
+// (finish_reason "length") instead of completing. It is not retryable: a
+// truncated reply can never be treated as a valid (e.g. JSON) result.
+var ErrTruncated = errors.New("llm response truncated at max_tokens")
 
 // RetryableError marks an HTTP/transport failure that may be retried on the
 // same model.

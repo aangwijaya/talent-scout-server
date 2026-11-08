@@ -3,6 +3,7 @@ package graph
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -231,6 +232,90 @@ func TestRunCompletedTotals(t *testing.T) {
 	}
 }
 
+func TestRunnerFakeRepliesPerNode(t *testing.T) {
+	ctx := context.Background()
+	st := store.NewMemory()
+	runID := domain.NewID()
+	sessionID := domain.NewID()
+	if err := st.CreateGraphRun(ctx, domain.GraphRun{ID: runID, SessionID: sessionID, Status: domain.GraphRunStatusRunning}); err != nil {
+		t.Fatalf("CreateGraphRun: %v", err)
+	}
+	fake := llm.NewFake(map[string]string{"planner": "plan-reply", "judge": "judge-reply"})
+	runner := NewRunner(st, NewBus(st), fake, testModels(), runID, sessionID)
+
+	planner, err := runner.RunLLMNode(ctx, "planner", llm.Request{Messages: []llm.Message{{Role: llm.RoleUser, Content: "x"}}}, "", nil)
+	if err != nil {
+		t.Fatalf("RunLLMNode(planner): %v", err)
+	}
+	judge, err := runner.RunLLMNode(ctx, "judge", llm.Request{Messages: []llm.Message{{Role: llm.RoleUser, Content: "x"}}}, "", nil)
+	if err != nil {
+		t.Fatalf("RunLLMNode(judge): %v", err)
+	}
+	if planner.Content != "plan-reply" || judge.Content != "judge-reply" {
+		t.Errorf("Content = %q/%q, want plan-reply/judge-reply", planner.Content, judge.Content)
+	}
+}
+
+func TestRunTotalsSumNodeCompleted(t *testing.T) {
+	runner, st, ctx := newRunner(t)
+
+	for _, nodeID := range []string{"planner", "judge"} {
+		if _, err := runner.RunLLMNode(ctx, nodeID, llm.Request{
+			Messages: []llm.Message{{Role: llm.RoleUser, Content: "some prompt text"}},
+		}, "", nil); err != nil {
+			t.Fatalf("RunLLMNode(%s): %v", nodeID, err)
+		}
+	}
+	if err := runner.Complete(ctx, "completed", 0); err != nil {
+		t.Fatalf("Complete: %v", err)
+	}
+
+	events, err := st.ListNodeEvents(ctx, runner.RunID(), 0)
+	if err != nil {
+		t.Fatalf("ListNodeEvents: %v", err)
+	}
+	var wantIn, wantOut int
+	var wantCost float64
+	var runCompleted *RunCompleted
+	for _, e := range events {
+		switch e.Type {
+		case EventNodeCompleted:
+			var payload NodeCompleted
+			if err := json.Unmarshal(e.Payload, &payload); err != nil {
+				t.Fatalf("unmarshal node.completed: %v", err)
+			}
+			wantIn += payload.TokensIn
+			wantOut += payload.TokensOut
+			wantCost += payload.CostUSD
+		case EventRunCompleted:
+			var payload RunCompleted
+			if err := json.Unmarshal(e.Payload, &payload); err != nil {
+				t.Fatalf("unmarshal run.completed: %v", err)
+			}
+			runCompleted = &payload
+		}
+	}
+	if runCompleted == nil {
+		t.Fatal("no run.completed event")
+	}
+	if wantIn == 0 || wantOut == 0 || wantCost == 0 {
+		t.Fatalf("node sums = %d/%d/%v, want all positive", wantIn, wantOut, wantCost)
+	}
+	if runCompleted.TotalTokensIn != wantIn || runCompleted.TotalTokensOut != wantOut || runCompleted.CostUSD != wantCost {
+		t.Errorf("run.completed = %d/%d/%v, want sums %d/%d/%v",
+			runCompleted.TotalTokensIn, runCompleted.TotalTokensOut, runCompleted.CostUSD, wantIn, wantOut, wantCost)
+	}
+
+	run, err := st.GetGraphRun(ctx, runner.RunID())
+	if err != nil {
+		t.Fatalf("GetGraphRun: %v", err)
+	}
+	if run.TotalTokensIn != wantIn || run.TotalTokensOut != wantOut || run.CostUSD != wantCost {
+		t.Errorf("stored graph_run = %d/%d/%v, want sums %d/%d/%v",
+			run.TotalTokensIn, run.TotalTokensOut, run.CostUSD, wantIn, wantOut, wantCost)
+	}
+}
+
 func TestRunnerTransportRetryChoreography(t *testing.T) {
 	ctx := context.Background()
 
@@ -294,6 +379,47 @@ func TestRunnerTransportRetryChoreography(t *testing.T) {
 	}
 	if events[3].Attempt == nil || *events[3].Attempt != 2 {
 		t.Errorf("node.completed attempt = %v, want 2", events[3].Attempt)
+	}
+}
+
+func TestRunnerTruncationEmitsNodeFailed(t *testing.T) {
+	ctx := context.Background()
+
+	var calls int
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls++
+		fmt.Fprint(w, `{"choices":[{"message":{"content":"{\"partial\":"},"finish_reason":"length"}],"usage":{}}`)
+	}))
+	defer srv.Close()
+
+	st := store.NewMemory()
+	runID := domain.NewID()
+	sessionID := domain.NewID()
+	if err := st.CreateGraphRun(ctx, domain.GraphRun{ID: runID, SessionID: sessionID, Status: domain.GraphRunStatusRunning}); err != nil {
+		t.Fatalf("CreateGraphRun: %v", err)
+	}
+	runner := NewRunner(st, NewBus(st), llm.NewOpenRouter(srv.URL, "k", nil), testModels(), runID, sessionID)
+
+	_, err := runner.RunLLMNode(ctx, "judge", llm.Request{
+		Messages: []llm.Message{{Role: llm.RoleUser, Content: "verdict"}},
+	}, "", nil)
+	if !errors.Is(err, llm.ErrTruncated) {
+		t.Fatalf("error = %v, want ErrTruncated", err)
+	}
+	if calls != 1 {
+		t.Errorf("calls = %d, want 1 (truncation is not retryable)", calls)
+	}
+
+	events, _ := st.ListNodeEvents(ctx, runID, 0)
+	if len(events) != 2 || events[0].Type != EventNodeStarted || events[1].Type != EventNodeFailed {
+		t.Fatalf("event types = %v, want [node.started node.failed]", eventTypes(t, st, runID))
+	}
+	var failed NodeFailed
+	if err := json.Unmarshal(events[1].Payload, &failed); err != nil {
+		t.Fatalf("unmarshal node.failed: %v", err)
+	}
+	if failed.WillRetry {
+		t.Errorf("node.failed will_retry = true, want false for truncation")
 	}
 }
 

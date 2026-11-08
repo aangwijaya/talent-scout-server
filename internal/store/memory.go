@@ -569,10 +569,17 @@ func (m *Memory) UpdateGraphRun(_ context.Context, run domain.GraphRun) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	if _, ok := m.graphRuns[run.ID]; !ok {
+	existing, ok := m.graphRuns[run.ID]
+	if !ok {
 		return ErrNotFound
 	}
-	m.graphRuns[run.ID] = run
+	existing.Status = run.Status
+	existing.EndedAt = run.EndedAt
+	existing.TotalTokensIn = run.TotalTokensIn
+	existing.TotalTokensOut = run.TotalTokensOut
+	existing.CostUSD = run.CostUSD
+	existing.Error = run.Error
+	m.graphRuns[run.ID] = existing
 	return nil
 }
 

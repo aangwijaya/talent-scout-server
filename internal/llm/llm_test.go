@@ -223,6 +223,108 @@ func TestOpenRouterStream(t *testing.T) {
 	}
 }
 
+func TestOpenRouterAlwaysSendsTemperature(t *testing.T) {
+	var gotBody []byte
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotBody = make([]byte, r.ContentLength)
+		r.Body.Read(gotBody)
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprint(w, `{"choices":[{"message":{"content":"{}"},"finish_reason":"stop"}],"usage":{}}`)
+	}))
+	defer srv.Close()
+
+	c := NewOpenRouter(srv.URL, "k", nil)
+	if _, err := c.Chat(context.Background(), Request{
+		Model:       "m",
+		Messages:    []Message{{Role: RoleUser, Content: "x"}},
+		Temperature: 0,
+	}); err != nil {
+		t.Fatalf("Chat: %v", err)
+	}
+
+	var raw map[string]json.RawMessage
+	if err := json.Unmarshal(gotBody, &raw); err != nil {
+		t.Fatalf("unmarshal request body: %v", err)
+	}
+	temp, ok := raw["temperature"]
+	if !ok {
+		t.Fatalf("temperature missing from body: %s", gotBody)
+	}
+	if string(temp) != "0" {
+		t.Errorf("temperature = %s, want 0", temp)
+	}
+}
+
+func TestOpenRouterTruncatedChatReturnsErrTruncated(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprint(w, `{"choices":[{"message":{"content":"{\"partial\":"},"finish_reason":"length"}],"usage":{"prompt_tokens":1,"completion_tokens":1}}`)
+	}))
+	defer srv.Close()
+
+	c := NewOpenRouter(srv.URL, "k", nil)
+	_, err := c.Chat(context.Background(), Request{
+		Model:    "m",
+		Messages: []Message{{Role: RoleUser, Content: "x"}},
+	})
+	if !errors.Is(err, ErrTruncated) {
+		t.Fatalf("error = %v, want ErrTruncated", err)
+	}
+	if errors.Is(err, ErrUnavailable) {
+		t.Errorf("error = %v, want a non-retryable truncation error", err)
+	}
+}
+
+func TestOpenRouterTruncatedStreamReturnsErrTruncated(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		fmt.Fprint(w, "data: {\"choices\":[{\"delta\":{\"content\":\"{\\\"partial\\\":\"}}]}\n\n")
+		fmt.Fprint(w, "data: {\"choices\":[{\"delta\":{},\"finish_reason\":\"length\"}]}\n\n")
+		fmt.Fprint(w, "data: [DONE]\n\n")
+	}))
+	defer srv.Close()
+
+	c := NewOpenRouter(srv.URL, "k", nil)
+	_, err := c.Stream(context.Background(), Request{
+		Model:    "m",
+		Messages: []Message{{Role: RoleUser, Content: "x"}},
+	}, func(string) error { return nil })
+	if !errors.Is(err, ErrTruncated) {
+		t.Fatalf("error = %v, want ErrTruncated", err)
+	}
+	if errors.Is(err, ErrUnavailable) {
+		t.Errorf("error = %v, want a non-retryable truncation error", err)
+	}
+}
+
+func TestFakePerNode(t *testing.T) {
+	f := NewFake(map[string]string{
+		"planner": "plan-reply",
+		"judge":   "judge-reply",
+		"m":       "model-reply",
+	})
+
+	planner, err := f.Chat(context.Background(), Request{Node: "planner", Model: "m", Messages: []Message{{Role: RoleUser, Content: "q"}}})
+	if err != nil {
+		t.Fatalf("Chat(planner): %v", err)
+	}
+	judge, err := f.Chat(context.Background(), Request{Node: "judge", Model: "m", Messages: []Message{{Role: RoleUser, Content: "q"}}})
+	if err != nil {
+		t.Fatalf("Chat(judge): %v", err)
+	}
+	if planner.Content != "plan-reply" || judge.Content != "judge-reply" {
+		t.Fatalf("Content = %q/%q, want plan-reply/judge-reply", planner.Content, judge.Content)
+	}
+
+	byModel, err := f.Chat(context.Background(), Request{Node: "scorer", Model: "m", Messages: []Message{{Role: RoleUser, Content: "q"}}})
+	if err != nil {
+		t.Fatalf("Chat(scorer): %v", err)
+	}
+	if byModel.Content != "model-reply" {
+		t.Errorf("Content = %q, want model fallback model-reply", byModel.Content)
+	}
+}
+
 func TestNewFactory(t *testing.T) {
 	fake, err := New("fake", "", "")
 	if err != nil {

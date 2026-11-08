@@ -54,6 +54,7 @@ func (r *Runner) RunLLMNode(ctx context.Context, nodeID string, req llm.Request,
 	if err != nil {
 		return llm.Response{}, err
 	}
+	req.Node = nodeID
 	req.Model = node.Model
 	req.Temperature = r.models.Temperature(nodeID)
 	req.MaxTokens = node.MaxTokens

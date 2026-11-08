@@ -8,9 +8,9 @@ type Fake struct {
 	responses map[string]string
 }
 
-// NewFake returns a Fake client. responses maps model id (which is 1:1 with a
-// graph node) to a canned reply; models without an entry return a deterministic
-// default.
+// NewFake returns a Fake client. responses maps a graph node id (preferred, so
+// nodes sharing a model get distinct replies) or a model id to a canned reply;
+// anything without an entry returns a deterministic default.
 func NewFake(responses map[string]string) *Fake {
 	return &Fake{responses: responses}
 }
@@ -30,10 +30,14 @@ func (f *Fake) Stream(_ context.Context, req Request, onDelta func(string) error
 	return Response{Content: content, Usage: fakeUsage(req, content)}, nil
 }
 
-// content returns the canned reply for the model, or a deterministic default.
-// JSON nodes default to an empty object so callers that unmarshal succeed.
+// content returns the canned reply for the node (first), then the model, or a
+// deterministic default. JSON nodes default to an empty object so callers that
+// unmarshal succeed.
 func (f *Fake) content(req Request) string {
 	if f.responses != nil {
+		if c, ok := f.responses[req.Node]; ok && req.Node != "" {
+			return c
+		}
 		if c, ok := f.responses[req.Model]; ok {
 			return c
 		}

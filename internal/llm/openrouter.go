@@ -33,7 +33,7 @@ func NewOpenRouter(baseURL, apiKey string, client *http.Client) *OpenRouter {
 type chatRequest struct {
 	Model          string           `json:"model"`
 	Messages       []Message        `json:"messages"`
-	Temperature    float64          `json:"temperature,omitempty"`
+	Temperature    float64          `json:"temperature"`
 	MaxTokens      int              `json:"max_tokens,omitempty"`
 	Stream         bool             `json:"stream,omitempty"`
 	ResponseFormat *responseFormat  `json:"response_format,omitempty"`
@@ -61,6 +61,7 @@ type chatResponse struct {
 		Message struct {
 			Content string `json:"content"`
 		} `json:"message"`
+		FinishReason string `json:"finish_reason"`
 	} `json:"choices"`
 	Usage struct {
 		PromptTokens     int `json:"prompt_tokens"`
@@ -179,6 +180,9 @@ func parseChat(r io.Reader) (Response, error) {
 	if len(cr.Choices) == 0 {
 		return Response{}, errors.New("empty choices")
 	}
+	if cr.Choices[0].FinishReason == "length" {
+		return Response{}, ErrTruncated
+	}
 	return Response{
 		Content: cr.Choices[0].Message.Content,
 		Usage: Usage{
@@ -207,6 +211,7 @@ func parseStream(r io.Reader, onDelta func(string) error) (Response, error) {
 				Delta struct {
 					Content string `json:"content"`
 				} `json:"delta"`
+				FinishReason string `json:"finish_reason"`
 			} `json:"choices"`
 			Usage *struct {
 				PromptTokens     int `json:"prompt_tokens"`
@@ -220,6 +225,9 @@ func parseStream(r io.Reader, onDelta func(string) error) (Response, error) {
 			usage = Usage{PromptTokens: chunk.Usage.PromptTokens, CompletionTokens: chunk.Usage.CompletionTokens}
 		}
 		for _, choice := range chunk.Choices {
+			if choice.FinishReason == "length" {
+				return Response{}, ErrTruncated
+			}
 			if choice.Delta.Content != "" {
 				full.WriteString(choice.Delta.Content)
 				if err := onDelta(choice.Delta.Content); err != nil {

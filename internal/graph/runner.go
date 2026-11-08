@@ -44,12 +44,13 @@ func (r *Runner) Start(ctx context.Context) error {
 	return err
 }
 
-// RunLLMNode runs an LLM node exactly once per attempt, applying the model
-// config from config/models.yaml and the §6.3 transport-retry choreography:
-// node.started(attempt=1), on a retryable failure node.failed(will_retry=true)
-// + node.started(attempt=2), then node.completed or node.failed(will_retry=false).
-// onDelta receives streamed chunks (ignored for non-stream nodes).
-func (r *Runner) RunLLMNode(ctx context.Context, nodeID string, req llm.Request, inputSummary string, onDelta func(string) error) (llm.Response, error) {
+// RunLLMNode runs an LLM node once for the given loop attempt, applying the
+// model config from config/models.yaml and the §6.3 transport-retry
+// choreography. attempt is the 1-based loop attempt supplied by the caller
+// (e.g. 2 after loop.retry for planner/scorer); a transport retry increments
+// the same counter, so numbering stays consistent across loop and transport
+// retries. onDelta receives streamed chunks (ignored for non-stream nodes).
+func (r *Runner) RunLLMNode(ctx context.Context, nodeID string, attempt int, req llm.Request, inputSummary string, onDelta func(string) error) (llm.Response, error) {
 	node, err := r.models.Node(nodeID)
 	if err != nil {
 		return llm.Response{}, err
@@ -66,16 +67,19 @@ func (r *Runner) RunLLMNode(ctx context.Context, nodeID string, req llm.Request,
 	}
 
 	model := node.Model
-	attempt := 1
+	currentAttempt := attempt
 	start := time.Now()
 	req.OnRetry = func(failedAttempt int, err error) {
-		_ = r.emitNodeFailed(ctx, nodeID, failedAttempt, &model, err.Error(), true)
-		attempt = failedAttempt + 1
+		// failedAttempt is local to this LLM call (1 on the first transport
+		// retry); offset it by the loop attempt so numbering is continuous.
+		failed := attempt + failedAttempt - 1
+		_ = r.emitNodeFailed(ctx, nodeID, failed, &model, err.Error(), true)
+		currentAttempt = failed + 1
 		start = time.Now()
-		_ = r.emitNodeStarted(ctx, nodeID, attempt, &model, inputSummary)
+		_ = r.emitNodeStarted(ctx, nodeID, currentAttempt, &model, inputSummary)
 	}
 
-	if err := r.emitNodeStarted(ctx, nodeID, 1, &model, inputSummary); err != nil {
+	if err := r.emitNodeStarted(ctx, nodeID, currentAttempt, &model, inputSummary); err != nil {
 		return llm.Response{}, err
 	}
 
@@ -86,11 +90,11 @@ func (r *Runner) RunLLMNode(ctx context.Context, nodeID string, req llm.Request,
 		resp, err = r.llm.Chat(ctx, req)
 	}
 	if err != nil {
-		_ = r.emitNodeFailed(ctx, nodeID, attempt, &model, err.Error(), false)
+		_ = r.emitNodeFailed(ctx, nodeID, currentAttempt, &model, err.Error(), false)
 		return llm.Response{}, err
 	}
 
-	if err := r.emitNodeCompleted(ctx, nodeID, attempt, &model, summarize(resp.Content, 80),
+	if err := r.emitNodeCompleted(ctx, nodeID, currentAttempt, &model, summarize(resp.Content, 80),
 		resp.Usage.PromptTokens, resp.Usage.CompletionTokens, time.Since(start)); err != nil {
 		return llm.Response{}, err
 	}

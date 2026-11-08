@@ -23,6 +23,7 @@ func testModels() config.ModelsConfig {
 			"planner":     {Model: "deepseek/deepseek-v4.1-flash", Temperature: f64(0.2), MaxTokens: 800},
 			"interviewer": {Model: "z-ai/glm-5.3-flash", MaxTokens: 300, Stream: true},
 			"judge":       {Model: "deepseek/deepseek-v4.1-flash", MaxTokens: 200},
+			"scorer":      {Model: "deepseek/deepseek-v4.1-flash", MaxTokens: 1200},
 		},
 		Prices: map[string]config.Price{
 			"deepseek/deepseek-v4.1-flash": {In: 0.045, Out: 0.5},
@@ -67,7 +68,7 @@ func TestRunnerEventOrder(t *testing.T) {
 		t.Fatalf("Start: %v", err)
 	}
 
-	if _, err := runner.RunLLMNode(ctx, "planner", llm.Request{
+	if _, err := runner.RunLLMNode(ctx, "planner", 1, llm.Request{
 		Messages: []llm.Message{{Role: llm.RoleUser, Content: "plan this"}},
 	}, "", nil); err != nil {
 		t.Fatalf("RunLLMNode(planner): %v", err)
@@ -116,7 +117,7 @@ func TestRunnerEventSeqMonotonic(t *testing.T) {
 	if err := runner.Start(ctx); err != nil {
 		t.Fatalf("Start: %v", err)
 	}
-	if _, err := runner.RunLLMNode(ctx, "planner", llm.Request{Messages: []llm.Message{{Role: llm.RoleUser, Content: "x"}}}, "", nil); err != nil {
+	if _, err := runner.RunLLMNode(ctx, "planner", 1, llm.Request{Messages: []llm.Message{{Role: llm.RoleUser, Content: "x"}}}, "", nil); err != nil {
 		t.Fatalf("RunLLMNode: %v", err)
 	}
 	if err := runner.Complete(ctx, "completed", 0); err != nil {
@@ -183,7 +184,7 @@ func TestRunStartedIncludesPlannerRetryEdge(t *testing.T) {
 func TestNodeCompletedRecordsTokensAndCost(t *testing.T) {
 	runner, st, ctx := newRunner(t)
 
-	if _, err := runner.RunLLMNode(ctx, "planner", llm.Request{
+	if _, err := runner.RunLLMNode(ctx, "planner", 1, llm.Request{
 		Messages: []llm.Message{{Role: llm.RoleUser, Content: "a reasonably long prompt"}},
 	}, "", nil); err != nil {
 		t.Fatalf("RunLLMNode: %v", err)
@@ -217,7 +218,7 @@ func TestNodeCompletedRecordsTokensAndCost(t *testing.T) {
 func TestRunCompletedTotals(t *testing.T) {
 	runner, st, ctx := newRunner(t)
 
-	if _, err := runner.RunLLMNode(ctx, "planner", llm.Request{Messages: []llm.Message{{Role: llm.RoleUser, Content: "x"}}}, "", nil); err != nil {
+	if _, err := runner.RunLLMNode(ctx, "planner", 1, llm.Request{Messages: []llm.Message{{Role: llm.RoleUser, Content: "x"}}}, "", nil); err != nil {
 		t.Fatalf("RunLLMNode: %v", err)
 	}
 	if err := runner.Complete(ctx, "completed", 2); err != nil {
@@ -266,11 +267,11 @@ func TestRunnerFakeRepliesPerNode(t *testing.T) {
 	fake := llm.NewFake(map[string]string{"planner": "plan-reply", "judge": "judge-reply"})
 	runner := NewRunner(st, NewBus(st), fake, testModels(), runID, sessionID)
 
-	planner, err := runner.RunLLMNode(ctx, "planner", llm.Request{Messages: []llm.Message{{Role: llm.RoleUser, Content: "x"}}}, "", nil)
+	planner, err := runner.RunLLMNode(ctx, "planner", 1, llm.Request{Messages: []llm.Message{{Role: llm.RoleUser, Content: "x"}}}, "", nil)
 	if err != nil {
 		t.Fatalf("RunLLMNode(planner): %v", err)
 	}
-	judge, err := runner.RunLLMNode(ctx, "judge", llm.Request{Messages: []llm.Message{{Role: llm.RoleUser, Content: "x"}}}, "", nil)
+	judge, err := runner.RunLLMNode(ctx, "judge", 1, llm.Request{Messages: []llm.Message{{Role: llm.RoleUser, Content: "x"}}}, "", nil)
 	if err != nil {
 		t.Fatalf("RunLLMNode(judge): %v", err)
 	}
@@ -283,7 +284,7 @@ func TestRunTotalsSumNodeCompleted(t *testing.T) {
 	runner, st, ctx := newRunner(t)
 
 	for _, nodeID := range []string{"planner", "judge"} {
-		if _, err := runner.RunLLMNode(ctx, nodeID, llm.Request{
+		if _, err := runner.RunLLMNode(ctx, nodeID, 1, llm.Request{
 			Messages: []llm.Message{{Role: llm.RoleUser, Content: "some prompt text"}},
 		}, "", nil); err != nil {
 			t.Fatalf("RunLLMNode(%s): %v", nodeID, err)
@@ -362,7 +363,7 @@ func TestRunnerTransportRetryChoreography(t *testing.T) {
 
 	runner := NewRunner(st, NewBus(st), llm.NewOpenRouter(srv.URL, "k", nil), testModels(), runID, sessionID)
 
-	resp, err := runner.RunLLMNode(ctx, "judge", llm.Request{
+	resp, err := runner.RunLLMNode(ctx, "judge", 1, llm.Request{
 		Messages: []llm.Message{{Role: llm.RoleUser, Content: "verdict"}},
 	}, "", nil)
 	if err != nil {
@@ -405,6 +406,93 @@ func TestRunnerTransportRetryChoreography(t *testing.T) {
 	}
 }
 
+func TestRunnerLLMNodeHonorsLoopAttempt(t *testing.T) {
+	runner, st, ctx := newRunner(t)
+
+	for _, attempt := range []int{1, 2} {
+		if attempt == 2 {
+			if err := runner.EmitLoopRetry(ctx, "planner", 2, 2, "invalid_plan", "fix it"); err != nil {
+				t.Fatalf("EmitLoopRetry: %v", err)
+			}
+		}
+		if _, err := runner.RunLLMNode(ctx, "planner", attempt, llm.Request{
+			Messages: []llm.Message{{Role: llm.RoleUser, Content: "plan"}},
+		}, "", nil); err != nil {
+			t.Fatalf("RunLLMNode(attempt %d): %v", attempt, err)
+		}
+	}
+
+	events, err := st.ListNodeEvents(ctx, runner.RunID(), 0)
+	if err != nil {
+		t.Fatalf("ListNodeEvents: %v", err)
+	}
+	var started []int
+	for _, e := range events {
+		if e.Type == EventNodeStarted && e.NodeID != nil && *e.NodeID == "planner" {
+			if e.Attempt == nil {
+				t.Fatal("planner node.started has nil attempt")
+			}
+			started = append(started, *e.Attempt)
+		}
+	}
+	want := []int{1, 2}
+	if len(started) != len(want) {
+		t.Fatalf("planner node.started attempts = %v, want %v", started, want)
+	}
+	for i := range want {
+		if started[i] != want[i] {
+			t.Errorf("node.started[%d] attempt = %d, want %d (after loop.retry(attempt=2))", i, started[i], want[i])
+		}
+	}
+}
+
+func TestRunnerTransportRetryContinuesLoopAttemptNumbering(t *testing.T) {
+	ctx := context.Background()
+
+	var calls int
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls++
+		if calls == 1 {
+			w.WriteHeader(http.StatusInternalServerError)
+			return
+		}
+		fmt.Fprint(w, `{"choices":[{"message":{"content":"scored"}}],"usage":{"prompt_tokens":8,"completion_tokens":2}}`)
+	}))
+	defer srv.Close()
+
+	st := store.NewMemory()
+	runID := domain.NewID()
+	sessionID := domain.NewID()
+	if err := st.CreateGraphRun(ctx, domain.GraphRun{ID: runID, SessionID: sessionID, Status: domain.GraphRunStatusRunning}); err != nil {
+		t.Fatalf("CreateGraphRun: %v", err)
+	}
+	runner := NewRunner(st, NewBus(st), llm.NewOpenRouter(srv.URL, "k", nil), testModels(), runID, sessionID)
+
+	if _, err := runner.RunLLMNode(ctx, "scorer", 2, llm.Request{
+		Messages: []llm.Message{{Role: llm.RoleUser, Content: "score"}},
+	}, "", nil); err != nil {
+		t.Fatalf("RunLLMNode: %v", err)
+	}
+
+	events, err := st.ListNodeEvents(ctx, runID, 0)
+	if err != nil {
+		t.Fatalf("ListNodeEvents: %v", err)
+	}
+	wantTypes := []string{EventNodeStarted, EventNodeFailed, EventNodeStarted, EventNodeCompleted}
+	wantAttempts := []int{2, 2, 3, 3}
+	if len(events) != len(wantTypes) {
+		t.Fatalf("event types = %v, want %v", eventTypes(t, st, runID), wantTypes)
+	}
+	for i := range wantTypes {
+		if events[i].Type != wantTypes[i] {
+			t.Errorf("event[%d] = %q, want %q", i, events[i].Type, wantTypes[i])
+		}
+		if events[i].Attempt == nil || *events[i].Attempt != wantAttempts[i] {
+			t.Errorf("event[%d] attempt = %v, want %d", i, events[i].Attempt, wantAttempts[i])
+		}
+	}
+}
+
 func TestRunnerTruncationEmitsNodeFailed(t *testing.T) {
 	ctx := context.Background()
 
@@ -423,7 +511,7 @@ func TestRunnerTruncationEmitsNodeFailed(t *testing.T) {
 	}
 	runner := NewRunner(st, NewBus(st), llm.NewOpenRouter(srv.URL, "k", nil), testModels(), runID, sessionID)
 
-	_, err := runner.RunLLMNode(ctx, "judge", llm.Request{
+	_, err := runner.RunLLMNode(ctx, "judge", 1, llm.Request{
 		Messages: []llm.Message{{Role: llm.RoleUser, Content: "verdict"}},
 	}, "", nil)
 	if !errors.Is(err, llm.ErrTruncated) {

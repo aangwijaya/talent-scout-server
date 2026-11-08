@@ -56,11 +56,13 @@ func (s *Sweeper) SweepOnce(ctx context.Context) (expired, abandoned int, err er
 		if sess.ExpiresAt.After(now) {
 			continue
 		}
-		sess.Status = domain.SessionStatusExpired
-		if err := s.store.UpdateSession(ctx, sess); err != nil {
+		changed, err := s.store.ExpireSession(ctx, sess.ID, now)
+		if err != nil {
 			return expired, abandoned, err
 		}
-		expired++
+		if changed {
+			expired++
+		}
 	}
 
 	active, err := s.store.ListSessionsByStatus(ctx, domain.SessionStatusActive)
@@ -71,15 +73,13 @@ func (s *Sweeper) SweepOnce(ctx context.Context) (expired, abandoned int, err er
 		if sess.StartedAt == nil || sess.StartedAt.Add(s.maxMinutes).After(now) {
 			continue
 		}
-		sess.Status = domain.SessionStatusCompleted
-		reason := domain.FinishReasonAbandoned
-		sess.FinishReason = &reason
-		ended := now
-		sess.EndedAt = &ended
-		if err := s.store.UpdateSession(ctx, sess); err != nil {
+		changed, err := s.store.AbandonSession(ctx, sess.ID, now)
+		if err != nil {
 			return expired, abandoned, err
 		}
-		abandoned++
+		if changed {
+			abandoned++
+		}
 	}
 	return expired, abandoned, nil
 }

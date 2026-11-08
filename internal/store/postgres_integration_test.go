@@ -75,7 +75,7 @@ func TestPostgresStore(t *testing.T) {
 		Email:        "budi@example.com",
 		CVObjectPath: "cv.pdf",
 		CVText:       "text",
-		Status:       domain.ApplicationStatusApplied,
+		Status:       domain.ApplicationStatusInvited,
 	}
 	if err := s.CreateApplication(ctx, app); err != nil {
 		t.Fatalf("CreateApplication: %v", err)
@@ -109,6 +109,109 @@ func TestPostgresStore(t *testing.T) {
 	}
 	if _, err := s.StartSession(ctx, domain.NewID(), startedAt); !errors.Is(err, store.ErrNotFound) {
 		t.Fatalf("unknown StartSession = %v, want ErrNotFound", err)
+	}
+	startedApp, err := s.GetApplication(ctx, app.ID)
+	if err != nil {
+		t.Fatalf("GetApplication after start: %v", err)
+	}
+	if startedApp.Status != domain.ApplicationStatusInSession {
+		t.Fatalf("application status after start = %q, want in_session", startedApp.Status)
+	}
+
+	app2 := domain.Application{
+		ID:           domain.NewID(),
+		JobID:        job.ID,
+		Name:         "Sari",
+		Email:        "sari@example.com",
+		CVObjectPath: "cv2.pdf",
+		CVText:       "text2",
+		Status:       domain.ApplicationStatusInvited,
+	}
+	sess2 := domain.Session{
+		ID:            domain.NewID(),
+		ApplicationID: app2.ID,
+		TokenHash:     "hash2",
+		Status:        domain.SessionStatusInvited,
+		ExpiresAt:     expiresAt,
+	}
+	if err := s.CreateApplicationWithSession(ctx, app2, sess2); err != nil {
+		t.Fatalf("CreateApplicationWithSession: %v", err)
+	}
+	if got, err := s.GetSessionByTokenHash(ctx, "hash2"); err != nil || got.ApplicationID != app2.ID {
+		t.Fatalf("CreateApplicationWithSession session = %+v, %v", got, err)
+	}
+
+	dupApp := domain.Application{
+		ID:           domain.NewID(),
+		JobID:        job.ID,
+		Name:         "Sari",
+		Email:        "sari@example.com",
+		CVObjectPath: "cv3.pdf",
+		CVText:       "text3",
+		Status:       domain.ApplicationStatusInvited,
+	}
+	dupSess := domain.Session{
+		ID:            domain.NewID(),
+		ApplicationID: dupApp.ID,
+		TokenHash:     "hash-dup",
+		Status:        domain.SessionStatusInvited,
+		ExpiresAt:     expiresAt,
+	}
+	if err := s.CreateApplicationWithSession(ctx, dupApp, dupSess); !errors.Is(err, store.ErrConflict) {
+		t.Fatalf("duplicate CreateApplicationWithSession = %v, want ErrConflict", err)
+	}
+	if _, err := s.GetApplication(ctx, dupApp.ID); !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("duplicate application should not exist, err = %v", err)
+	}
+
+	expiredSess := domain.Session{
+		ID:            domain.NewID(),
+		ApplicationID: app2.ID,
+		TokenHash:     "hash-expired",
+		Status:        domain.SessionStatusInvited,
+		ExpiresAt:     time.Now().Add(-time.Hour).UTC(),
+	}
+	if err := s.CreateSession(ctx, expiredSess); err != nil {
+		t.Fatalf("CreateSession expired: %v", err)
+	}
+	changed, err := s.ExpireSession(ctx, expiredSess.ID, time.Now().UTC())
+	if err != nil || !changed {
+		t.Fatalf("ExpireSession = %v, %v; want true, nil", changed, err)
+	}
+	if got, _ := s.GetSession(ctx, expiredSess.ID); got.Status != domain.SessionStatusExpired {
+		t.Fatalf("expired session status = %q, want expired", got.Status)
+	}
+	changed, err = s.ExpireSession(ctx, expiredSess.ID, time.Now().UTC())
+	if err != nil || changed {
+		t.Fatalf("second ExpireSession = %v, %v; want false, nil", changed, err)
+	}
+
+	activeStarted := time.Now().Add(-2 * time.Hour).UTC()
+	activeSess := domain.Session{
+		ID:            domain.NewID(),
+		ApplicationID: app2.ID,
+		TokenHash:     "hash-active",
+		Status:        domain.SessionStatusActive,
+		ExpiresAt:     expiresAt,
+		StartedAt:     &activeStarted,
+	}
+	if err := s.CreateSession(ctx, activeSess); err != nil {
+		t.Fatalf("CreateSession active: %v", err)
+	}
+	changed, err = s.AbandonSession(ctx, activeSess.ID, time.Now().UTC())
+	if err != nil || !changed {
+		t.Fatalf("AbandonSession = %v, %v; want true, nil", changed, err)
+	}
+	gotAbandoned, err := s.GetSession(ctx, activeSess.ID)
+	if err != nil {
+		t.Fatalf("GetSession abandoned: %v", err)
+	}
+	if gotAbandoned.Status != domain.SessionStatusCompleted || gotAbandoned.FinishReason == nil || *gotAbandoned.FinishReason != domain.FinishReasonAbandoned || gotAbandoned.EndedAt == nil {
+		t.Fatalf("abandoned session = %+v", gotAbandoned)
+	}
+	changed, err = s.AbandonSession(ctx, activeSess.ID, time.Now().UTC())
+	if err != nil || changed {
+		t.Fatalf("second AbandonSession = %v, %v; want false, nil", changed, err)
 	}
 
 	topic := domain.Topic{

@@ -60,6 +60,7 @@ type Store interface {
 	ListJobs(ctx context.Context) ([]domain.Job, error)
 
 	CreateApplication(ctx context.Context, app domain.Application) error
+	CreateApplicationWithSession(ctx context.Context, app domain.Application, session domain.Session) error
 	GetApplication(ctx context.Context, id string) (domain.Application, error)
 	GetApplicationByJobEmail(ctx context.Context, jobID, email string) (domain.Application, error)
 	ListApplicationsByJob(ctx context.Context, jobID string, status *domain.ApplicationStatus) ([]domain.Application, error)
@@ -73,6 +74,8 @@ type Store interface {
 	ListSessionsByStatus(ctx context.Context, status domain.SessionStatus) ([]domain.Session, error)
 	UpdateSession(ctx context.Context, session domain.Session) error
 	StartSession(ctx context.Context, id string, startedAt time.Time) (domain.Session, error)
+	ExpireSession(ctx context.Context, id string, now time.Time) (bool, error)
+	AbandonSession(ctx context.Context, id string, now time.Time) (bool, error)
 
 	CreateTopics(ctx context.Context, topics []domain.Topic) error
 	ListTopicsBySession(ctx context.Context, sessionID string) ([]domain.Topic, error)

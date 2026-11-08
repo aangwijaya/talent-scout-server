@@ -141,20 +141,12 @@ func (h *Apply) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		Name:   name,
 		Email:  email,
 		CVText: cvText,
+		Status: domain.ApplicationStatusInvited,
 	}
 	app.CVObjectPath = app.ID + ".pdf"
 
 	if err := h.storage.Upload(r.Context(), app.CVObjectPath, data, "application/pdf"); err != nil {
 		apierror.Write(w, http.StatusInternalServerError, apierror.CodeInternalError, "could not store CV", nil)
-		return
-	}
-
-	if err := h.store.CreateApplication(r.Context(), app); err != nil {
-		if errors.Is(err, store.ErrConflict) {
-			apierror.Write(w, http.StatusConflict, apierror.CodeAlreadyApplied, "you have already applied to this job", nil)
-			return
-		}
-		apierror.Write(w, http.StatusInternalServerError, apierror.CodeInternalError, "could not create application", nil)
 		return
 	}
 
@@ -170,8 +162,12 @@ func (h *Apply) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		Status:        domain.SessionStatusInvited,
 		ExpiresAt:     time.Now().UTC().Add(time.Duration(h.cfg.SessionTTLHours) * time.Hour),
 	}
-	if err := h.store.CreateSession(r.Context(), sess); err != nil {
-		apierror.Write(w, http.StatusInternalServerError, apierror.CodeInternalError, "could not create session", nil)
+	if err := h.store.CreateApplicationWithSession(r.Context(), app, sess); err != nil {
+		if errors.Is(err, store.ErrConflict) {
+			apierror.Write(w, http.StatusConflict, apierror.CodeAlreadyApplied, "you have already applied to this job", nil)
+			return
+		}
+		apierror.Write(w, http.StatusInternalServerError, apierror.CodeInternalError, "could not create application", nil)
 		return
 	}
 

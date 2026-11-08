@@ -276,6 +276,23 @@ func (m *Memory) UpdateSession(_ context.Context, session domain.Session) error 
 	return nil
 }
 
+func (m *Memory) StartSession(_ context.Context, id string, startedAt time.Time) (domain.Session, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	session, ok := m.sessions[id]
+	if !ok {
+		return domain.Session{}, ErrNotFound
+	}
+	if session.Status != domain.SessionStatusInvited {
+		return domain.Session{}, ErrConflict
+	}
+	session.Status = domain.SessionStatusActive
+	session.StartedAt = &startedAt
+	m.sessions[id] = session
+	return session, nil
+}
+
 func (m *Memory) CreateTopics(_ context.Context, topics []domain.Topic) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()

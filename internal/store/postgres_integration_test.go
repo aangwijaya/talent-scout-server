@@ -96,6 +96,21 @@ func TestPostgresStore(t *testing.T) {
 		t.Fatalf("GetSessionByTokenHash = %+v, %v", got, err)
 	}
 
+	startedAt := time.Now().UTC()
+	started, err := s.StartSession(ctx, session.ID, startedAt)
+	if err != nil {
+		t.Fatalf("StartSession: %v", err)
+	}
+	if started.Status != domain.SessionStatusActive || started.StartedAt == nil {
+		t.Fatalf("StartSession = %+v", started)
+	}
+	if _, err := s.StartSession(ctx, session.ID, startedAt); !errors.Is(err, store.ErrConflict) {
+		t.Fatalf("second StartSession = %v, want ErrConflict", err)
+	}
+	if _, err := s.StartSession(ctx, domain.NewID(), startedAt); !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("unknown StartSession = %v, want ErrNotFound", err)
+	}
+
 	topic := domain.Topic{
 		ID:           domain.NewID(),
 		SessionID:    session.ID,

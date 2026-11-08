@@ -249,6 +249,41 @@ func TestStartSessionTwice(t *testing.T) {
 	}
 }
 
+func TestStartSessionConcurrent(t *testing.T) {
+	st, base := sessionStore(t)
+	raw, hash, _ := session.NewToken()
+	base.TokenHash = hash
+	if err := st.CreateSession(context.Background(), base); err != nil {
+		t.Fatalf("seed session: %v", err)
+	}
+
+	h := newSessionHandler(t, st)
+	const n = 16
+	codes := make(chan int, n)
+	for i := 0; i < n; i++ {
+		go func() {
+			rec := httptest.NewRecorder()
+			h.Start(rec, sessionReq(http.MethodPost, "/api/v1/sessions/"+raw+"/start", raw))
+			codes <- rec.Code
+		}()
+	}
+
+	var ok, conflict int
+	for i := 0; i < n; i++ {
+		switch <-codes {
+		case http.StatusOK:
+			ok++
+		case http.StatusConflict:
+			conflict++
+		default:
+			t.Fatalf("unexpected start status")
+		}
+	}
+	if ok != 1 || conflict != n-1 {
+		t.Fatalf("start statuses: %d ok, %d conflict; want 1 ok, %d conflict", ok, conflict, n-1)
+	}
+}
+
 func TestStartSessionExpired(t *testing.T) {
 	st, base := sessionStore(t)
 	raw, hash, _ := session.NewToken()

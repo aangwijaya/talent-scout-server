@@ -64,24 +64,20 @@ func (h *Sessions) Start(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if sess.Status == domain.SessionStatusActive {
-		apierror.Write(w, http.StatusConflict, apierror.CodeSessionAlreadyStarted, "session already started", nil)
-		return
-	}
-
-	now := time.Now().UTC()
-	sess.Status = domain.SessionStatusActive
-	sess.StartedAt = &now
-	if err := h.store.UpdateSession(r.Context(), sess); err != nil {
-		if errors.Is(err, store.ErrConflict) {
+	started, err := h.store.StartSession(r.Context(), sess.ID, time.Now().UTC())
+	if err != nil {
+		switch {
+		case errors.Is(err, store.ErrConflict):
 			apierror.Write(w, http.StatusConflict, apierror.CodeSessionAlreadyStarted, "session already started", nil)
-			return
+		case errors.Is(err, store.ErrNotFound):
+			apierror.Write(w, http.StatusNotFound, apierror.CodeSessionNotFound, "session not found", nil)
+		default:
+			apierror.Write(w, http.StatusInternalServerError, apierror.CodeInternalError, "could not start session", nil)
 		}
-		apierror.Write(w, http.StatusInternalServerError, apierror.CodeInternalError, "could not start session", nil)
 		return
 	}
 
-	detail, err := h.buildDetail(r.Context(), sess)
+	detail, err := h.buildDetail(r.Context(), started)
 	if err != nil {
 		apierror.Write(w, http.StatusInternalServerError, apierror.CodeInternalError, "could not load session", nil)
 		return

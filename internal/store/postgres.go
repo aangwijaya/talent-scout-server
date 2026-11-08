@@ -232,6 +232,36 @@ func (p *Postgres) UpdateSession(ctx context.Context, session domain.Session) er
 	return nil
 }
 
+// StartSession atomically transitions a session from invited to active, so a
+// concurrent second start cannot both succeed. The conditional UPDATE returns
+// no row when the session is not in the invited state; a follow-up lookup
+// distinguishes an unknown session (ErrNotFound) from one already started
+// (ErrConflict).
+func (p *Postgres) StartSession(ctx context.Context, id string, startedAt time.Time) (domain.Session, error) {
+	row := p.pool.QueryRow(ctx, `
+		UPDATE sessions SET status = $2, started_at = $3
+		WHERE id = $1 AND status = $4
+		RETURNING `+sessionColumns,
+		id, domain.SessionStatusActive, startedAt, domain.SessionStatusInvited)
+	session, err := scanSession(row)
+	if err == nil {
+		return session, nil
+	}
+	if !errors.Is(err, pgx.ErrNoRows) {
+		return domain.Session{}, mapError(err)
+	}
+
+	var status domain.SessionStatus
+	err = p.pool.QueryRow(ctx, `SELECT status FROM sessions WHERE id = $1`, id).Scan(&status)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return domain.Session{}, ErrNotFound
+	}
+	if err != nil {
+		return domain.Session{}, mapError(err)
+	}
+	return domain.Session{}, ErrConflict
+}
+
 func (p *Postgres) CreateTopics(ctx context.Context, topics []domain.Topic) error {
 	tx, err := p.pool.Begin(ctx)
 	if err != nil {

@@ -23,6 +23,14 @@ Rules:
 
 ## Entries
 
+### 2026-11-08 — #7 Session start: read-then-write race breaks start-once (409)
+- **Context:** Review of `POST /sessions/{token}/start` found the handler did a resolve-then-unconditional `UpdateSession`.
+- **Problem:** Two concurrent starts both read `invited`, both overwrite `started_at`, and both return 200; the `ErrConflict`→409 branch was unreachable.
+- **Cause:** `UpdateSession` had no status guard, so the "already started" check happened outside any transaction/lock.
+- **Lesson:** Enforce once-only status transitions with an atomic conditional write (`UPDATE … WHERE status = 'invited' RETURNING` in Postgres, a lock-guarded check in the memory store), never a read-then-write.
+- **Follow-up:** none
+- **Repeated?:** first time
+
 ### 2026-11-07 — #6 Apply flow: `dslipak/pdf` panics on malformed input; non-UUID jobId reaches Postgres
 - **Context:** Hardening the apply endpoint after review of PR #34 (CV extraction + apply handler).
 - **Problem:** `dslipak/pdf`'s `Reader.NumPage()`/`Page()` panic on malformed object references (they only recover inside `GetPlainText`), so a crafted PDF drops the connection; and a non-UUID `jobId` reaches Postgres and fails with SQLSTATE 22P02 → 500 instead of the contract's 404.

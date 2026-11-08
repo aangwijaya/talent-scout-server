@@ -72,6 +72,7 @@ type Store interface {
 	GetLatestSessionByApplication(ctx context.Context, applicationID string) (domain.Session, error)
 	ListSessionsByStatus(ctx context.Context, status domain.SessionStatus) ([]domain.Session, error)
 	UpdateSession(ctx context.Context, session domain.Session) error
+	StartSession(ctx context.Context, id string, startedAt time.Time) (domain.Session, error)
 
 	CreateTopics(ctx context.Context, topics []domain.Topic) error
 	ListTopicsBySession(ctx context.Context, sessionID string) ([]domain.Topic, error)

@@ -184,6 +184,75 @@ func TestMemorySessions(t *testing.T) {
 	}
 }
 
+func TestMemoryStartSessionOnce(t *testing.T) {
+	ctx := context.Background()
+	s := store.NewMemory()
+
+	sess := domain.Session{
+		ID:            domain.NewID(),
+		ApplicationID: domain.NewID(),
+		TokenHash:     "hash",
+		Status:        domain.SessionStatusInvited,
+		ExpiresAt:     time.Now().Add(time.Hour).UTC(),
+	}
+	if err := s.CreateSession(ctx, sess); err != nil {
+		t.Fatalf("CreateSession: %v", err)
+	}
+
+	startedAt := time.Now().UTC()
+	got, err := s.StartSession(ctx, sess.ID, startedAt)
+	if err != nil {
+		t.Fatalf("StartSession: %v", err)
+	}
+	if got.Status != domain.SessionStatusActive || got.StartedAt == nil || !got.StartedAt.Equal(startedAt) {
+		t.Fatalf("StartSession = %+v", got)
+	}
+
+	if _, err := s.StartSession(ctx, sess.ID, startedAt); !errors.Is(err, store.ErrConflict) {
+		t.Fatalf("second StartSession error = %v, want ErrConflict", err)
+	}
+
+	if _, err := s.StartSession(ctx, domain.NewID(), startedAt); !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("unknown StartSession error = %v, want ErrNotFound", err)
+	}
+}
+
+func TestMemoryStartSessionConcurrent(t *testing.T) {
+	ctx := context.Background()
+	s := store.NewMemory()
+	sess := domain.Session{
+		ID:            domain.NewID(),
+		ApplicationID: domain.NewID(),
+		TokenHash:     "hash",
+		Status:        domain.SessionStatusInvited,
+		ExpiresAt:     time.Now().Add(time.Hour).UTC(),
+	}
+	if err := s.CreateSession(ctx, sess); err != nil {
+		t.Fatalf("CreateSession: %v", err)
+	}
+
+	const n = 32
+	results := make(chan error, n)
+	for i := 0; i < n; i++ {
+		go func() {
+			_, err := s.StartSession(ctx, sess.ID, time.Now().UTC())
+			results <- err
+		}()
+	}
+
+	var success int
+	for i := 0; i < n; i++ {
+		if err := <-results; err == nil {
+			success++
+		} else if !errors.Is(err, store.ErrConflict) {
+			t.Fatalf("unexpected StartSession error: %v", err)
+		}
+	}
+	if success != 1 {
+		t.Fatalf("success count = %d, want exactly 1", success)
+	}
+}
+
 func TestMemoryTopicsAndMessages(t *testing.T) {
 	ctx := context.Background()
 	s := store.NewMemory()

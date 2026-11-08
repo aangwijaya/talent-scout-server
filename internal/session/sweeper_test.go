@@ -130,3 +130,31 @@ func TestSweepIgnoresCompleted(t *testing.T) {
 		t.Errorf("expired=%d abandoned=%d, want 0/0", expired, abandoned)
 	}
 }
+
+// raceStore reports every conditional transition as skipped, as if another
+// writer changed the session between the sweeper's list and its update.
+type raceStore struct{ store.Store }
+
+func (raceStore) ExpireSession(context.Context, string, time.Time) (bool, error)  { return false, nil }
+func (raceStore) AbandonSession(context.Context, string, time.Time) (bool, error) { return false, nil }
+
+func TestSweepCountsOnlySessionsItChanged(t *testing.T) {
+	mem := store.NewMemory()
+	started := time.Now().Add(-time.Hour)
+	seedSession(t, mem, domain.Session{
+		ID: "s-expired", ApplicationID: "a1", TokenHash: "hash-expired",
+		Status: domain.SessionStatusInvited, ExpiresAt: time.Now().Add(-time.Hour),
+	})
+	seedSession(t, mem, domain.Session{
+		ID: "s-stale", ApplicationID: "a2", TokenHash: "hash-stale",
+		Status: domain.SessionStatusActive, ExpiresAt: time.Now().Add(time.Hour), StartedAt: &started,
+	})
+
+	expired, abandoned, err := newSweeper(t, raceStore{mem}).SweepOnce(context.Background())
+	if err != nil {
+		t.Fatalf("SweepOnce: %v", err)
+	}
+	if expired != 0 || abandoned != 0 {
+		t.Errorf("expired, abandoned = %d, %d, want 0, 0 when another writer got there first", expired, abandoned)
+	}
+}

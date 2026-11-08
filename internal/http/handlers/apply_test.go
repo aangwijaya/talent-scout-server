@@ -433,6 +433,31 @@ func TestApplyCreatesInvitedSessionAndSendsInvite(t *testing.T) {
 	}
 }
 
+func TestApplyStoresApplicationAsInvited(t *testing.T) {
+	apply, _, st := newApplyWithMailer(t, "log", fakeExtractor{text: "text"}, &fakeMailer{})
+
+	rec := httptest.NewRecorder()
+	req, _ := multipartBody(t, "Budi", "budi@example.com", "cv.pdf", []byte("%PDF-1.4 fake"))
+	apply.ServeHTTP(rec, req)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("status = %d, want 201 (body: %s)", rec.Code, rec.Body.String())
+	}
+	var got struct {
+		ApplicationID string `json:"application_id"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+
+	app, err := st.GetApplication(context.Background(), got.ApplicationID)
+	if err != nil {
+		t.Fatalf("application not stored: %v", err)
+	}
+	if app.Status != domain.ApplicationStatusInvited {
+		t.Errorf("stored application status = %q, want invited (the 201 response says invited)", app.Status)
+	}
+}
+
 func TestApplySendFailureStill201(t *testing.T) {
 	mailer := &fakeMailer{err: errors.New("gmail send: status 500")}
 	apply, _, st := newApplyWithMailer(t, "gmail", fakeExtractor{text: "text"}, mailer)

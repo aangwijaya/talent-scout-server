@@ -23,6 +23,22 @@ Rules:
 
 ## Entries
 
+### 2026-11-08 — #7 Apply: two sequential inserts strand an applicant without a session
+- **Context:** Review of the apply flow found `CreateApplication` then `CreateSession` as two independent store calls.
+- **Problem:** A `CreateSession` failure returned 500 but left the application row, so the applicant's retry hit 409 `already_applied` and `resend-invite` (which only covers `invited` sessions or `failed` applications) could never reach them.
+- **Cause:** Two writes that must both happen (an application always has a session) were not composed into one unit of work.
+- **Lesson:** Compose multi-row writes that must be all-or-nothing into a single store method backed by a transaction (Postgres) or one lock (memory), not sequential calls.
+- **Follow-up:** none
+- **Repeated?:** first time
+
+### 2026-11-08 — #7 Session start: read-then-write race breaks start-once (409)
+- **Context:** Review of `POST /sessions/{token}/start` found the handler did a resolve-then-unconditional `UpdateSession`.
+- **Problem:** Two concurrent starts both read `invited`, both overwrite `started_at`, and both return 200; the `ErrConflict`→409 branch was unreachable.
+- **Cause:** `UpdateSession` had no status guard, so the "already started" check happened outside any transaction/lock.
+- **Lesson:** Enforce once-only status transitions with an atomic conditional write (`UPDATE … WHERE status = 'invited' RETURNING` in Postgres, a lock-guarded check in the memory store), never a read-then-write.
+- **Follow-up:** none
+- **Repeated?:** first time
+
 ### 2026-11-07 — #6 Apply flow: `dslipak/pdf` panics on malformed input; non-UUID jobId reaches Postgres
 - **Context:** Hardening the apply endpoint after review of PR #34 (CV extraction + apply handler).
 - **Problem:** `dslipak/pdf`'s `Reader.NumPage()`/`Page()` panic on malformed object references (they only recover inside `GetPlainText`), so a crafted PDF drops the connection; and a non-UUID `jobId` reaches Postgres and fails with SQLSTATE 22P02 → 500 instead of the contract's 404.

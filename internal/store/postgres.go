@@ -85,6 +85,46 @@ func (p *Postgres) CreateApplication(ctx context.Context, app domain.Application
 	return mapError(err)
 }
 
+// CreateApplicationWithSession inserts an application and its first session in
+// one transaction so a failed session insert rolls back the application and an
+// applicant is never left with an application but no session.
+func (p *Postgres) CreateApplicationWithSession(ctx context.Context, app domain.Application, session domain.Session) error {
+	if app.Status == "" {
+		app.Status = domain.ApplicationStatusInvited
+	}
+	if session.Status == "" {
+		session.Status = domain.SessionStatusInvited
+	}
+	now := time.Now().UTC()
+	if app.CreatedAt.IsZero() {
+		app.CreatedAt = now
+	}
+	if session.CreatedAt.IsZero() {
+		session.CreatedAt = app.CreatedAt
+	}
+
+	tx, err := p.pool.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(ctx)
+
+	if _, err := tx.Exec(ctx, `
+		INSERT INTO applications (id, job_id, name, email, cv_object_path, cv_text, status, decision_note, decided_at, created_at)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
+		app.ID, app.JobID, app.Name, app.Email, app.CVObjectPath, app.CVText, app.Status, app.DecisionNote, app.DecidedAt, app.CreatedAt); err != nil {
+		return mapError(err)
+	}
+	if _, err := tx.Exec(ctx, `
+		INSERT INTO sessions (id, application_id, token_hash, status, expires_at, started_at, ended_at, finish_reason, question_count, created_at)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
+		session.ID, session.ApplicationID, session.TokenHash, session.Status, session.ExpiresAt,
+		session.StartedAt, session.EndedAt, session.FinishReason, session.QuestionCount, session.CreatedAt); err != nil {
+		return mapError(err)
+	}
+	return tx.Commit(ctx)
+}
+
 func (p *Postgres) GetApplication(ctx context.Context, id string) (domain.Application, error) {
 	row := p.pool.QueryRow(ctx, `SELECT `+applicationColumns+` FROM applications WHERE id = $1`, id)
 	app, err := scanApplication(row)
@@ -197,6 +237,24 @@ func (p *Postgres) GetLatestSessionByApplication(ctx context.Context, applicatio
 	return session, nil
 }
 
+func (p *Postgres) ListSessionsByStatus(ctx context.Context, status domain.SessionStatus) ([]domain.Session, error) {
+	rows, err := p.pool.Query(ctx, `SELECT `+sessionColumns+` FROM sessions WHERE status = $1 ORDER BY created_at, id`, status)
+	if err != nil {
+		return nil, mapError(err)
+	}
+	defer rows.Close()
+
+	sessions := make([]domain.Session, 0)
+	for rows.Next() {
+		session, err := scanSession(rows)
+		if err != nil {
+			return nil, err
+		}
+		sessions = append(sessions, session)
+	}
+	return sessions, mapError(rows.Err())
+}
+
 func (p *Postgres) UpdateSession(ctx context.Context, session domain.Session) error {
 	tag, err := p.pool.Exec(ctx, `
 		UPDATE sessions SET
@@ -212,6 +270,84 @@ func (p *Postgres) UpdateSession(ctx context.Context, session domain.Session) er
 		return ErrNotFound
 	}
 	return nil
+}
+
+// StartSession atomically transitions a session from invited to active, so a
+// concurrent second start cannot both succeed. The conditional UPDATE returns
+// no row when the session is not in the invited state; a follow-up lookup
+// distinguishes an unknown session (ErrNotFound) from one already started
+// (ErrConflict). In the same transaction the application moves from invited to
+// in_session.
+func (p *Postgres) StartSession(ctx context.Context, id string, startedAt time.Time) (domain.Session, error) {
+	tx, err := p.pool.Begin(ctx)
+	if err != nil {
+		return domain.Session{}, err
+	}
+	defer tx.Rollback(ctx)
+
+	row := tx.QueryRow(ctx, `
+		UPDATE sessions SET status = $2, started_at = $3
+		WHERE id = $1 AND status = $4
+		RETURNING `+sessionColumns,
+		id, domain.SessionStatusActive, startedAt, domain.SessionStatusInvited)
+	session, err := scanSession(row)
+	if err != nil {
+		if !errors.Is(err, pgx.ErrNoRows) {
+			return domain.Session{}, mapError(err)
+		}
+		var status domain.SessionStatus
+		err = tx.QueryRow(ctx, `SELECT status FROM sessions WHERE id = $1`, id).Scan(&status)
+		if errors.Is(err, pgx.ErrNoRows) {
+			return domain.Session{}, ErrNotFound
+		}
+		if err != nil {
+			return domain.Session{}, mapError(err)
+		}
+		return domain.Session{}, ErrConflict
+	}
+
+	tag, err := tx.Exec(ctx, `
+		UPDATE applications SET status = $2
+		WHERE id = $1 AND status = $3`,
+		session.ApplicationID, domain.ApplicationStatusInSession, domain.ApplicationStatusInvited)
+	if err != nil {
+		return domain.Session{}, mapError(err)
+	}
+	if tag.RowsAffected() == 0 {
+		return domain.Session{}, ErrConflict
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return domain.Session{}, mapError(err)
+	}
+	return session, nil
+}
+
+// ExpireSession transitions an invited session that is already past its expiry
+// to expired, and reports whether the transition happened. A session that has
+// since changed state is skipped.
+func (p *Postgres) ExpireSession(ctx context.Context, id string, now time.Time) (bool, error) {
+	tag, err := p.pool.Exec(ctx, `
+		UPDATE sessions SET status = $2
+		WHERE id = $1 AND status = $3 AND expires_at <= $4`,
+		id, domain.SessionStatusExpired, domain.SessionStatusInvited, now)
+	if err != nil {
+		return false, mapError(err)
+	}
+	return tag.RowsAffected() > 0, nil
+}
+
+// AbandonSession transitions an active session to completed with
+// finish_reason=abandoned, and reports whether the transition happened. A
+// session that is no longer active is skipped.
+func (p *Postgres) AbandonSession(ctx context.Context, id string, now time.Time) (bool, error) {
+	tag, err := p.pool.Exec(ctx, `
+		UPDATE sessions SET status = $2, finish_reason = $3, ended_at = $4
+		WHERE id = $1 AND status = $5`,
+		id, domain.SessionStatusCompleted, domain.FinishReasonAbandoned, now, domain.SessionStatusActive)
+	if err != nil {
+		return false, mapError(err)
+	}
+	return tag.RowsAffected() > 0, nil
 }
 
 func (p *Postgres) CreateTopics(ctx context.Context, topics []domain.Topic) error {

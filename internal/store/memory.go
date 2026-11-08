@@ -103,6 +103,47 @@ func (m *Memory) CreateApplication(_ context.Context, app domain.Application) er
 	return nil
 }
 
+// CreateApplicationWithSession inserts an application and its first session
+// atomically: either both rows exist or neither does. Used by the apply flow so
+// a failed session insert never leaves an application without a session.
+func (m *Memory) CreateApplicationWithSession(_ context.Context, app domain.Application, session domain.Session) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	if _, ok := m.applications[app.ID]; ok {
+		return ErrConflict
+	}
+	for _, existing := range m.applications {
+		if existing.JobID == app.JobID && existing.Email == app.Email {
+			return ErrConflict
+		}
+	}
+	if _, ok := m.sessions[session.ID]; ok {
+		return ErrConflict
+	}
+	for _, existing := range m.sessions {
+		if existing.TokenHash == session.TokenHash {
+			return ErrConflict
+		}
+	}
+	if app.Status == "" {
+		app.Status = domain.ApplicationStatusInvited
+	}
+	if session.Status == "" {
+		session.Status = domain.SessionStatusInvited
+	}
+	now := time.Now().UTC()
+	if app.CreatedAt.IsZero() {
+		app.CreatedAt = now
+	}
+	if session.CreatedAt.IsZero() {
+		session.CreatedAt = app.CreatedAt
+	}
+	m.applications[app.ID] = app
+	m.sessions[session.ID] = session
+	return nil
+}
+
 func (m *Memory) GetApplication(_ context.Context, id string) (domain.Application, error) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
@@ -241,6 +282,25 @@ func (m *Memory) GetLatestSessionByApplication(_ context.Context, applicationID 
 	return latest, nil
 }
 
+func (m *Memory) ListSessionsByStatus(_ context.Context, status domain.SessionStatus) ([]domain.Session, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	sessions := make([]domain.Session, 0)
+	for _, session := range m.sessions {
+		if session.Status == status {
+			sessions = append(sessions, session)
+		}
+	}
+	sort.Slice(sessions, func(i, j int) bool {
+		if sessions[i].CreatedAt.Equal(sessions[j].CreatedAt) {
+			return sessions[i].ID < sessions[j].ID
+		}
+		return sessions[i].CreatedAt.Before(sessions[j].CreatedAt)
+	})
+	return sessions, nil
+}
+
 func (m *Memory) UpdateSession(_ context.Context, session domain.Session) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -255,6 +315,73 @@ func (m *Memory) UpdateSession(_ context.Context, session domain.Session) error 
 	}
 	m.sessions[session.ID] = session
 	return nil
+}
+
+func (m *Memory) StartSession(_ context.Context, id string, startedAt time.Time) (domain.Session, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	session, ok := m.sessions[id]
+	if !ok {
+		return domain.Session{}, ErrNotFound
+	}
+	if session.Status != domain.SessionStatusInvited {
+		return domain.Session{}, ErrConflict
+	}
+	app, ok := m.applications[session.ApplicationID]
+	if !ok {
+		return domain.Session{}, ErrNotFound
+	}
+	if app.Status != domain.ApplicationStatusInvited {
+		return domain.Session{}, ErrConflict
+	}
+	session.Status = domain.SessionStatusActive
+	session.StartedAt = &startedAt
+	app.Status = domain.ApplicationStatusInSession
+	m.sessions[id] = session
+	m.applications[app.ID] = app
+	return session, nil
+}
+
+// ExpireSession transitions an invited session that is already past its expiry
+// to expired. It reports whether the transition happened; a session that has
+// since changed state is skipped (changed=false).
+func (m *Memory) ExpireSession(_ context.Context, id string, now time.Time) (bool, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	session, ok := m.sessions[id]
+	if !ok {
+		return false, ErrNotFound
+	}
+	if session.Status != domain.SessionStatusInvited || session.ExpiresAt.After(now) {
+		return false, nil
+	}
+	session.Status = domain.SessionStatusExpired
+	m.sessions[id] = session
+	return true, nil
+}
+
+// AbandonSession transitions an active session to completed with
+// finish_reason=abandoned. It reports whether the transition happened; a
+// session that is no longer active is skipped (changed=false).
+func (m *Memory) AbandonSession(_ context.Context, id string, now time.Time) (bool, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	session, ok := m.sessions[id]
+	if !ok {
+		return false, ErrNotFound
+	}
+	if session.Status != domain.SessionStatusActive {
+		return false, nil
+	}
+	reason := domain.FinishReasonAbandoned
+	session.Status = domain.SessionStatusCompleted
+	session.FinishReason = &reason
+	session.EndedAt = &now
+	m.sessions[id] = session
+	return true, nil
 }
 
 func (m *Memory) CreateTopics(_ context.Context, topics []domain.Topic) error {

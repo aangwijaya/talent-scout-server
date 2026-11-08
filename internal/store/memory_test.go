@@ -184,6 +184,86 @@ func TestMemorySessions(t *testing.T) {
 	}
 }
 
+func TestMemoryStartSessionOnce(t *testing.T) {
+	ctx := context.Background()
+	s := store.NewMemory()
+
+	appID := domain.NewID()
+	if err := s.CreateApplication(ctx, domain.Application{ID: appID, JobID: domain.NewID(), Name: "Budi", Email: "budi@example.com", CVObjectPath: "cv.pdf", Status: domain.ApplicationStatusInvited}); err != nil {
+		t.Fatalf("seed application: %v", err)
+	}
+
+	sess := domain.Session{
+		ID:            domain.NewID(),
+		ApplicationID: appID,
+		TokenHash:     "hash",
+		Status:        domain.SessionStatusInvited,
+		ExpiresAt:     time.Now().Add(time.Hour).UTC(),
+	}
+	if err := s.CreateSession(ctx, sess); err != nil {
+		t.Fatalf("CreateSession: %v", err)
+	}
+
+	startedAt := time.Now().UTC()
+	got, err := s.StartSession(ctx, sess.ID, startedAt)
+	if err != nil {
+		t.Fatalf("StartSession: %v", err)
+	}
+	if got.Status != domain.SessionStatusActive || got.StartedAt == nil || !got.StartedAt.Equal(startedAt) {
+		t.Fatalf("StartSession = %+v", got)
+	}
+
+	if _, err := s.StartSession(ctx, sess.ID, startedAt); !errors.Is(err, store.ErrConflict) {
+		t.Fatalf("second StartSession error = %v, want ErrConflict", err)
+	}
+
+	if _, err := s.StartSession(ctx, domain.NewID(), startedAt); !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("unknown StartSession error = %v, want ErrNotFound", err)
+	}
+}
+
+func TestMemoryStartSessionConcurrent(t *testing.T) {
+	ctx := context.Background()
+	s := store.NewMemory()
+
+	appID := domain.NewID()
+	if err := s.CreateApplication(ctx, domain.Application{ID: appID, JobID: domain.NewID(), Name: "Budi", Email: "budi@example.com", CVObjectPath: "cv.pdf", Status: domain.ApplicationStatusInvited}); err != nil {
+		t.Fatalf("seed application: %v", err)
+	}
+
+	sess := domain.Session{
+		ID:            domain.NewID(),
+		ApplicationID: appID,
+		TokenHash:     "hash",
+		Status:        domain.SessionStatusInvited,
+		ExpiresAt:     time.Now().Add(time.Hour).UTC(),
+	}
+	if err := s.CreateSession(ctx, sess); err != nil {
+		t.Fatalf("CreateSession: %v", err)
+	}
+
+	const n = 32
+	results := make(chan error, n)
+	for i := 0; i < n; i++ {
+		go func() {
+			_, err := s.StartSession(ctx, sess.ID, time.Now().UTC())
+			results <- err
+		}()
+	}
+
+	var success int
+	for i := 0; i < n; i++ {
+		if err := <-results; err == nil {
+			success++
+		} else if !errors.Is(err, store.ErrConflict) {
+			t.Fatalf("unexpected StartSession error: %v", err)
+		}
+	}
+	if success != 1 {
+		t.Fatalf("success count = %d, want exactly 1", success)
+	}
+}
+
 func TestMemoryTopicsAndMessages(t *testing.T) {
 	ctx := context.Background()
 	s := store.NewMemory()
@@ -375,5 +455,182 @@ func TestMemoryStatusDefaults(t *testing.T) {
 	}
 	if gotSession.Status != domain.SessionStatusInvited {
 		t.Fatalf("session status = %q, want invited", gotSession.Status)
+	}
+}
+
+func TestMemoryCreateApplicationWithSession(t *testing.T) {
+	ctx := context.Background()
+	s := store.NewMemory()
+
+	app := domain.Application{
+		ID:           domain.NewID(),
+		JobID:        domain.NewID(),
+		Name:         "Budi",
+		Email:        "budi@example.com",
+		CVObjectPath: "cv.pdf",
+		Status:       domain.ApplicationStatusInvited,
+	}
+	sess := domain.Session{
+		ID:            domain.NewID(),
+		ApplicationID: app.ID,
+		TokenHash:     "hash",
+		Status:        domain.SessionStatusInvited,
+		ExpiresAt:     time.Now().Add(time.Hour).UTC(),
+	}
+
+	if err := s.CreateApplicationWithSession(ctx, app, sess); err != nil {
+		t.Fatalf("CreateApplicationWithSession: %v", err)
+	}
+
+	gotApp, err := s.GetApplication(ctx, app.ID)
+	if err != nil {
+		t.Fatalf("GetApplication: %v", err)
+	}
+	if gotApp.Status != domain.ApplicationStatusInvited {
+		t.Fatalf("application status = %q, want invited", gotApp.Status)
+	}
+
+	gotSess, err := s.GetSessionByTokenHash(ctx, "hash")
+	if err != nil {
+		t.Fatalf("GetSessionByTokenHash: %v", err)
+	}
+	if gotSess.ApplicationID != app.ID {
+		t.Fatalf("session application_id = %q, want %q", gotSess.ApplicationID, app.ID)
+	}
+}
+
+func TestMemoryCreateApplicationWithSessionDuplicateEmail(t *testing.T) {
+	ctx := context.Background()
+	s := store.NewMemory()
+	jobID := domain.NewID()
+
+	app := domain.Application{ID: domain.NewID(), JobID: jobID, Name: "Budi", Email: "budi@example.com", CVObjectPath: "cv.pdf", Status: domain.ApplicationStatusInvited}
+	sess := domain.Session{ID: domain.NewID(), ApplicationID: app.ID, TokenHash: "hash1", Status: domain.SessionStatusInvited, ExpiresAt: time.Now().Add(time.Hour).UTC()}
+	if err := s.CreateApplicationWithSession(ctx, app, sess); err != nil {
+		t.Fatalf("first CreateApplicationWithSession: %v", err)
+	}
+
+	dup := domain.Application{ID: domain.NewID(), JobID: jobID, Name: "Budi", Email: "budi@example.com", CVObjectPath: "cv.pdf", Status: domain.ApplicationStatusInvited}
+	dupSess := domain.Session{ID: domain.NewID(), ApplicationID: dup.ID, TokenHash: "hash2", Status: domain.SessionStatusInvited, ExpiresAt: time.Now().Add(time.Hour).UTC()}
+	if err := s.CreateApplicationWithSession(ctx, dup, dupSess); !errors.Is(err, store.ErrConflict) {
+		t.Fatalf("duplicate error = %v, want ErrConflict", err)
+	}
+
+	if _, err := s.GetApplication(ctx, dup.ID); !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("duplicate application should not exist, err = %v", err)
+	}
+	if _, err := s.GetSession(ctx, dupSess.ID); !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("duplicate session should not exist, err = %v", err)
+	}
+}
+
+func TestMemoryCreateApplicationWithSessionTokenConflictRollsBack(t *testing.T) {
+	ctx := context.Background()
+	s := store.NewMemory()
+
+	existing := domain.Session{ID: domain.NewID(), ApplicationID: domain.NewID(), TokenHash: "hash", Status: domain.SessionStatusInvited, ExpiresAt: time.Now().Add(time.Hour).UTC()}
+	if err := s.CreateSession(ctx, existing); err != nil {
+		t.Fatalf("seed session: %v", err)
+	}
+
+	app := domain.Application{ID: domain.NewID(), JobID: domain.NewID(), Name: "Budi", Email: "budi@example.com", CVObjectPath: "cv.pdf", Status: domain.ApplicationStatusInvited}
+	sess := domain.Session{ID: domain.NewID(), ApplicationID: app.ID, TokenHash: "hash", Status: domain.SessionStatusInvited, ExpiresAt: time.Now().Add(time.Hour).UTC()}
+	if err := s.CreateApplicationWithSession(ctx, app, sess); !errors.Is(err, store.ErrConflict) {
+		t.Fatalf("error = %v, want ErrConflict", err)
+	}
+
+	if _, err := s.GetApplication(ctx, app.ID); !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("application should not exist after rollback, err = %v", err)
+	}
+}
+
+func TestMemoryStartSessionMovesApplicationToInSession(t *testing.T) {
+	ctx := context.Background()
+	s := store.NewMemory()
+
+	app := domain.Application{ID: domain.NewID(), JobID: domain.NewID(), Name: "Budi", Email: "budi@example.com", CVObjectPath: "cv.pdf", Status: domain.ApplicationStatusInvited}
+	sess := domain.Session{ID: domain.NewID(), ApplicationID: app.ID, TokenHash: "hash", Status: domain.SessionStatusInvited, ExpiresAt: time.Now().Add(time.Hour).UTC()}
+	if err := s.CreateApplicationWithSession(ctx, app, sess); err != nil {
+		t.Fatalf("CreateApplicationWithSession: %v", err)
+	}
+
+	startedAt := time.Now().UTC()
+	got, err := s.StartSession(ctx, sess.ID, startedAt)
+	if err != nil {
+		t.Fatalf("StartSession: %v", err)
+	}
+	if got.Status != domain.SessionStatusActive {
+		t.Fatalf("session status = %q, want active", got.Status)
+	}
+
+	gotApp, err := s.GetApplication(ctx, app.ID)
+	if err != nil {
+		t.Fatalf("GetApplication: %v", err)
+	}
+	if gotApp.Status != domain.ApplicationStatusInSession {
+		t.Fatalf("application status = %q, want in_session", gotApp.Status)
+	}
+}
+
+func TestMemoryExpireSession(t *testing.T) {
+	ctx := context.Background()
+	s := store.NewMemory()
+
+	past := domain.Session{ID: domain.NewID(), ApplicationID: domain.NewID(), TokenHash: "past", Status: domain.SessionStatusInvited, ExpiresAt: time.Now().Add(-time.Hour).UTC()}
+	if err := s.CreateSession(ctx, past); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	future := domain.Session{ID: domain.NewID(), ApplicationID: domain.NewID(), TokenHash: "future", Status: domain.SessionStatusInvited, ExpiresAt: time.Now().Add(time.Hour).UTC()}
+	if err := s.CreateSession(ctx, future); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+
+	changed, err := s.ExpireSession(ctx, past.ID, time.Now().UTC())
+	if err != nil || !changed {
+		t.Fatalf("ExpireSession(past) = %v, %v; want true, nil", changed, err)
+	}
+	got, _ := s.GetSession(ctx, past.ID)
+	if got.Status != domain.SessionStatusExpired {
+		t.Fatalf("past status = %q, want expired", got.Status)
+	}
+
+	changed, err = s.ExpireSession(ctx, future.ID, time.Now().UTC())
+	if err != nil || changed {
+		t.Fatalf("ExpireSession(future) = %v, %v; want false, nil", changed, err)
+	}
+
+	changed, err = s.ExpireSession(ctx, past.ID, time.Now().UTC())
+	if err != nil || changed {
+		t.Fatalf("ExpireSession(already expired) = %v, %v; want false, nil", changed, err)
+	}
+}
+
+func TestMemoryAbandonSession(t *testing.T) {
+	ctx := context.Background()
+	s := store.NewMemory()
+
+	started := time.Now().Add(-time.Hour).UTC()
+	active := domain.Session{ID: domain.NewID(), ApplicationID: domain.NewID(), TokenHash: "active", Status: domain.SessionStatusActive, ExpiresAt: time.Now().Add(time.Hour).UTC(), StartedAt: &started}
+	if err := s.CreateSession(ctx, active); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	invited := domain.Session{ID: domain.NewID(), ApplicationID: domain.NewID(), TokenHash: "invited", Status: domain.SessionStatusInvited, ExpiresAt: time.Now().Add(time.Hour).UTC()}
+	if err := s.CreateSession(ctx, invited); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+
+	now := time.Now().UTC()
+	changed, err := s.AbandonSession(ctx, active.ID, now)
+	if err != nil || !changed {
+		t.Fatalf("AbandonSession(active) = %v, %v; want true, nil", changed, err)
+	}
+	got, _ := s.GetSession(ctx, active.ID)
+	if got.Status != domain.SessionStatusCompleted || got.FinishReason == nil || *got.FinishReason != domain.FinishReasonAbandoned || got.EndedAt == nil {
+		t.Fatalf("abandoned session = %+v", got)
+	}
+
+	changed, err = s.AbandonSession(ctx, invited.ID, now)
+	if err != nil || changed {
+		t.Fatalf("AbandonSession(invited) = %v, %v; want false, nil", changed, err)
 	}
 }

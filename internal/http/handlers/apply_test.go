@@ -8,13 +8,16 @@ import (
 	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 
 	"github.com/aangwijaya/talent-scout-server/internal/config"
 	"github.com/aangwijaya/talent-scout-server/internal/cv"
 	"github.com/aangwijaya/talent-scout-server/internal/domain"
+	"github.com/aangwijaya/talent-scout-server/internal/email"
 	"github.com/aangwijaya/talent-scout-server/internal/http/handlers"
 	"github.com/aangwijaya/talent-scout-server/internal/storage"
 	"github.com/aangwijaya/talent-scout-server/internal/store"
@@ -28,6 +31,22 @@ type fakeExtractor struct {
 }
 
 func (f fakeExtractor) Extract([]byte) (string, error) { return f.text, f.err }
+
+type fakeMailer struct {
+	to    string
+	name  string
+	link  string
+	calls int
+	err   error
+}
+
+func (f *fakeMailer) SendInvite(_ context.Context, to, name, link string) error {
+	f.calls++
+	f.to = to
+	f.name = name
+	f.link = link
+	return f.err
+}
 
 func seedJob(t *testing.T, st store.Store, status domain.JobStatus) {
 	t.Helper()
@@ -44,11 +63,17 @@ func seedJob(t *testing.T, st store.Store, status domain.JobStatus) {
 
 func newApply(t *testing.T, emailMode string, extract cv.Extractor) (*handlers.Apply, *storage.Fake) {
 	t.Helper()
+	apply, fakeStorage, _ := newApplyWithMailer(t, emailMode, extract, nil)
+	return apply, fakeStorage
+}
+
+func newApplyWithMailer(t *testing.T, emailMode string, extract cv.Extractor, mailer email.Mailer) (*handlers.Apply, *storage.Fake, *store.Memory) {
+	t.Helper()
 	st := store.NewMemory()
 	seedJob(t, st, domain.JobStatusOpen)
 	fakeStorage := storage.NewFake()
-	cfg := config.Config{EmailMode: emailMode}
-	return handlers.NewApply(cfg, st, fakeStorage, extract), fakeStorage
+	cfg := config.Config{EmailMode: emailMode, PublicAppURL: "https://talentscout.vercel.app", SessionTTLHours: 168}
+	return handlers.NewApply(cfg, st, fakeStorage, extract, mailer), fakeStorage, st
 }
 
 func multipartBody(t *testing.T, name, email, filename string, content []byte) (*http.Request, string) {
@@ -279,7 +304,7 @@ func (nonUUIDStore) GetJob(context.Context, string) (domain.Job, error) {
 }
 
 func TestApplyJobIDNotUUID(t *testing.T) {
-	apply := handlers.NewApply(config.Config{EmailMode: "log"}, nonUUIDStore{}, storage.NewFake(), fakeExtractor{text: "text"})
+	apply := handlers.NewApply(config.Config{EmailMode: "log"}, nonUUIDStore{}, storage.NewFake(), fakeExtractor{text: "text"}, nil)
 	req := multipartBodyJob(t, "abc", "Budi", "budi@example.com", "cv.pdf", []byte("%PDF-1.4"))
 	rec := httptest.NewRecorder()
 
@@ -295,7 +320,7 @@ func TestApplyJobIDNotUUID(t *testing.T) {
 }
 
 func TestApplyNilStore(t *testing.T) {
-	apply := handlers.NewApply(config.Config{EmailMode: "log"}, nil, storage.NewFake(), fakeExtractor{text: "text"})
+	apply := handlers.NewApply(config.Config{EmailMode: "log"}, nil, storage.NewFake(), fakeExtractor{text: "text"}, nil)
 	req, _ := multipartBody(t, "Budi", "budi@example.com", "cv.pdf", []byte("%PDF-1.4"))
 	rec := httptest.NewRecorder()
 
@@ -312,7 +337,7 @@ func TestApplyNilStore(t *testing.T) {
 
 func TestApplyJobNotFound(t *testing.T) {
 	st := store.NewMemory()
-	apply := handlers.NewApply(config.Config{EmailMode: "log"}, st, storage.NewFake(), fakeExtractor{text: "text"})
+	apply := handlers.NewApply(config.Config{EmailMode: "log"}, st, storage.NewFake(), fakeExtractor{text: "text"}, nil)
 	req, _ := multipartBody(t, "Budi", "budi@example.com", "cv.pdf", []byte("%PDF-1.4"))
 	rec := httptest.NewRecorder()
 
@@ -330,7 +355,7 @@ func TestApplyJobNotFound(t *testing.T) {
 func TestApplyJobClosed(t *testing.T) {
 	st := store.NewMemory()
 	seedJob(t, st, domain.JobStatusClosed)
-	apply := handlers.NewApply(config.Config{EmailMode: "log"}, st, storage.NewFake(), fakeExtractor{text: "text"})
+	apply := handlers.NewApply(config.Config{EmailMode: "log"}, st, storage.NewFake(), fakeExtractor{text: "text"}, nil)
 	req, _ := multipartBody(t, "Budi", "budi@example.com", "cv.pdf", []byte("%PDF-1.4"))
 	rec := httptest.NewRecorder()
 
@@ -350,7 +375,7 @@ func TestApplyStorageUploadFailure(t *testing.T) {
 	seedJob(t, st, domain.JobStatusOpen)
 	fakeStorage := storage.NewFake()
 	fakeStorage.SetErr(errors.New("bucket missing"))
-	apply := handlers.NewApply(config.Config{EmailMode: "log"}, st, fakeStorage, fakeExtractor{text: "text"})
+	apply := handlers.NewApply(config.Config{EmailMode: "log"}, st, fakeStorage, fakeExtractor{text: "text"}, nil)
 
 	req, _ := multipartBody(t, "Budi", "budi@example.com", "cv.pdf", []byte("%PDF-1.4"))
 	rec := httptest.NewRecorder()
@@ -362,5 +387,132 @@ func TestApplyStorageUploadFailure(t *testing.T) {
 	code, _, _ := decodeError(t, rec)
 	if code != "internal_error" {
 		t.Errorf("code = %q, want internal_error", code)
+	}
+}
+
+func TestApplyCreatesInvitedSessionAndSendsInvite(t *testing.T) {
+	mailer := &fakeMailer{}
+	apply, _, st := newApplyWithMailer(t, "log", fakeExtractor{text: "text"}, mailer)
+
+	rec := httptest.NewRecorder()
+	req, _ := multipartBody(t, "Budi", "budi@example.com", "cv.pdf", []byte("%PDF-1.4 fake"))
+	apply.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("status = %d, want 201 (body: %s)", rec.Code, rec.Body.String())
+	}
+	var got struct {
+		ApplicationID string `json:"application_id"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+
+	sess, err := st.GetLatestSessionByApplication(context.Background(), got.ApplicationID)
+	if err != nil {
+		t.Fatalf("session not created: %v", err)
+	}
+	if sess.Status != domain.SessionStatusInvited {
+		t.Errorf("session status = %q, want invited", sess.Status)
+	}
+	if sess.TokenHash == "" {
+		t.Errorf("token_hash is empty")
+	}
+	if !sess.ExpiresAt.After(time.Now()) {
+		t.Errorf("expires_at not in the future")
+	}
+
+	if mailer.calls != 1 {
+		t.Fatalf("mailer calls = %d, want 1", mailer.calls)
+	}
+	if mailer.to != "budi@example.com" || mailer.name != "Budi" {
+		t.Errorf("mailer to/name = %q/%q", mailer.to, mailer.name)
+	}
+	if !strings.HasPrefix(mailer.link, "https://talentscout.vercel.app/s/") {
+		t.Errorf("mailer link = %q", mailer.link)
+	}
+}
+
+func TestApplyStoresApplicationAsInvited(t *testing.T) {
+	apply, _, st := newApplyWithMailer(t, "log", fakeExtractor{text: "text"}, &fakeMailer{})
+
+	rec := httptest.NewRecorder()
+	req, _ := multipartBody(t, "Budi", "budi@example.com", "cv.pdf", []byte("%PDF-1.4 fake"))
+	apply.ServeHTTP(rec, req)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("status = %d, want 201 (body: %s)", rec.Code, rec.Body.String())
+	}
+	var got struct {
+		ApplicationID string `json:"application_id"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+
+	app, err := st.GetApplication(context.Background(), got.ApplicationID)
+	if err != nil {
+		t.Fatalf("application not stored: %v", err)
+	}
+	if app.Status != domain.ApplicationStatusInvited {
+		t.Errorf("stored application status = %q, want invited (the 201 response says invited)", app.Status)
+	}
+}
+
+func TestApplySendFailureStill201(t *testing.T) {
+	mailer := &fakeMailer{err: errors.New("gmail send: status 500")}
+	apply, _, st := newApplyWithMailer(t, "gmail", fakeExtractor{text: "text"}, mailer)
+
+	rec := httptest.NewRecorder()
+	req, _ := multipartBody(t, "Budi", "budi@example.com", "cv.pdf", []byte("%PDF-1.4 fake"))
+	apply.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("status = %d, want 201 (body: %s)", rec.Code, rec.Body.String())
+	}
+	var got struct {
+		ApplicationID string `json:"application_id"`
+		Message       string `json:"message"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if got.Message != "Thanks! Your screening link will be sent to you shortly." {
+		t.Errorf("message = %q", got.Message)
+	}
+
+	if _, err := st.GetLatestSessionByApplication(context.Background(), got.ApplicationID); err != nil {
+		t.Fatalf("session not created despite send failure: %v", err)
+	}
+}
+
+func TestApplySessionExpiresAtTTL(t *testing.T) {
+	const ttlHours = 24
+	st := store.NewMemory()
+	seedJob(t, st, domain.JobStatusOpen)
+	cfg := config.Config{EmailMode: "log", PublicAppURL: "https://talentscout.vercel.app", SessionTTLHours: ttlHours}
+	apply := handlers.NewApply(cfg, st, storage.NewFake(), fakeExtractor{text: "text"}, &fakeMailer{})
+
+	before := time.Now()
+	rec := httptest.NewRecorder()
+	req, _ := multipartBody(t, "Budi", "budi@example.com", "cv.pdf", []byte("%PDF-1.4 fake"))
+	apply.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("status = %d, want 201 (body: %s)", rec.Code, rec.Body.String())
+	}
+	var got struct {
+		ApplicationID string `json:"application_id"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+
+	sess, err := st.GetLatestSessionByApplication(context.Background(), got.ApplicationID)
+	if err != nil {
+		t.Fatalf("session not created: %v", err)
+	}
+	want := before.Add(ttlHours * time.Hour)
+	if sess.ExpiresAt.Before(want) || sess.ExpiresAt.After(want.Add(time.Minute)) {
+		t.Errorf("expires_at = %v, want ~%v (now + %dh TTL)", sess.ExpiresAt, want, ttlHours)
 	}
 }

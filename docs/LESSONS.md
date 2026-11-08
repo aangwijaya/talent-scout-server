@@ -23,6 +23,22 @@ Rules:
 
 ## Entries
 
+### 2026-11-08 — #8 LLM client: zero-valued config and truncated replies must not look successful
+- **Context:** Hardening the LLM client after review: temperature 0.0 for judge/scorer disappeared from the request, and a reply cut off at `max_tokens` was returned as success.
+- **Problem:** `json:"temperature,omitempty"` drops a deliberate 0.0 so OpenRouter used its own default; `parseChat`/`parseStream` ignored `finish_reason`, so truncated JSON reached the caller as a valid response. Also the fake keyed replies by model id, but three nodes share one model.
+- **Cause:** `omitempty` was used for a field where zero is meaningful, and the OpenAI `finish_reason` contract was not checked before returning.
+- **Lesson:** Never `omitempty` a request field whose zero value is meaningful; treat `finish_reason: "length"` as a non-retryable truncation error; key test fakes by graph node id, not only model id.
+- **Follow-up:** tests in `internal/llm/llm_test.go` and `internal/graph/graph_test.go`
+- **Repeated?:** first time
+
+### 2026-11-08 — #8 Graph events: node_events node_id/attempt must be nullable, not defaulted
+- **Context:** Building the graph runner + event bus that persist run/node/edge/check events into `node_events`.
+- **Problem:** The Day-1 schema had `node_id text NOT NULL` and `attempt integer NOT NULL DEFAULT 1`, and the store defaulted `attempt==0 → 1`; but EVENTS.md §2/§4 mark both `node_id` and `attempt` nullable, and run-level/edge events carry `null` for both — a default would silently turn `run.started` into `attempt=1`.
+- **Cause:** The table was written before the event envelope nullability was respected.
+- **Lesson:** Read the event envelope contract (EVENTS.md §2) before adding columns or defaults to `node_events`; a store-level default for a nullable contract field corrupts run-level events.
+- **Follow-up:** none
+- **Repeated?:** first time
+
 ### 2026-11-08 — #7 Apply: two sequential inserts strand an applicant without a session
 - **Context:** Review of the apply flow found `CreateApplication` then `CreateSession` as two independent store calls.
 - **Problem:** A `CreateSession` failure returned 500 but left the application row, so the applicant's retry hit 409 `already_applied` and `resend-invite` (which only covers `invited` sessions or `failed` applications) could never reach them.

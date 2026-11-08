@@ -377,11 +377,11 @@ func TestMemoryGraphRunsAndEvents(t *testing.T) {
 		t.Fatalf("GetGraphRunBySession ID = %q, want %q", got.ID, run.ID)
 	}
 
-	first, err := s.AppendNodeEvent(ctx, domain.NodeEvent{RunID: run.ID, NodeID: "planner", Type: "node.started", Payload: []byte(`{"a":1}`)})
+	first, err := s.AppendNodeEvent(ctx, domain.NodeEvent{RunID: run.ID, NodeID: domain.StrPtr("planner"), Attempt: domain.IntPtr(1), Type: "node.started", Payload: []byte(`{"a":1}`)})
 	if err != nil {
 		t.Fatalf("AppendNodeEvent: %v", err)
 	}
-	second, err := s.AppendNodeEvent(ctx, domain.NodeEvent{RunID: run.ID, NodeID: "planner", Type: "node.completed"})
+	second, err := s.AppendNodeEvent(ctx, domain.NodeEvent{RunID: run.ID, NodeID: domain.StrPtr("planner"), Attempt: domain.IntPtr(1), Type: "node.completed"})
 	if err != nil {
 		t.Fatalf("AppendNodeEvent: %v", err)
 	}
@@ -411,6 +411,50 @@ func TestMemoryGraphRunsAndEvents(t *testing.T) {
 	}
 	if got.Status != domain.GraphRunStatusSucceeded || got.EndedAt == nil {
 		t.Fatalf("GetGraphRun = %+v", got)
+	}
+}
+
+func TestMemoryUpdateGraphRunPreservesUnchangedFields(t *testing.T) {
+	ctx := context.Background()
+	s := store.NewMemory()
+	sessionID := domain.NewID()
+
+	run := domain.GraphRun{ID: domain.NewID(), SessionID: sessionID, Status: domain.GraphRunStatusRunning}
+	if err := s.CreateGraphRun(ctx, run); err != nil {
+		t.Fatalf("CreateGraphRun: %v", err)
+	}
+	created, err := s.GetGraphRun(ctx, run.ID)
+	if err != nil {
+		t.Fatalf("GetGraphRun: %v", err)
+	}
+
+	endedAt := time.Now().UTC()
+	if err := s.UpdateGraphRun(ctx, domain.GraphRun{
+		ID:             run.ID,
+		Status:         domain.GraphRunStatusSucceeded,
+		EndedAt:        &endedAt,
+		TotalTokensIn:  10,
+		TotalTokensOut: 5,
+		CostUSD:        0.001,
+	}); err != nil {
+		t.Fatalf("UpdateGraphRun: %v", err)
+	}
+
+	got, err := s.GetGraphRunBySession(ctx, sessionID)
+	if err != nil {
+		t.Fatalf("GetGraphRunBySession after update: %v", err)
+	}
+	if got.ID != run.ID {
+		t.Errorf("ID = %q, want %q", got.ID, run.ID)
+	}
+	if got.SessionID != sessionID {
+		t.Errorf("SessionID = %q, want %q", got.SessionID, sessionID)
+	}
+	if !got.StartedAt.Equal(created.StartedAt) {
+		t.Errorf("StartedAt = %v, want preserved %v", got.StartedAt, created.StartedAt)
+	}
+	if got.Status != domain.GraphRunStatusSucceeded || got.TotalTokensIn != 10 || got.CostUSD != 0.001 {
+		t.Errorf("updated fields = %+v", got)
 	}
 }
 

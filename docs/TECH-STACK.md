@@ -120,12 +120,12 @@ flowchart LR
 
 ## 8. Model per Node (`config/models.yaml`)
 
-OpenRouter prices per 1M tokens (input/output), checked 2026-11-02:
+OpenRouter prices per 1M tokens (input/output), checked 2026-11-05:
 
 | Node | Model | Price |
 |---|---|---|
 | `planner` | `deepseek/deepseek-v4.1-flash` | $0.045 / $0.5 |
-| `interviewer` | `z-ai/glm-5.3-flash` | $0.029 / $0.092 |
+| `interviewer` | `z-ai/glm-5.3-flash` | $0.15 / $0.50 |
 | `judge` | `deepseek/deepseek-v4.1-flash` | $0.045 / $0.5 |
 | `scorer` | `deepseek/deepseek-v4.1-flash` | $0.045 / $0.5 |
 

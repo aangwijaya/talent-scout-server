@@ -186,9 +186,9 @@ type NodeEvent struct {
 	ID         string          `json:"id"`
 	RunID      string          `json:"run_id"`
 	Seq        int64           `json:"seq"`
-	NodeID     string          `json:"node_id"`
+	NodeID     *string         `json:"node_id"`
 	Type       string          `json:"type"`
-	Attempt    int             `json:"attempt"`
+	Attempt    *int            `json:"attempt"`
 	Model      *string         `json:"model"`
 	TokensIn   int             `json:"tokens_in"`
 	TokensOut  int             `json:"tokens_out"`
@@ -196,6 +196,12 @@ type NodeEvent struct {
 	Payload    json.RawMessage `json:"payload"`
 	CreatedAt  time.Time       `json:"created_at"`
 }
+
+// StrPtr returns a pointer to s, for the nullable NodeEvent fields.
+func StrPtr(s string) *string { return &s }
+
+// IntPtr returns a pointer to i, for the nullable NodeEvent fields.
+func IntPtr(i int) *int { return &i }
 
 func NewID() string {
 	var b [16]byte

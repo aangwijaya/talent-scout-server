@@ -1,11 +1,31 @@
 package llm
 
-import "context"
+import (
+	"context"
+	"sync"
+)
 
 // Fake is the deterministic LLM used in tests and CI (LLM_MODE=fake). It never
 // makes a network call and always succeeds.
 type Fake struct {
 	responses map[string]string
+
+	mu    sync.Mutex
+	calls []Request
+}
+
+// Calls returns a copy of the requests sent to the fake so tests can inspect
+// the exact messages a node would send to the model.
+func (f *Fake) Calls() []Request {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]Request(nil), f.calls...)
+}
+
+func (f *Fake) record(req Request) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.calls = append(f.calls, req)
 }
 
 // NewFake returns a Fake client. responses maps a graph node id (preferred, so
@@ -16,11 +36,13 @@ func NewFake(responses map[string]string) *Fake {
 }
 
 func (f *Fake) Chat(_ context.Context, req Request) (Response, error) {
+	f.record(req)
 	content := f.content(req)
 	return Response{Content: content, Usage: fakeUsage(req, content)}, nil
 }
 
 func (f *Fake) Stream(_ context.Context, req Request, onDelta func(string) error) (Response, error) {
+	f.record(req)
 	content := f.content(req)
 	if onDelta != nil {
 		if err := onDelta(content); err != nil {

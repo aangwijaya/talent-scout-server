@@ -29,7 +29,11 @@ func (m *SessionManager) judgeAndGuard(ctx context.Context, sess domain.Session,
 		m.failRun(ctx, sess, st, "edge_failed")
 		return
 	}
-	verdict, _ := m.runJudge(ctx, st, topic, question, answer.Content)
+	verdict, _, err := m.runJudge(ctx, st, topic, question, answer.Content)
+	if err != nil {
+		m.failRun(ctx, sess, st, "judge_failed")
+		return
+	}
 
 	if err := st.runner.EmitEdge(ctx, "judge", "guard", "verdict"); err != nil {
 		m.failRun(ctx, sess, st, "edge_failed")
@@ -89,10 +93,9 @@ func (m *SessionManager) judgeAndGuard(ctx context.Context, sess domain.Session,
 
 // runJudge runs one judge attempt. An invalid reply still completes the node
 // (with the default verdict recorded in node_events) and is never retried. A
-// judge outage also degrades to the default verdict: the run already recorded
-// node.failed, and failing the whole session for a gate outage would strand the
-// applicant.
-func (m *SessionManager) runJudge(ctx context.Context, st *liveSession, topic domain.Topic, question, answer string) (JudgeVerdict, int) {
+// transport failure is a permanent node failure per docs/EVENTS.md §6.3, so the
+// caller ends the run; only invalid JSON gets the sufficient fallback.
+func (m *SessionManager) runJudge(ctx context.Context, st *liveSession, topic domain.Topic, question, answer string) (JudgeVerdict, int, error) {
 	st.executed["judge"] = true
 	var verdict JudgeVerdict
 	_, attempt, err := st.runner.runLLMNodeWithSummary(ctx, "judge", 1, llm.Request{
@@ -107,10 +110,9 @@ func (m *SessionManager) runJudge(ctx context.Context, st *liveSession, topic do
 		return "verdict=" + parsed.Verdict
 	})
 	if err != nil {
-		m.logger.Warn("judge unavailable; defaulting to sufficient", "session_id", st.sessionID, "error", err)
-		return defaultJudgeVerdict(), attempt
+		return JudgeVerdict{}, attempt, err
 	}
-	return verdict, attempt
+	return verdict, attempt, nil
 }
 
 // runGuard reads the counters and lets the deterministic guard decide. It never

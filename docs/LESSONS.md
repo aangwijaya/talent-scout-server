@@ -23,11 +23,11 @@ Rules:
 
 ## Entries
 
-### 2026-11-09 — #10 A gate node's outage must degrade, not end the session
-- **Context:** Review of the judge/guard loop: any judge LLM error called `failRun`, killing the session and application.
-- **Problem:** A transient judge outage stranded the applicant even though the interview can safely continue with the default `sufficient` verdict; separately, the guard checked question/time limits before "the last topic is done", so a sufficient final answer at Q15 finished as `question_limit` instead of `completed`.
-- **Cause:** The gate treated a transport failure as run-fatal, and the guard ordered budget limits before the completion condition.
-- **Lesson:** A gate/classifier outage degrades to its safe default and lets the loop continue (record `node.failed`, never retry or show an applicant error); evaluate "no topics left and the answer is sufficient → completed" before any budget limit; and pass judge feedback into the follow-up prompt only inside `prompts.WrapUntrusted("judge_feedback", …)` because it derives from the applicant's answer.
+### 2026-11-09 — #10 Judge transport failure is run-fatal; only invalid JSON defaults
+- **Context:** Review of the judge/guard loop, where a first attempt made any judge LLM error degrade to the default `sufficient` verdict.
+- **Problem:** That degrade was an unapproved contract change: `EVENTS.md` §6.3 uses the judge as its example for `node.failed(will_retry=false)` → `node.skipped` → `run.failed` → `session.ended(failed)`, and `ARCHITECTURE.md` §2 allows the default `sufficient` only for invalid JSON. Separately, the guard checked question/time limits before "the last topic is done", so a sufficient final answer at Q15 finished as `question_limit` instead of `completed`.
+- **Cause:** The gate's safe-default rule was applied to transport failures as well as invalid output, and the guard ordered budget limits before the completion condition.
+- **Lesson:** Default a gate to its safe value only for invalid output; a transport or execution failure follows the §6.3 permanent-failure sequence (no applicant retry). Evaluate "no topics left and the answer is sufficient → completed" before any budget limit; and pass judge feedback into the follow-up prompt only inside `prompts.WrapUntrusted("judge_feedback", …)` because it derives from the applicant's answer.
 - **Follow-up:** tests in `internal/graph/interview_loop_review_test.go`, `internal/graph/guard_test.go` and `internal/graph/judge_test.go`
 - **Repeated?:** first time
 

@@ -21,9 +21,11 @@ func sufficientJudge(req llm.Request) (llm.Response, error) {
 	return llm.Response{Content: FakeReplies[req.Node]}, nil
 }
 
-// TestJudgeOutageDefaultsToSufficientAndContinues proves a judge transport
-// failure degrades to the default verdict instead of failing the session.
-func TestJudgeOutageDefaultsToSufficientAndContinues(t *testing.T) {
+// TestJudgeOutageFailsRunPerEventContract proves a judge transport failure is a
+// permanent node failure: docs/EVENTS.md §6.3 (and ARCHITECTURE §2, which allows
+// the default-sufficient fallback only for invalid JSON) requires
+// node.failed(will_retry=false) → node.skipped → run.failed → session.ended(failed).
+func TestJudgeOutageFailsRunPerEventContract(t *testing.T) {
 	st, sess := seedGraphSession(t)
 	client := &stubClient{chat: func(req llm.Request) (llm.Response, error) {
 		if req.Node == "judge" {
@@ -45,18 +47,22 @@ func TestJudgeOutageDefaultsToSufficientAndContinues(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetSession: %v", err)
 	}
-	if fresh.Status != domain.SessionStatusActive {
-		t.Errorf("session status = %q, want active after a judge outage", fresh.Status)
+	if fresh.Status != domain.SessionStatusCompleted || fresh.FinishReason == nil || *fresh.FinishReason != domain.FinishReasonFailed {
+		t.Errorf("session = %+v, want completed/failed after a judge outage", fresh)
+	}
+	app, err := st.GetApplication(context.Background(), sess.ApplicationID)
+	if err != nil {
+		t.Fatalf("GetApplication: %v", err)
+	}
+	if app.Status != domain.ApplicationStatusFailed {
+		t.Errorf("application status = %q, want failed", app.Status)
 	}
 
 	events := sessionEvents(t, st, sess.ID)
-	judgeFailed := false
+	sawJudgeFailed, sawRunFailed, sawSessionEnded := false, false, false
+	skipped := map[string]bool{}
 	for _, event := range events {
 		switch event.Type {
-		case EventRunFailed:
-			t.Errorf("run.failed emitted for a judge outage: %+v", event)
-		case EventError:
-			t.Errorf("applicant error event emitted for a judge outage: %+v", event)
 		case EventNodeFailed:
 			if event.NodeID == nil || *event.NodeID != "judge" {
 				continue
@@ -71,19 +77,49 @@ func TestJudgeOutageDefaultsToSufficientAndContinues(t *testing.T) {
 			if payload.Error == "" {
 				t.Errorf("judge node.failed has an empty error")
 			}
-			judgeFailed = true
+			sawJudgeFailed = true
+		case EventNodeSkipped:
+			if event.NodeID != nil {
+				skipped[*event.NodeID] = true
+			}
+		case EventNodeStarted, EventNodeCompleted:
+			if event.NodeID != nil && (*event.NodeID == "guard" || *event.NodeID == "scorer" || *event.NodeID == "evidence_check") {
+				t.Errorf("%s emitted after the judge failed: %s", event.Type, *event.NodeID)
+			}
+		case EventEdgeTraversed:
+			var edge EdgeTraversed
+			if err := json.Unmarshal(event.Payload, &edge); err != nil {
+				t.Fatalf("unmarshal edge: %v", err)
+			}
+			if edge.From == "judge" || edge.From == "guard" {
+				t.Errorf("edge.traversed(%s→%s) emitted after the judge failed", edge.From, edge.To)
+			}
+		case EventRunFailed:
+			sawRunFailed = true
+		case EventSessionEnded:
+			var payload SessionEnded
+			if err := json.Unmarshal(event.Payload, &payload); err != nil {
+				t.Fatalf("unmarshal session.ended: %v", err)
+			}
+			if payload.FinishReason != string(domain.FinishReasonFailed) {
+				t.Errorf("session.ended finish_reason = %q, want failed", payload.FinishReason)
+			}
+			sawSessionEnded = true
 		}
 	}
-	if !judgeFailed {
+	if !sawJudgeFailed {
 		t.Error("no judge node.failed event recorded for the outage")
 	}
-
-	guard := nodeCompletedPayload(t, events, "guard")
-	if guard.OutputSummary != string(GuardNextTopic) {
-		t.Errorf("guard action after judge outage = %q, want %q", guard.OutputSummary, GuardNextTopic)
+	for _, node := range []string{"guard", "scorer", "evidence_check"} {
+		if !skipped[node] {
+			t.Errorf("no node.skipped for downstream node %q", node)
+		}
 	}
-	if got := lastMessageKind(t, st, sess.ID); got != domain.MessageKindQuestion {
-		t.Errorf("last message kind = %q, want question on the next topic", got)
+	if !sawRunFailed {
+		t.Error("no run.failed event after a judge outage")
+	}
+	if !sawSessionEnded {
+		t.Error("no session.ended event after a judge outage")
 	}
 }
 

@@ -23,6 +23,14 @@ Rules:
 
 ## Entries
 
+### 2026-11-09 — #11 Retry only failed criteria; map internal evidence reasons to the contract
+- **Context:** Adding the scorer and the evidence check retry loop (max 3 attempts) after the interview ends.
+- **Problem:** `domain.EvidenceQuoteRejectReason` returns `quote_too_short` / `quote_too_long`, but `docs/EVENTS.md` only documents `quote_not_found` as a check/retry reason. Retrying every criterion would also re-score already-valid ones, and a static fake scorer reply only works if its quotes match the deterministic fake transcript exactly.
+- **Cause:** The domain helper describes why a quote is unusable internally, not the wire contract; and per-criterion validity was not tracked across attempts.
+- **Lesson:** Map internal validation reasons onto the single reason the event contract lists at the boundary, keep a per-criterion `validAt` so a retry prompt only contains failed keys plus their feedback, and make `FakeReplies["scorer"]` quote the canonical fake interview answers (the client mock transcript) by alias.
+- **Follow-up:** tests in `internal/graph/scorer_test.go`
+- **Repeated?:** first time
+
 ### 2026-11-09 — #10 Judge transport failure is run-fatal; only invalid JSON defaults
 - **Context:** Review of the judge/guard loop, where a first attempt made any judge LLM error degrade to the default `sufficient` verdict.
 - **Problem:** That degrade was an unapproved contract change: `EVENTS.md` §6.3 uses the judge as its example for `node.failed(will_retry=false)` → `node.skipped` → `run.failed` → `session.ended(failed)`, and `ARCHITECTURE.md` §2 allows the default `sufficient` only for invalid JSON. Separately, the guard checked question/time limits before "the last topic is done", so a sufficient final answer at Q15 finished as `question_limit` instead of `completed`.

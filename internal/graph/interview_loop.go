@@ -207,8 +207,9 @@ func (m *SessionManager) activateNextTopic(ctx context.Context, current domain.T
 	return *next, true, nil
 }
 
-// finishInterview ends the interview loop. Scoring (server#11) continues the run
-// from the guard→scorer edge, so no run.completed is emitted here.
+// finishInterview ends the interview loop, ends the session stream, then keeps
+// the run alive to score the transcript. The guard→scorer edge was already
+// emitted by the caller.
 func (m *SessionManager) finishInterview(ctx context.Context, sess domain.Session, st *liveSession, reason domain.FinishReason) {
 	if topic, err := m.activeTopic(ctx, sess.ID); err == nil && topic != nil {
 		topic.Status = domain.TopicStatusDone
@@ -226,6 +227,9 @@ func (m *SessionManager) finishInterview(ctx context.Context, sess domain.Sessio
 			_ = m.store.UpdateApplicationStatus(ctx, app.ID, domain.ApplicationStatusScoring)
 		}
 		_, _ = m.bus.Emit(ctx, st.runID, Event{Type: EventSessionEnded, Payload: SessionEnded{FinishReason: string(reason)}})
+		if err := m.runScoring(ctx, sess, st, reason); err != nil {
+			m.failScoring(ctx, sess, st, err)
+		}
 	}
 
 	m.registry.Remove(sess.ID)

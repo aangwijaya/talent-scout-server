@@ -310,8 +310,8 @@ func TestGuardFinishesWhenAllTopicsAreDone(t *testing.T) {
 		t.Errorf("session = %+v, want completed/completed", fresh)
 	}
 	app, _ := st.GetApplication(context.Background(), sess.ApplicationID)
-	if app.Status != domain.ApplicationStatusScoring {
-		t.Errorf("application status = %q, want scoring", app.Status)
+	if app.Status != domain.ApplicationStatusReview {
+		t.Errorf("application status = %q, want review after scoring", app.Status)
 	}
 
 	events := sessionEvents(t, st, sess.ID)

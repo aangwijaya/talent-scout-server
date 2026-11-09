@@ -582,7 +582,8 @@ func (m *SessionManager) abortStart(ctx context.Context, sess domain.Session) {
 
 // finishExternally reports a session.ended the sweeper already committed to the
 // store. It returns false when this process has no live state for the session,
-// in which case the sweeper persists the event directly.
+// in which case the sweeper persists the event directly. The scorer still runs
+// on the transcript of a session the sweeper finished (ARCHITECTURE §3).
 func (m *SessionManager) finishExternally(sessionID string, reason domain.FinishReason) bool {
 	m.mu.Lock()
 	st, ok := m.states[sessionID]
@@ -603,7 +604,22 @@ func (m *SessionManager) finishExternally(sessionID string, reason domain.Finish
 
 	m.registry.Remove(sessionID)
 	_, _ = m.bus.Emit(context.Background(), runID, Event{Type: EventSessionEnded, Payload: SessionEnded{FinishReason: string(reason)}})
+	if sess, err := m.store.GetSession(context.Background(), sessionID); err == nil {
+		if err := m.runScoring(context.Background(), sess, st, reason); err != nil {
+			m.failScoring(context.Background(), sess, st, err)
+		}
+	}
 	return true
+}
+
+// failScoring ends a run whose scoring could not finish. The session already
+// ended, so only the run and application state change here.
+func (m *SessionManager) failScoring(ctx context.Context, sess domain.Session, st *liveSession, err error) {
+	m.logger.Error("scoring failed", "session_id", sess.ID, "error", err)
+	_ = st.runner.Fail(ctx, "scoring_failed")
+	if app, appErr := m.store.GetApplication(ctx, sess.ApplicationID); appErr == nil && app.Status == domain.ApplicationStatusScoring {
+		_ = m.store.UpdateApplicationStatus(ctx, app.ID, domain.ApplicationStatusFailed)
+	}
 }
 
 func (m *SessionManager) recordQuestion(ctx context.Context, sessionID string) (domain.Session, error) {

@@ -107,7 +107,9 @@ func (r *Runner) runLLMNodeWithSummary(ctx context.Context, nodeID string, attem
 		resp, err = r.llm.Chat(ctx, req)
 	}
 	if err != nil {
-		_ = r.emitNodeFailed(ctx, nodeID, currentAttempt, &model, err.Error(), false)
+		if emitErr := r.emitNodeFailed(ctx, nodeID, currentAttempt, &model, err.Error(), false); emitErr != nil {
+			return llm.Response{}, currentAttempt, emitErr
+		}
 		return llm.Response{}, currentAttempt, err
 	}
 

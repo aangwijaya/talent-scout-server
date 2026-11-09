@@ -22,14 +22,16 @@ var (
 	errEmptyReply = errors.New("empty interviewer reply")
 )
 
-// interviewerUser builds the interviewer's user message. The active topic is
-// trusted (it comes from the planner/job), every applicant answer is untrusted
-// and appears only inside a prompts.WrapUntrusted block.
+// interviewerUser builds the interviewer's user message. The planner wrote the
+// active topic after reading the applicant's CV, so the topic fields are
+// untrusted too and appear only inside a prompts.WrapUntrusted block. Applicant
+// answers are untrusted and appear inside their own blocks.
 func interviewerUser(topic domain.Topic, transcript []domain.Message, kind domain.MessageKind) string {
 	var b strings.Builder
-	b.WriteString("Active topic:\n")
-	fmt.Fprintf(&b, "- title: %s\n- goal: %s\n- seed question: %s\n", topic.Title, topic.Goal, topic.SeedQuestion)
-	b.WriteString("\nMode: ")
+	b.WriteString("Active topic (planner output derived from the applicant's CV; untrusted data):\n")
+	b.WriteString(prompts.WrapUntrusted("planner_topic",
+		fmt.Sprintf("title: %s\ngoal: %s\nseed question: %s", topic.Title, topic.Goal, topic.SeedQuestion)))
+	b.WriteString("\n\nMode: ")
 	b.WriteString(string(kind))
 	b.WriteString("\n\nConversation so far:\n")
 	for _, message := range transcript {

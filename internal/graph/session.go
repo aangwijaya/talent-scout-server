@@ -20,6 +20,10 @@ var ErrInvalidState = errors.New("invalid state")
 
 var errPlanInvalid = errors.New("planner produced an invalid plan after retries")
 
+// interviewerUnavailableMessage is the only text the applicant sees for a
+// temporary interviewer failure. The provider's error stays in the server log.
+const interviewerUnavailableMessage = "The interviewer is temporarily unavailable. Please try again."
+
 // SessionManager owns the live graph state for the sessions running in this
 // process. Handlers drive it with Start/SubmitAnswer/Retry; the sweeper uses the
 // same Registry to leave live sessions alone.
@@ -41,12 +45,11 @@ type liveSession struct {
 	runID     string
 	runner    *Runner
 
-	busy          bool
-	waitingRetry  bool
-	manualRetries int
-	done          bool
-	retry         func(context.Context)
-	executed      map[string]bool
+	busy         bool
+	waitingRetry bool
+	done         bool
+	retry        func(context.Context)
+	executed     map[string]bool
 }
 
 // NewSessionManager builds a manager. A nil registry is replaced with a fresh
@@ -160,7 +163,6 @@ func (m *SessionManager) Retry(ctx context.Context, sess domain.Session) error {
 	}
 	st.waitingRetry = false
 	st.busy = true
-	st.manualRetries++
 	fn := st.retry
 	st.retry = nil
 	m.mu.Unlock()
@@ -335,7 +337,7 @@ func (m *SessionManager) runInterviewer(ctx context.Context, sess domain.Session
 	limiter := newWordLimiter(maxInterviewerWords)
 	res, err := st.runner.streamInterviewer(ctx, attempt, interviewerMessages(topic, transcript, kind), inputSummary, messageID, limiter)
 	if err != nil {
-		m.handleInterviewerError(ctx, sess, st, topic, kind, res.Attempt, err)
+		m.handleInterviewerError(ctx, sess, st, topic, kind, res.Attempt, err, false)
 		return
 	}
 
@@ -367,17 +369,25 @@ func (m *SessionManager) runInterviewer(ctx context.Context, sess domain.Session
 	m.idle(st)
 }
 
-func (m *SessionManager) handleInterviewerError(ctx context.Context, sess domain.Session, st *liveSession, topic domain.Topic, kind domain.MessageKind, lastAttempt int, err error) {
+// handleInterviewerError gives the applicant one manual retry per failed
+// interviewer step. alreadyRetried is true when this failure is the retry of
+// the same step, so a second failure ends the session instead of offering
+// another retry; a later turn starts with a fresh budget.
+func (m *SessionManager) handleInterviewerError(ctx context.Context, sess domain.Session, st *liveSession, topic domain.Topic, kind domain.MessageKind, lastAttempt int, err error, alreadyRetried bool) {
+	m.logger.Error("interviewer step failed", "session_id", sess.ID, "attempt", lastAttempt, "error", err)
 	m.mu.Lock()
-	canRetry := errors.Is(err, llm.ErrUnavailable) && st.manualRetries == 0 && !st.done
+	canRetry := errors.Is(err, llm.ErrUnavailable) && !alreadyRetried && !st.done
 	if canRetry {
 		// The retry continues the attempt counter after the last attempt the
-		// transport layer emitted, so node.started numbers never repeat.
+		// transport layer emitted, so node.started numbers never repeat. The
+		// retry itself may still use the HTTP retries of a fresh LLM call.
 		nextAttempt := lastAttempt + 1
+		maxAttempts := nextAttempt + m.models.MaxRetries()
 		st.waitingRetry = true
 		st.busy = false
 		st.retry = func(retryCtx context.Context) {
-			_ = st.runner.EmitLoopRetry(retryCtx, "interviewer", nextAttempt, nextAttempt, "llm_unavailable", err.Error())
+			_ = st.runner.EmitLoopRetry(retryCtx, "interviewer", nextAttempt, maxAttempts, "llm_unavailable", err.Error())
+			_ = st.runner.EmitEdge(retryCtx, "interviewer", "interviewer", "retry")
 			st.executed["interviewer"] = true
 			transcript, loadErr := m.store.ListMessagesBySession(retryCtx, sess.ID, false)
 			if loadErr != nil {
@@ -389,7 +399,7 @@ func (m *SessionManager) handleInterviewerError(ctx context.Context, sess domain
 			limiter := newWordLimiter(maxInterviewerWords)
 			res, streamErr := st.runner.streamInterviewer(retryCtx, nextAttempt, interviewerMessages(topic, transcript, kind), inputSummary, messageID, limiter)
 			if streamErr != nil {
-				m.handleInterviewerError(retryCtx, sess, st, topic, kind, res.Attempt, streamErr)
+				m.handleInterviewerError(retryCtx, sess, st, topic, kind, res.Attempt, streamErr, true)
 				return
 			}
 			message := domain.Message{ID: messageID, SessionID: sess.ID, TopicID: &topic.ID, Role: domain.MessageRoleAssistant, Kind: kind, Content: res.Text}
@@ -416,7 +426,7 @@ func (m *SessionManager) handleInterviewerError(ctx context.Context, sess domain
 		m.registry.Remove(sess.ID)
 		_, _ = m.bus.Emit(ctx, st.runID, Event{
 			Type:    EventError,
-			Payload: ErrorEvent{Code: "llm_unavailable", Message: err.Error(), Retryable: true},
+			Payload: ErrorEvent{Code: "llm_unavailable", Message: interviewerUnavailableMessage, Retryable: true},
 		})
 		return
 	}

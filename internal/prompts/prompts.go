@@ -47,6 +47,13 @@ func WrapUntrusted(name, text string) string {
 	return fmt.Sprintf("<<<UNTRUSTED_DATA name=%q>>>\n%s\n%s", name, text, UntrustedClose)
 }
 
+// HasUntrustedDelimiter reports whether text contains something shaped like an
+// untrusted-data delimiter. Nodes that reject attacker-influenced fields use it
+// so a forged delimiter never reaches a prompt.
+func HasUntrustedDelimiter(text string) bool {
+	return forgedDelimiter.MatchString(text)
+}
+
 // CapCV truncates CV text to MaxCVTextChars runes without splitting a UTF-8
 // rune.
 func CapCV(text string) string {

@@ -76,6 +76,7 @@ var Edges = []EdgeRef{
 	{From: "plan_check", To: "planner"},
 	{From: "plan_check", To: "interviewer"},
 	{From: "interviewer", To: "judge"},
+	{From: "interviewer", To: "interviewer"},
 	{From: "judge", To: "guard"},
 	{From: "guard", To: "interviewer"},
 	{From: "guard", To: "scorer"},

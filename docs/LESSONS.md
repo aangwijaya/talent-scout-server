@@ -23,6 +23,14 @@ Rules:
 
 ## Entries
 
+### 2026-11-09 — #9 Planner output is untrusted downstream of the CV
+- **Context:** Hardening the interviewer prompt after review of PR #39.
+- **Problem:** `interviewerUser` rendered `topic.title/goal/seed_question` as trusted text, but the planner wrote those fields after reading the applicant's CV, so a crafted CV could plant instructions that bypass the `<<<UNTRUSTED_DATA>>>` blocks one node later.
+- **Cause:** Trust was assigned by node type ("planner output") rather than by data provenance; anything derived from applicant text stays untrusted.
+- **Lesson:** Wrap planner-written topic fields in `prompts.WrapUntrusted("planner_topic", …)` (and reject delimiter-bearing or over-long topic fields in `plan_check` so the planner retry handles them); treat derived LLM output as untrusted whenever its input was untrusted.
+- **Follow-up:** tests in `internal/graph/plan_check_test.go` and `TestPlannerTopicFieldsReachInterviewerInsideUntrustedBlock`
+- **Repeated?:** first time
+
 ### 2026-11-09 — #9 Sweeper: track in-flight steps, not live runners
 - **Context:** Adding the session runner meant the sweeper had to stop finishing sessions a graph step was using, without leaving idle sessions `active` forever.
 - **Problem:** A registry of "sessions with a live runner" skips a session between answers too, so an applicant who stops answering is never abandoned, and (with the guard not built yet) nothing ends the session at the 15-minute limit.

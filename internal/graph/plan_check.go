@@ -3,8 +3,10 @@ package graph
 import (
 	"fmt"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/aangwijaya/talent-scout-server/internal/domain"
+	"github.com/aangwijaya/talent-scout-server/internal/prompts"
 )
 
 // PlannedTopic is one topic produced by the planner.
@@ -36,6 +38,11 @@ func (e PlanCheckError) String() string {
 const (
 	minTopics = 3
 	maxTopics = 5
+
+	// Topic fields are shown to the interviewer, so a planner that echoes
+	// applicant text must not smuggle in a delimiter or an essay.
+	maxTopicTitleChars = 120
+	maxTopicTextChars  = 400
 )
 
 // CheckPlan validates the plan against ARCHITECTURE §2: 3-5 topics, every
@@ -64,6 +71,22 @@ func CheckPlan(plan Plan, rubric []domain.RubricCriterion) []PlanCheckError {
 		}
 		if strings.TrimSpace(topic.SeedQuestion) == "" {
 			errs = append(errs, PlanCheckError{Reason: fmt.Sprintf("topic %d seed_question must not be empty", position)})
+		}
+		for _, field := range []struct {
+			name  string
+			value string
+			max   int
+		}{
+			{"title", topic.Title, maxTopicTitleChars},
+			{"goal", topic.Goal, maxTopicTextChars},
+			{"seed_question", topic.SeedQuestion, maxTopicTextChars},
+		} {
+			if prompts.HasUntrustedDelimiter(field.value) {
+				errs = append(errs, PlanCheckError{Reason: fmt.Sprintf("topic %d %s must not contain an untrusted-data delimiter", position, field.name)})
+			}
+			if utf8.RuneCountInString(field.value) > field.max {
+				errs = append(errs, PlanCheckError{Reason: fmt.Sprintf("topic %d %s must be at most %d characters", position, field.name, field.max)})
+			}
 		}
 		if len(topic.RubricKeys) == 0 {
 			errs = append(errs, PlanCheckError{Reason: fmt.Sprintf("topic %d rubric_keys must not be empty", position)})

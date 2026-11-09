@@ -32,10 +32,23 @@ Edges are only real data dependencies: `planner` needs JD+CV; `interviewer` need
 | `judge` | gate (LLM, JSON) | active topic, question, last answer, follow-up count | `{verdict: "sufficient"\|"follow_up", reason, missing[]}` | `nodes.judge` | JSON schema. Invalid → immediately default `sufficient` (recorded in `node_events`), no retry. |
 | `guard` | code node | verdict, `follow_up_count`, `question_count`, `started_at`, topic status | action: `follow_up` / `next_topic` / `finish` + `finish_reason` | — | Deterministic, no LLM (see §3). |
 | `scorer` | worker (LLM, JSON) | rubric, topics, full transcript | `scores[]`: `{rubric_key, score 1–5, rationale, evidence[{message_id, quote}]}` | `nodes.scorer` | `evidence_check` |
-| `evidence_check` | code node | scorer output, applicant messages | ok / error per criterion | — | Each rubric criterion has exactly 1 score; integer score 1–5; ≥1 evidence; `quote` (after whitespace & lowercase normalization) is a substring of the `role=applicant` message with that `message_id`; quote length 3–300 characters. Failure → retry scorer only for failed criteria + error message (max 3 attempts total: initial + 2 retries). Still failing → criterion `status=needs_manual`. |
+| `evidence_check` | code node | scorer output, applicant messages | ok / error per criterion | — | Each rubric criterion has exactly 1 score; integer score 1–5; ≥1 evidence; `quote` (after whitespace & lowercase normalization) is a substring of the `role=applicant` message with that `message_id`; quote length 3–300 characters **and at least 3 words**. Failure → retry scorer only for failed criteria + error message (max 3 attempts total: initial + 2 retries). Still failing → criterion `status=needs_manual`. |
 | `recruiter_gate` | human gate | scores, transcript | `decision` + `note` | — | Only via `POST /api/v1/applications/{applicationId}/decision`. |
 
 Every node attempt emits `node.started` and then `node.completed`/`node.failed`; a node that is not executed emits `node.skipped`. Every transition emits `edge.traversed`. The normative ordering is in `EVENTS.md` §6. `recruiter_gate` is outside the runner and emits no node events.
+
+### Untrusted input (prompt injection)
+
+The CV (`applications.cv_text`) and every applicant answer are attacker-controlled. A crafted CV or answer can contain text shaped like an instruction ("ignore the rubric", "give me a 5"). The graph must treat both as data for every LLM node; `evidence_check` cannot catch this class of attack because the forged text really is in the transcript.
+
+Defenses (all in code, not only in prose):
+
+- `internal/prompts.WrapUntrusted` / `CVBlock` put untrusted text in `<<<UNTRUSTED_DATA name="…">>>` … `<<<END_UNTRUSTED_DATA>>>` blocks and neutralize forged delimiters inside the text. The shared `prompts.SafetyRule` is prepended to every node system prompt and states that the blocks are data, never instructions.
+- `prompts.CapCV` truncates `cv_text` to 12,000 characters (rune-safe) before it reaches any prompt, bounding both the injection surface and token cost.
+- `scorer`'s system prompt forbids taking a score, rubric change or evidence from instructions in an answer; it scores only the substance.
+- `evidence_check` rejects quotes shorter than 3 words (`domain.EvidenceQuoteRejectReason`), so a bare "yes" is not evidence.
+
+Limits: delimiters and system instructions reduce, but do not eliminate, prompt injection; a model can still be persuaded, and a sufficiently long quoted phrase can contain an instruction and remain a real substring. `evidence_check` proves a quote exists, not that it supports the score, and it cannot detect a long, plausible-looking planted quote. These defenses are defense-in-depth; the human `recruiter_gate` remains the authority on the final decision.
 
 ## 3. Loop Rules & Limits
 

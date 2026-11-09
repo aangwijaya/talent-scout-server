@@ -244,9 +244,7 @@ func (m *SessionManager) continueAfterAnswer(ctx context.Context, sess domain.Se
 		m.failRun(ctx, sess, st, "no_active_topic")
 		return
 	}
-	// server#10 inserts judge → guard here; until then the interviewer asks a
-	// follow-up on the same topic.
-	m.runInterviewer(ctx, sess, st, *topic, domain.MessageKindFollowUp, 1)
+	m.judgeAndGuard(ctx, sess, st, *topic)
 }
 
 // runPlanner runs the planner loop while the plan_check budget is not spent,
@@ -269,7 +267,7 @@ func (m *SessionManager) runPlanner(ctx context.Context, sess domain.Session, st
 		if retryFromCheck {
 			// The last automatic attempt the plan_check budget allows.
 			maxAttempts := attempt + (maxPlannerAttempts - progress.planChecks) - 1
-			if err := st.runner.EmitLoopRetry(ctx, "planner", attempt, maxAttempts, "invalid_plan", planFeedback(progress.feedback)); err != nil {
+			if err := st.runner.EmitLoopRetry(ctx, "planner", attempt, maxAttempts, "invalid_plan", planFeedback(progress.feedback, job.Rubric)); err != nil {
 				return nil, attempt, progress, err
 			}
 			if err := st.runner.EmitEdge(ctx, "plan_check", "planner", "invalid"); err != nil {

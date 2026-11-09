@@ -41,8 +41,8 @@ func interviewerUser(topic domain.Topic, transcript []domain.Message, kind domai
 			b.WriteString(prompts.WrapUntrusted("answer", message.Content))
 			b.WriteString("\n")
 		case domain.MessageRoleAssistant:
-			b.WriteString("Interviewer: ")
-			b.WriteString(message.Content)
+			b.WriteString("Interviewer:\n")
+			b.WriteString(prompts.WrapUntrusted("interviewer_question", message.Content))
 			b.WriteString("\n")
 		}
 	}

@@ -28,13 +28,6 @@ type PlanCheckError struct {
 	Reason    string
 }
 
-func (e PlanCheckError) String() string {
-	if e.RubricKey == "" {
-		return e.Reason
-	}
-	return fmt.Sprintf("%s: %s", e.RubricKey, e.Reason)
-}
-
 const (
 	minTopics = 3
 	maxTopics = 5

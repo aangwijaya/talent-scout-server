@@ -11,4 +11,5 @@ var FakeReplies = map[string]string{
 		{"title":"Testing, quality and communication","goal":"Assess testing, accessibility, attention to detail and clarity of explanation.","rubric_keys":["testing_quality","communication"],"seed_question":"Tell me how you test an interactive UI, including accessibility, and how you explain trade-offs to teammates."}
 	]}`,
 	"interviewer": "Tell me about a frontend performance problem you solved. What did you measure before and after, and what trade-offs did you accept?",
+	"judge":       `{"verdict":"follow_up","reason":"The answer needs a concrete example with measured outcomes.","missing":["specific project","before/after metrics"]}`,
 }

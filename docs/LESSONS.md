@@ -23,6 +23,14 @@ Rules:
 
 ## Entries
 
+### 2026-11-09 — #10 Guard must reserve budget for remaining topics
+- **Context:** Adding the deterministic guard after the judge.
+- **Problem:** A rule that only checks `verdict=follow_up && follow_up_count < 2` spends the last question or minute on a follow-up and loses a later topic.
+- **Cause:** Follow-up affordability was judged against the per-topic counter only, not against the session's remaining questions/time and the pending topics.
+- **Lesson:** Allow a follow-up only when the remaining question budget and observed pace (`elapsed/questions`) can still fit the follow-up plus one question per remaining topic; record an invalid judge reply as the default verdict it produced in `node.completed` because the judge is never retried.
+- **Follow-up:** tests in `internal/graph/guard_test.go` (15 cases) and `TestGuardDropsFollowUpWhenQuestionsCannotCoverTopics`
+- **Repeated?:** first time
+
 ### 2026-11-09 — #40 Planner transport outage must be applicant-retryable
 - **Context:** A planner `llm.ErrUnavailable` during session start called `failRun` directly, permanently failing the application.
 - **Problem:** The planner step mixed two different failures: a `plan_check` rejection (automatic retry, max 2 attempts) and a transport outage (should wait for `POST /retry`). Treating both as run-fatal made a transient 5xx strand the applicant.

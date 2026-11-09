@@ -10,6 +10,11 @@ import (
 	"github.com/aangwijaya/talent-scout-server/internal/prompts"
 )
 
+// unknownRubricKeyPlaceholder replaces an invalid rubric key from the planner's
+// output. The planner wrote it after reading the CV, so it is untrusted and must
+// never reach the trusted "previous plan was rejected" feedback verbatim.
+const unknownRubricKeyPlaceholder = "unknown rubric key"
+
 // plannerUser builds the planner's user message. The job description and
 // rubric are trusted; the CV is applicant-controlled and only ever appears
 // inside a capped prompts.CVBlock.
@@ -30,13 +35,36 @@ func plannerUser(job domain.Job, cvText string, feedback []PlanCheckError) strin
 	b.WriteString("\nUse 3 to 5 topics. Every rubric key must appear in at least one topic and every rubric_keys entry must exist in the rubric.")
 	if len(feedback) > 0 {
 		b.WriteString("\nThe previous plan was rejected for these reasons; fix them:\n")
+		validKeys := rubricKeys(job.Rubric)
 		for _, err := range feedback {
 			b.WriteString("- ")
-			b.WriteString(err.String())
+			b.WriteString(formatPlanCheckError(err, validKeys))
 			b.WriteString("\n")
 		}
 	}
 	return b.String()
+}
+
+func rubricKeys(rubric []domain.RubricCriterion) map[string]struct{} {
+	keys := make(map[string]struct{}, len(rubric))
+	for _, criterion := range rubric {
+		keys[criterion.Key] = struct{}{}
+	}
+	return keys
+}
+
+// formatPlanCheckError renders a plan_check error for a trusted prompt. Only
+// keys that exist in the job's rubric are shown; anything else is replaced by a
+// fixed placeholder because the planner may have copied it from the CV.
+func formatPlanCheckError(err PlanCheckError, validKeys map[string]struct{}) string {
+	if err.RubricKey == "" {
+		return err.Reason
+	}
+	key := err.RubricKey
+	if _, ok := validKeys[key]; !ok {
+		key = unknownRubricKeyPlaceholder
+	}
+	return key + ": " + err.Reason
 }
 
 func plannerMessages(job domain.Job, cvText string, feedback []PlanCheckError) []llm.Message {
@@ -95,10 +123,11 @@ func planCheckPayload(errs []PlanCheckError) []CheckError {
 	return out
 }
 
-func planFeedback(errs []PlanCheckError) string {
+func planFeedback(errs []PlanCheckError, rubric []domain.RubricCriterion) string {
+	validKeys := rubricKeys(rubric)
 	parts := make([]string, 0, len(errs))
 	for _, err := range errs {
-		parts = append(parts, err.String())
+		parts = append(parts, formatPlanCheckError(err, validKeys))
 	}
 	return strings.Join(parts, "; ")
 }

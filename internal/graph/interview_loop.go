@@ -29,11 +29,7 @@ func (m *SessionManager) judgeAndGuard(ctx context.Context, sess domain.Session,
 		m.failRun(ctx, sess, st, "edge_failed")
 		return
 	}
-	verdict, _, err := m.runJudge(ctx, st, topic, question, answer.Content)
-	if err != nil {
-		m.failRun(ctx, sess, st, "judge_failed")
-		return
-	}
+	verdict, _ := m.runJudge(ctx, st, topic, question, answer.Content)
 
 	if err := st.runner.EmitEdge(ctx, "judge", "guard", "verdict"); err != nil {
 		m.failRun(ctx, sess, st, "edge_failed")
@@ -56,10 +52,18 @@ func (m *SessionManager) judgeAndGuard(ctx context.Context, sess domain.Session,
 			m.failRun(ctx, sess, st, "edge_failed")
 			return
 		}
-		m.runInterviewer(ctx, sess, st, topic, domain.MessageKindFollowUp, 1)
+		m.runInterviewer(ctx, sess, st, topic, domain.MessageKindFollowUp, 1, &verdict)
 	case GuardNextTopic:
-		next, ok := m.activateNextTopic(ctx, topic)
+		next, ok, err := m.activateNextTopic(ctx, topic)
+		if err != nil {
+			m.failRun(ctx, sess, st, "activate_topic_failed")
+			return
+		}
 		if !ok {
+			if err := st.runner.EmitEdge(ctx, "guard", "scorer", "finish"); err != nil {
+				m.failRun(ctx, sess, st, "edge_failed")
+				return
+			}
 			m.finishInterview(ctx, sess, st, domain.FinishReasonCompleted)
 			return
 		}
@@ -73,7 +77,7 @@ func (m *SessionManager) judgeAndGuard(ctx context.Context, sess domain.Session,
 			m.failRun(ctx, sess, st, "edge_failed")
 			return
 		}
-		m.runInterviewer(ctx, sess, st, next, domain.MessageKindQuestion, 1)
+		m.runInterviewer(ctx, sess, st, next, domain.MessageKindQuestion, 1, nil)
 	default:
 		if err := st.runner.EmitEdge(ctx, "guard", "scorer", "finish"); err != nil {
 			m.failRun(ctx, sess, st, "edge_failed")
@@ -84,8 +88,11 @@ func (m *SessionManager) judgeAndGuard(ctx context.Context, sess domain.Session,
 }
 
 // runJudge runs one judge attempt. An invalid reply still completes the node
-// (with the default verdict recorded in node_events) and is never retried.
-func (m *SessionManager) runJudge(ctx context.Context, st *liveSession, topic domain.Topic, question, answer string) (JudgeVerdict, int, error) {
+// (with the default verdict recorded in node_events) and is never retried. A
+// judge outage also degrades to the default verdict: the run already recorded
+// node.failed, and failing the whole session for a gate outage would strand the
+// applicant.
+func (m *SessionManager) runJudge(ctx context.Context, st *liveSession, topic domain.Topic, question, answer string) (JudgeVerdict, int) {
 	st.executed["judge"] = true
 	var verdict JudgeVerdict
 	_, attempt, err := st.runner.runLLMNodeWithSummary(ctx, "judge", 1, llm.Request{
@@ -100,9 +107,10 @@ func (m *SessionManager) runJudge(ctx context.Context, st *liveSession, topic do
 		return "verdict=" + parsed.Verdict
 	})
 	if err != nil {
-		return JudgeVerdict{}, attempt, err
+		m.logger.Warn("judge unavailable; defaulting to sufficient", "session_id", st.sessionID, "error", err)
+		return defaultJudgeVerdict(), attempt
 	}
-	return verdict, attempt, nil
+	return verdict, attempt
 }
 
 // runGuard reads the counters and lets the deterministic guard decide. It never
@@ -145,11 +153,13 @@ func (m *SessionManager) runGuard(ctx context.Context, sess domain.Session, st *
 }
 
 // activateNextTopic marks current done and activates the next pending topic. It
-// reports false when no topic is left.
-func (m *SessionManager) activateNextTopic(ctx context.Context, current domain.Topic) (domain.Topic, bool) {
+// reports ok=false with a nil error when no topic is left; a store error is
+// returned separately so the caller can fail the run instead of pretending the
+// interview finished cleanly.
+func (m *SessionManager) activateNextTopic(ctx context.Context, current domain.Topic) (domain.Topic, bool, error) {
 	topics, err := m.store.ListTopicsBySession(ctx, current.SessionID)
 	if err != nil {
-		return domain.Topic{}, false
+		return domain.Topic{}, false, err
 	}
 	var next *domain.Topic
 	for i := range topics {
@@ -174,18 +184,18 @@ func (m *SessionManager) activateNextTopic(ctx context.Context, current domain.T
 		}
 	}
 	if next == nil {
-		return domain.Topic{}, false
+		return domain.Topic{}, false, nil
 	}
 
 	current.Status = domain.TopicStatusDone
 	if err := m.store.UpdateTopic(ctx, current); err != nil {
-		return domain.Topic{}, false
+		return domain.Topic{}, false, err
 	}
 	next.Status = domain.TopicStatusActive
 	if err := m.store.UpdateTopic(ctx, *next); err != nil {
-		return domain.Topic{}, false
+		return domain.Topic{}, false, err
 	}
-	return *next, true
+	return *next, true, nil
 }
 
 // finishInterview ends the interview loop. Scoring (server#11) continues the run

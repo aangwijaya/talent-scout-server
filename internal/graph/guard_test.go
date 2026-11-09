@@ -55,6 +55,14 @@ func TestDecideGuard(t *testing.T) {
 			startedAt: &start, maxQuestions: 15, maxMinutes: 15, wantAction: GuardFinish, wantReason: domain.FinishReasonCompleted,
 		},
 		{
+			name: "sufficient last answer at the question limit finishes completed", verdict: sufficient, followUps: 0, questions: 15, elapsedMin: 5, remaining: 0,
+			startedAt: &start, maxQuestions: 15, maxMinutes: 15, wantAction: GuardFinish, wantReason: domain.FinishReasonCompleted,
+		},
+		{
+			name: "sufficient last answer at the time limit finishes completed", verdict: sufficient, followUps: 0, questions: 5, elapsedMin: 15, remaining: 0,
+			startedAt: &start, maxQuestions: 15, maxMinutes: 15, wantAction: GuardFinish, wantReason: domain.FinishReasonCompleted,
+		},
+		{
 			name: "question limit wins when time remains", verdict: followUp, followUps: 0, questions: 15, elapsedMin: 5, remaining: 2,
 			startedAt: &start, maxQuestions: 15, maxMinutes: 15, wantAction: GuardFinish, wantReason: domain.FinishReasonQuestionLimit,
 		},

@@ -61,16 +61,23 @@ func DecideGuard(in GuardInput) GuardDecision {
 		maxMinutes = defaultMaxMinutes
 	}
 
+	remaining := in.RemainingTopics
+	if remaining < 0 {
+		remaining = 0
+	}
+
+	// A sufficient answer on the last topic finishes as completed even at the
+	// question or time limit: the interview is done, so no later answer (and no
+	// remaining time) is needed. This must win over the limit checks below.
+	if remaining == 0 && in.Verdict.Verdict != JudgeVerdictFollowUp {
+		return GuardDecision{Action: GuardFinish, FinishReason: domain.FinishReasonCompleted}
+	}
+
 	if in.StartedAt != nil && !in.Now.Before(in.StartedAt.Add(time.Duration(maxMinutes)*time.Minute)) {
 		return GuardDecision{Action: GuardFinish, FinishReason: domain.FinishReasonTimeLimit}
 	}
 	if in.QuestionCount >= maxQuestions {
 		return GuardDecision{Action: GuardFinish, FinishReason: domain.FinishReasonQuestionLimit}
-	}
-
-	remaining := in.RemainingTopics
-	if remaining < 0 {
-		remaining = 0
 	}
 
 	if in.Verdict.Verdict == JudgeVerdictFollowUp && in.FollowUpCount < maxFollowUps {

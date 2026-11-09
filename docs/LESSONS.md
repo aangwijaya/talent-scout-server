@@ -23,6 +23,14 @@ Rules:
 
 ## Entries
 
+### 2026-11-09 — #10 A gate node's outage must degrade, not end the session
+- **Context:** Review of the judge/guard loop: any judge LLM error called `failRun`, killing the session and application.
+- **Problem:** A transient judge outage stranded the applicant even though the interview can safely continue with the default `sufficient` verdict; separately, the guard checked question/time limits before "the last topic is done", so a sufficient final answer at Q15 finished as `question_limit` instead of `completed`.
+- **Cause:** The gate treated a transport failure as run-fatal, and the guard ordered budget limits before the completion condition.
+- **Lesson:** A gate/classifier outage degrades to its safe default and lets the loop continue (record `node.failed`, never retry or show an applicant error); evaluate "no topics left and the answer is sufficient → completed" before any budget limit; and pass judge feedback into the follow-up prompt only inside `prompts.WrapUntrusted("judge_feedback", …)` because it derives from the applicant's answer.
+- **Follow-up:** tests in `internal/graph/interview_loop_review_test.go`, `internal/graph/guard_test.go` and `internal/graph/judge_test.go`
+- **Repeated?:** first time
+
 ### 2026-11-09 — #10 Guard must reserve budget for remaining topics
 - **Context:** Adding the deterministic guard after the judge.
 - **Problem:** A rule that only checks `verdict=follow_up && follow_up_count < 2` spends the last question or minute on a follow-up and loses a later topic.

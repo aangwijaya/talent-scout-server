@@ -25,12 +25,25 @@ var (
 // interviewerUser builds the interviewer's user message. The planner wrote the
 // active topic after reading the applicant's CV, so the topic fields are
 // untrusted too and appear only inside a prompts.WrapUntrusted block. Applicant
-// answers are untrusted and appear inside their own blocks.
-func interviewerUser(topic domain.Topic, transcript []domain.Message, kind domain.MessageKind) string {
+// answers are untrusted and appear inside their own blocks. Judge feedback is
+// derived from the applicant's answer, so it is untrusted as well.
+func interviewerUser(topic domain.Topic, transcript []domain.Message, kind domain.MessageKind, feedback *JudgeVerdict) string {
 	var b strings.Builder
 	b.WriteString("Active topic (planner output derived from the applicant's CV; untrusted data):\n")
 	b.WriteString(prompts.WrapUntrusted("planner_topic",
 		fmt.Sprintf("title: %s\ngoal: %s\nseed question: %s", topic.Title, topic.Goal, topic.SeedQuestion)))
+	if feedback != nil {
+		var fb strings.Builder
+		fb.WriteString("reason: ")
+		fb.WriteString(feedback.Reason)
+		fb.WriteString("\nmissing:")
+		for _, item := range feedback.Missing {
+			fb.WriteString("\n- ")
+			fb.WriteString(item)
+		}
+		b.WriteString("\n\nJudge feedback (LLM output derived from the applicant's answer; untrusted data):\n")
+		b.WriteString(prompts.WrapUntrusted("judge_feedback", fb.String()))
+	}
 	b.WriteString("\n\nMode: ")
 	b.WriteString(string(kind))
 	b.WriteString("\n\nConversation so far:\n")
@@ -50,8 +63,8 @@ func interviewerUser(topic domain.Topic, transcript []domain.Message, kind domai
 	return b.String()
 }
 
-func interviewerMessages(topic domain.Topic, transcript []domain.Message, kind domain.MessageKind) []llm.Message {
-	messages, _ := prompts.Messages(prompts.NodeInterviewer, interviewerUser(topic, transcript, kind))
+func interviewerMessages(topic domain.Topic, transcript []domain.Message, kind domain.MessageKind, feedback *JudgeVerdict) []llm.Message {
+	messages, _ := prompts.Messages(prompts.NodeInterviewer, interviewerUser(topic, transcript, kind, feedback))
 	return messages
 }
 

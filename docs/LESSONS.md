@@ -23,6 +23,30 @@ Rules:
 
 ## Entries
 
+### 2026-11-10 — #11 An external finish must serialize with the turn in flight
+- **Context:** Review of the sweeper finish path: `finishExternally` emitted `session.ended` and launched scoring while a turn could still be running judge/guard/interviewer.
+- **Problem:** The runner and `st.executed` are not concurrency safe, so scoring beside a live turn is a fatal concurrent-map-write, interleaves node events after `session.ended`, can emit `guard→scorer` twice, and can end the run as both `run.failed` and `run.completed`.
+- **Cause:** The sweeper's registry check happens outside the manager, so it can win the finish race just after an applicant turn starts; `finishExternally` only cleared `st.busy` instead of coordinating with that turn.
+- **Lesson:** Serialize every graph step and the external finish path on one per-session mutex (`runStep`); make the finish edge idempotent with a flag set where the edge is emitted; and when the sweeper already ended the session, make the in-flight turn abort quietly instead of calling `failRun`, so the external finish owns session.ended and scoring.
+- **Follow-up:** tests in `internal/graph/session_review_test.go` (`TestExternalFinishWaitsForInFlightTurn`, `TestExternalFinishStopsLateTurnFailure`)
+- **Repeated?:** first time
+
+### 2026-11-10 — #11 A sweeper finish hook must not run the scorer inline
+- **Context:** Review of the scorer: the sweeper's `NotifyFinished` callback ran `runScoring` synchronously, and that path skipped the `guard→scorer` edge.
+- **Problem:** Up to 3 scorer calls plus transport retries blocked the single sweep loop, delaying every other `time_limit`/`abandoned` session; replay of a swept run also had `node.started(scorer)` with no preceding `edge.traversed`.
+- **Cause:** The in-process and sweeper finish paths were written at different times and only the in-process path followed the EVENTS.md §6 sequence; "the scorer runs async" was implemented per call site instead of inside the shared finish hook.
+- **Lesson:** Start scoring in a goroutine inside the sweeper finish hook after emitting `session.ended` (fetching the session inside the goroutine), emit the same `guard→scorer` edge as the in-process path before `node.started(scorer)`, and have a scoring failure emit `node.skipped(evidence_check, run_failed)` before `run.failed`.
+- **Follow-up:** tests in `internal/graph/session_review_test.go` (`TestSweepScoresAsyncAndEmitsGuardEdge`, `TestScoringFailureSkipsEvidenceCheckBeforeRunFailed`)
+- **Repeated?:** first time
+
+### 2026-11-09 — #11 Retry only failed criteria; map internal evidence reasons to the contract
+- **Context:** Adding the scorer and the evidence check retry loop (max 3 attempts) after the interview ends.
+- **Problem:** `domain.EvidenceQuoteRejectReason` returns `quote_too_short` / `quote_too_long`, but `docs/EVENTS.md` only documents `quote_not_found` as a check/retry reason. Retrying every criterion would also re-score already-valid ones, and a static fake scorer reply only works if its quotes match the deterministic fake transcript exactly.
+- **Cause:** The domain helper describes why a quote is unusable internally, not the wire contract; and per-criterion validity was not tracked across attempts.
+- **Lesson:** Map internal validation reasons onto the single reason the event contract lists at the boundary, keep a per-criterion `validAt` so a retry prompt only contains failed keys plus their feedback, and make `FakeReplies["scorer"]` quote the canonical fake interview answers (the client mock transcript) by alias.
+- **Follow-up:** tests in `internal/graph/scorer_test.go`
+- **Repeated?:** first time
+
 ### 2026-11-09 — #10 Judge transport failure is run-fatal; only invalid JSON defaults
 - **Context:** Review of the judge/guard loop, where a first attempt made any judge LLM error degrade to the default `sufficient` verdict.
 - **Problem:** That degrade was an unapproved contract change: `EVENTS.md` §6.3 uses the judge as its example for `node.failed(will_retry=false)` → `node.skipped` → `run.failed` → `session.ended(failed)`, and `ARCHITECTURE.md` §2 allows the default `sufficient` only for invalid JSON. Separately, the guard checked question/time limits before "the last topic is done", so a sufficient final answer at Q15 finished as `question_limit` instead of `completed`.

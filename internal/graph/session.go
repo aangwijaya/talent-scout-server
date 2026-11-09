@@ -59,11 +59,25 @@ type liveSession struct {
 	runID     string
 	runner    *Runner
 
+	// stepMu serializes every graph step with the external (sweeper) finish
+	// path. The runner is not concurrency safe, and st.executed is a plain map:
+	// scoring must never overlap judge/guard/interviewer work or another turn.
+	stepMu sync.Mutex
+
 	busy         bool
 	waitingRetry bool
 	done         bool
-	retry        func(context.Context)
-	executed     map[string]bool
+	// externalFinish is set when the sweeper already ended the session; a
+	// turn that is still in flight must stop instead of failing the run.
+	externalFinish bool
+	// finishEdge records that guard→scorer was emitted, so the sweeper path
+	// never emits it twice.
+	finishEdge bool
+	// failed records that the run was permanently failed; an external finish
+	// must not also complete it.
+	failed   bool
+	retry    func(context.Context)
+	executed map[string]bool
 }
 
 // NewSessionManager builds a manager. A nil registry is replaced with a fresh
@@ -117,8 +131,26 @@ func (m *SessionManager) Start(ctx context.Context, sess domain.Session) error {
 	m.registry.Add(sess.ID)
 	m.bus.BindSession(runID, sess.ID)
 
-	go m.startRun(context.Background(), sess, st)
+	go m.runStep(st, func() { m.startRun(context.Background(), sess, st) })
 	return nil
+}
+
+// runStep runs one graph step while holding the session's step mutex. The
+// external finish path takes the same mutex, so a turn and scoring can never
+// touch the runner or st.executed concurrently. A step that starts after the
+// session was already finished externally is dropped.
+func (m *SessionManager) runStep(st *liveSession, fn func()) {
+	st.stepMu.Lock()
+	defer st.stepMu.Unlock()
+
+	m.mu.Lock()
+	done := st.done
+	m.mu.Unlock()
+	if done {
+		m.registry.Remove(st.sessionID)
+		return
+	}
+	fn()
 }
 
 // SubmitAnswer stores the applicant's answer and launches the next question.
@@ -162,7 +194,7 @@ func (m *SessionManager) SubmitAnswer(ctx context.Context, sess domain.Session, 
 	fresh, _ := m.store.GetSession(ctx, sess.ID)
 	m.emitSessionUpdated(ctx, st, fresh, topic)
 
-	go m.continueAfterAnswer(context.Background(), sess, st, topic)
+	go m.runStep(st, func() { m.continueAfterAnswer(context.Background(), sess, st, topic) })
 	return answer, nil
 }
 
@@ -182,7 +214,7 @@ func (m *SessionManager) Retry(ctx context.Context, sess domain.Session) error {
 	m.mu.Unlock()
 
 	m.registry.Add(sess.ID)
-	go fn(context.Background())
+	go m.runStep(st, func() { fn(context.Background()) })
 	return nil
 }
 
@@ -216,6 +248,10 @@ func (m *SessionManager) startRun(ctx context.Context, sess domain.Session, st *
 	m.emitSessionUpdated(ctx, st, fresh, nil)
 
 	plan, attempt, progress, err := m.runPlanner(ctx, sess, st, plannerProgress{nextAttempt: 1})
+	if m.externallyFinishing(st) {
+		m.abortExternalTurn(st)
+		return
+	}
 	if err != nil {
 		m.plannerFailed(ctx, sess, st, progress, err, false)
 		return
@@ -354,6 +390,10 @@ func (m *SessionManager) runPlannerOnce(ctx context.Context, sess domain.Session
 // launchInterviewer persists the plan's topics, reports the first topic and
 // enters the normal plan_check → interviewer path.
 func (m *SessionManager) launchInterviewer(ctx context.Context, sess domain.Session, st *liveSession, plan []PlannedTopic, attempt int) {
+	if m.externallyFinishing(st) {
+		m.abortExternalTurn(st)
+		return
+	}
 	topics := make([]domain.Topic, 0, len(plan))
 	for i, planned := range plan {
 		status := domain.TopicStatusPending
@@ -539,6 +579,19 @@ func (m *SessionManager) handleInterviewerError(ctx context.Context, sess domain
 }
 
 func (m *SessionManager) failRun(ctx context.Context, sess domain.Session, st *liveSession, reason string) {
+	// The sweeper already ended this session; the external finish owns the
+	// ending and scoring, so a late turn failure must not fail the run too.
+	m.mu.Lock()
+	external := st.externalFinish
+	if !external {
+		st.failed = true
+	}
+	m.mu.Unlock()
+	if external {
+		m.abortExternalTurn(st)
+		return
+	}
+
 	for _, nodeID := range NodeIDs {
 		if nodeID == "recruiter_gate" || st.executed[nodeID] {
 			continue
@@ -582,7 +635,8 @@ func (m *SessionManager) abortStart(ctx context.Context, sess domain.Session) {
 
 // finishExternally reports a session.ended the sweeper already committed to the
 // store. It returns false when this process has no live state for the session,
-// in which case the sweeper persists the event directly.
+// in which case the sweeper persists the event directly. The scorer still runs
+// on the transcript of a session the sweeper finished (ARCHITECTURE §3).
 func (m *SessionManager) finishExternally(sessionID string, reason domain.FinishReason) bool {
 	m.mu.Lock()
 	st, ok := m.states[sessionID]
@@ -595,6 +649,7 @@ func (m *SessionManager) finishExternally(sessionID string, reason domain.Finish
 		return true
 	}
 	st.done = true
+	st.externalFinish = true
 	st.busy = false
 	st.waitingRetry = false
 	st.retry = nil
@@ -602,8 +657,91 @@ func (m *SessionManager) finishExternally(sessionID string, reason domain.Finish
 	m.mu.Unlock()
 
 	m.registry.Remove(sessionID)
-	_, _ = m.bus.Emit(context.Background(), runID, Event{Type: EventSessionEnded, Payload: SessionEnded{FinishReason: string(reason)}})
+	// Wait for any in-flight step to finish before ending the stream and
+	// scoring: the runner and st.executed are not safe for concurrent use.
+	// When no step is running the edge and session.ended are emitted inline so
+	// reconnecting clients observe the finish immediately; scoring itself is
+	// still async (ARCHITECTURE §3 step 8) and never blocks the sweep loop.
+	if st.stepMu.TryLock() {
+		m.emitExternalFinish(st, runID, reason)
+		st.stepMu.Unlock()
+		go func() {
+			st.stepMu.Lock()
+			defer st.stepMu.Unlock()
+			m.scoreExternal(sessionID, st, reason)
+		}()
+		return true
+	}
+	go func() {
+		st.stepMu.Lock()
+		defer st.stepMu.Unlock()
+		m.emitExternalFinish(st, runID, reason)
+		m.scoreExternal(sessionID, st, reason)
+	}()
 	return true
+}
+
+// emitExternalFinish emits the guard→scorer transition and session.ended. The
+// caller must hold st.stepMu. finishEdge makes the transition idempotent when a
+// turn already emitted it before the sweeper won the race.
+func (m *SessionManager) emitExternalFinish(st *liveSession, runID string, reason domain.FinishReason) {
+	if !st.finishEdge {
+		st.finishEdge = true
+		if err := st.runner.EmitEdge(context.Background(), "guard", "scorer", "finish"); err != nil {
+			m.logger.Error("sweeper scoring edge failed", "session_id", st.sessionID, "error", err)
+		}
+	}
+	_, _ = m.bus.Emit(context.Background(), runID, Event{Type: EventSessionEnded, Payload: SessionEnded{FinishReason: string(reason)}})
+}
+
+// scoreExternal scores the transcript after an external finish. The caller must
+// hold st.stepMu. A run that already failed is left failed so it is never both
+// failed and completed.
+func (m *SessionManager) scoreExternal(sessionID string, st *liveSession, reason domain.FinishReason) {
+	m.mu.Lock()
+	failed := st.failed
+	m.mu.Unlock()
+	if failed {
+		return
+	}
+	sess, err := m.store.GetSession(context.Background(), sessionID)
+	if err != nil {
+		return
+	}
+	if err := m.runScoring(context.Background(), sess, st, reason); err != nil {
+		m.failScoring(context.Background(), sess, st, err)
+	}
+}
+
+// externallyFinishing reports whether the sweeper already ended the session, so
+// an in-flight turn should stop instead of running more nodes or failing it.
+func (m *SessionManager) externallyFinishing(st *liveSession) bool {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return st.externalFinish
+}
+
+// abortExternalTurn releases a turn that found the session externally finished.
+func (m *SessionManager) abortExternalTurn(st *liveSession) {
+	m.registry.Remove(st.sessionID)
+	m.mu.Lock()
+	st.busy = false
+	st.waitingRetry = false
+	st.retry = nil
+	m.mu.Unlock()
+}
+
+// failScoring ends a run whose scoring could not finish. The session already
+// ended, so only the run and application state change here.
+func (m *SessionManager) failScoring(ctx context.Context, sess domain.Session, st *liveSession, err error) {
+	m.logger.Error("scoring failed", "session_id", sess.ID, "error", err)
+	if !st.executed["evidence_check"] {
+		_ = st.runner.EmitNodeSkipped(ctx, "evidence_check", "run_failed")
+	}
+	_ = st.runner.Fail(ctx, "scoring_failed")
+	if app, appErr := m.store.GetApplication(ctx, sess.ApplicationID); appErr == nil && app.Status == domain.ApplicationStatusScoring {
+		_ = m.store.UpdateApplicationStatus(ctx, app.ID, domain.ApplicationStatusFailed)
+	}
 }
 
 func (m *SessionManager) recordQuestion(ctx context.Context, sessionID string) (domain.Session, error) {

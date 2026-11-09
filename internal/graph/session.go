@@ -250,9 +250,9 @@ func (m *SessionManager) runPlanner(ctx context.Context, sess domain.Session, st
 			}
 		}
 
-		plan, checkErrs, err := m.runPlannerOnce(ctx, sess, st, job, app, attempt, feedback)
+		plan, checkErrs, emitted, err := m.runPlannerOnce(ctx, sess, st, job, app, attempt, feedback)
 		if err != nil {
-			return nil, attempt, err
+			return nil, emitted, err
 		}
 		if len(checkErrs) == 0 {
 			return plan.Topics, attempt, nil
@@ -278,23 +278,23 @@ func (m *SessionManager) loadPlannerInputs(ctx context.Context, sess domain.Sess
 // failure is returned as check errors so the caller's automatic retry loop can
 // feed them back; a transport failure is returned as err so the caller can
 // offer the applicant a manual retry instead of failing the run.
-func (m *SessionManager) runPlannerOnce(ctx context.Context, sess domain.Session, st *liveSession, job domain.Job, app domain.Application, attempt int, feedback []PlanCheckError) (Plan, []PlanCheckError, error) {
+func (m *SessionManager) runPlannerOnce(ctx context.Context, sess domain.Session, st *liveSession, job domain.Job, app domain.Application, attempt int, feedback []PlanCheckError) (Plan, []PlanCheckError, int, error) {
 	st.executed["planner"] = true
-	resp, err := st.runner.RunLLMNode(ctx, "planner", attempt, llm.Request{
+	resp, emitted, err := st.runner.runLLMNode(ctx, "planner", attempt, llm.Request{
 		Messages:       plannerMessages(job, app.CVText, feedback),
 		ResponseFormat: plannerResponseFormat(),
 	}, "job+rubric+cv", nil)
 	if err != nil {
-		return Plan{}, nil, err
+		return Plan{}, nil, emitted, err
 	}
 	if err := st.runner.EmitEdge(ctx, "planner", "plan_check", "planned"); err != nil {
-		return Plan{}, nil, err
+		return Plan{}, nil, emitted, err
 	}
 
 	st.executed["plan_check"] = true
 	start := time.Now()
 	if err := st.runner.emitNodeStarted(ctx, "plan_check", attempt, nil, "validating plan"); err != nil {
-		return Plan{}, nil, err
+		return Plan{}, nil, emitted, err
 	}
 	plan, parseErr := parsePlan(resp.Content)
 	var checkErrs []PlanCheckError
@@ -308,19 +308,19 @@ func (m *SessionManager) runPlannerOnce(ctx context.Context, sess domain.Session
 		summary = "invalid"
 	}
 	if err := st.runner.emitNodeCompleted(ctx, "plan_check", attempt, nil, summary, 0, 0, time.Since(start)); err != nil {
-		return Plan{}, nil, err
+		return Plan{}, nil, emitted, err
 	}
 
 	if len(checkErrs) == 0 {
 		if err := st.runner.EmitCheckPassed(ctx, "plan_check", attempt, "plan_topics", map[string]any{"topics": len(plan.Topics)}); err != nil {
-			return Plan{}, nil, err
+			return Plan{}, nil, emitted, err
 		}
-		return plan, nil, nil
+		return plan, nil, emitted, nil
 	}
 	if err := st.runner.EmitCheckFailed(ctx, "plan_check", attempt, "plan_topics", planCheckPayload(checkErrs)); err != nil {
-		return Plan{}, nil, err
+		return Plan{}, nil, emitted, err
 	}
-	return Plan{}, checkErrs, nil
+	return Plan{}, checkErrs, emitted, nil
 }
 
 // launchInterviewer persists the plan's topics, reports the first topic and
@@ -384,7 +384,7 @@ func (m *SessionManager) handlePlannerError(ctx context.Context, sess domain.Ses
 				m.failRun(retryCtx, sess, st, "load_planner_inputs_failed")
 				return
 			}
-			plan, checkErrs, planErr := m.runPlannerOnce(retryCtx, sess, st, job, app, nextAttempt, nil)
+			plan, checkErrs, _, planErr := m.runPlannerOnce(retryCtx, sess, st, job, app, nextAttempt, nil)
 			if planErr != nil {
 				m.handlePlannerError(retryCtx, sess, st, nextAttempt, planErr, true)
 				return

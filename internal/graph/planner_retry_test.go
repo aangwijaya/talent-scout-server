@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"slices"
 	"testing"
 
 	"github.com/aangwijaya/talent-scout-server/internal/domain"
@@ -205,5 +206,51 @@ func TestPlannerOutageTwiceEndsSession(t *testing.T) {
 	}
 	if err := manager.Retry(context.Background(), sess); !errors.Is(err, ErrInvalidState) {
 		t.Errorf("Retry after permanent failure = %v, want ErrInvalidState", err)
+	}
+}
+
+func TestManualRetryContinuesPlannerAttempts(t *testing.T) {
+	st, sess := seedGraphSession(t)
+	var plannerCalls int
+	client := &stubClient{chat: func(req llm.Request) (llm.Response, error) {
+		if req.Node != "planner" {
+			return llm.Response{Content: FakeReplies[req.Node]}, nil
+		}
+		plannerCalls++
+		if plannerCalls == 1 {
+			// Simulate one transport retry that also fails: the client invokes
+			// OnRetry before its second HTTP attempt.
+			if req.OnRetry != nil {
+				req.OnRetry(1, llm.ErrUnavailable)
+			}
+			return llm.Response{}, llm.ErrUnavailable
+		}
+		return llm.Response{Content: FakeReplies["planner"]}, nil
+	}}
+	manager, _ := newTestManager(t, st, client)
+	if err := manager.Start(context.Background(), sess); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	waitIdle(t, manager, sess.ID)
+	if err := manager.Retry(context.Background(), sess); err != nil {
+		t.Fatalf("Retry: %v", err)
+	}
+	waitIdle(t, manager, sess.ID)
+
+	var attempts []int
+	var retryAttempt int
+	for _, event := range sessionEvents(t, st, sess.ID) {
+		switch {
+		case event.Type == EventNodeStarted && event.NodeID != nil && *event.NodeID == "planner" && event.Attempt != nil:
+			attempts = append(attempts, *event.Attempt)
+		case event.Type == EventLoopRetry && event.Attempt != nil:
+			retryAttempt = *event.Attempt
+		}
+	}
+	if want := []int{1, 2, 3}; !slices.Equal(attempts, want) {
+		t.Errorf("planner node.started attempts = %v, want %v", attempts, want)
+	}
+	if retryAttempt != 3 {
+		t.Errorf("loop.retry attempt = %d, want 3", retryAttempt)
 	}
 }

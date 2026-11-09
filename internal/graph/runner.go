@@ -51,9 +51,17 @@ func (r *Runner) Start(ctx context.Context) error {
 // the same counter, so numbering stays consistent across loop and transport
 // retries. onDelta receives streamed chunks (ignored for non-stream nodes).
 func (r *Runner) RunLLMNode(ctx context.Context, nodeID string, attempt int, req llm.Request, inputSummary string, onDelta func(string) error) (llm.Response, error) {
+	resp, _, err := r.runLLMNode(ctx, nodeID, attempt, req, inputSummary, onDelta)
+	return resp, err
+}
+
+// runLLMNode is RunLLMNode plus the last attempt it actually emitted. A
+// transport retry advances that number, so a caller continuing after an error
+// must use it instead of the loop attempt to keep node.started numbers unique.
+func (r *Runner) runLLMNode(ctx context.Context, nodeID string, attempt int, req llm.Request, inputSummary string, onDelta func(string) error) (llm.Response, int, error) {
 	node, err := r.models.Node(nodeID)
 	if err != nil {
-		return llm.Response{}, err
+		return llm.Response{}, attempt, err
 	}
 	req.Node = nodeID
 	req.Model = node.Model
@@ -80,7 +88,7 @@ func (r *Runner) RunLLMNode(ctx context.Context, nodeID string, attempt int, req
 	}
 
 	if err := r.emitNodeStarted(ctx, nodeID, currentAttempt, &model, inputSummary); err != nil {
-		return llm.Response{}, err
+		return llm.Response{}, currentAttempt, err
 	}
 
 	var resp llm.Response
@@ -91,14 +99,14 @@ func (r *Runner) RunLLMNode(ctx context.Context, nodeID string, attempt int, req
 	}
 	if err != nil {
 		_ = r.emitNodeFailed(ctx, nodeID, currentAttempt, &model, err.Error(), false)
-		return llm.Response{}, err
+		return llm.Response{}, currentAttempt, err
 	}
 
 	if err := r.emitNodeCompleted(ctx, nodeID, currentAttempt, &model, summarize(resp.Content, 80),
 		resp.Usage.PromptTokens, resp.Usage.CompletionTokens, time.Since(start)); err != nil {
-		return llm.Response{}, err
+		return llm.Response{}, currentAttempt, err
 	}
-	return resp, nil
+	return resp, currentAttempt, nil
 }
 
 // RunCodeNode runs a deterministic code node (no LLM). It emits node.started

@@ -23,6 +23,14 @@ Rules:
 
 ## Entries
 
+### 2026-11-09 — #40 Planner transport outage must be applicant-retryable
+- **Context:** A planner `llm.ErrUnavailable` during session start called `failRun` directly, permanently failing the application.
+- **Problem:** The planner step mixed two different failures: a `plan_check` rejection (automatic retry, max 2 attempts) and a transport outage (should wait for `POST /retry`). Treating both as run-fatal made a transient 5xx strand the applicant.
+- **Cause:** `runPlanner` returned one error for both paths and `startRun` had no retry hook for the planner.
+- **Lesson:** Split a node's executor into "one attempt" and "automatic loop", and carry the loop's check budget and latest feedback through an applicant retry: the retry re-enters the loop (outages consume an attempt number but not a check attempt), rather than replaying one isolated attempt that would drop the remaining automatic retries and the rejection feedback.
+- **Follow-up:** tests in `internal/graph/planner_retry_test.go` (`TestApplicantRetryAfterOutageKeepsPlanCheckBudget`, `TestApplicantRetryAfterOutageKeepsPlanCheckFeedback`) and `TestRunStartedIncludesApplicantRetryEdges`
+- **Repeated?:** first time
+
 ### 2026-11-09 — #9 Planner output is untrusted downstream of the CV
 - **Context:** Hardening the interviewer prompt after review of PR #39.
 - **Problem:** `interviewerUser` rendered `topic.title/goal/seed_question` as trusted text, but the planner wrote those fields after reading the applicant's CV, so a crafted CV could plant instructions that bypass the `<<<UNTRUSTED_DATA>>>` blocks one node later.

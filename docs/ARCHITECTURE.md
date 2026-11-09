@@ -7,8 +7,10 @@ flowchart TD
   IN[/"Input: job (JD + rubric) + cv_text"/] --> P
   P["planner<br/>(splitter · LLM)"] --> PC{"plan_check<br/>(code node)"}
   PC -- "invalid → retry (2 attempts total)" --> P
+  P -. "applicant retry: POST /sessions/{token}/retry" .-> P
   PC -- valid: topics[] --> I
-  I["interviewer<br/>(worker · LLM, stream)"] -->|question| U(["applicant answer"])
+  I["interviewer<br/>(worker · LLM, stream)"] -. "applicant retry: POST /sessions/{token}/retry" .-> I
+  I -->|question| U(["applicant answer"])
   U --> J["judge<br/>(gate · LLM, JSON)"]
   J --> G{"guard<br/>(code node)"}
   G -- "follow_up & follow_ups < 2 & limits OK" --> I
@@ -19,6 +21,8 @@ flowchart TD
   E -- valid / needs_manual --> R
   R[["recruiter_gate<br/>(human gate)"]] --> D(["shortlisted / rejected"])
 ```
+
+Both self-loops are applicant-triggered retries (label `retry`) and are reported in `run.started` as `planner → planner` and `interviewer → interviewer`. They fire after a retryable `error` (`llm_unavailable`); a second failure of the same step ends the run.
 
 Edges are only real data dependencies: `planner` needs JD+CV; `interviewer` needs `topics` + message history; `judge` needs the question + last answer + topic; `guard` needs verdict + counters + time; `scorer` needs transcript + rubric + topics; `evidence_check` needs scorer output + transcript; `recruiter_gate` needs scores.
 
@@ -59,11 +63,13 @@ Limits: delimiters and system instructions reduce, but do not eliminate, prompt 
 | Total AI questions | max `SESSION_MAX_QUESTIONS` = 15 | `guard` |
 | Session duration | max `SESSION_MAX_MINUTES` = 15 (counted from `started_at`) | `guard` (checked on each answer) + server timer |
 | Planner attempts (plan_check failed) | max 2 in total (initial + 1 retry) | runner |
-| Interviewer retry | 0 (post-MVP) | — |
+| Planner applicant retry (transport outage) | re-runs the planner once per failed step without resetting its attempt budget; a second failure of that step ends the run (`failed`) | runner |
+| Interviewer applicant retry (transport outage) | re-runs the interviewer once per failed step without resetting its attempt budget; a second failure of that step ends the run (`failed`) | runner |
+| Automatic interviewer retry | 0 (post-MVP) | — |
 | Judge retry (invalid JSON) | 0 → default `sufficient` | runner |
 | Scorer attempts (evidence) | max 3 in total (initial + 2 retries) | runner |
-| Applicant retry (`POST /sessions/{token}/retry`) | re-runs the failed step without resetting its attempt budget | runner |
-| LLM HTTP error/timeout | 1× retry on the same model, no fallback; failure → `node.failed` (`will_retry`) + event `error` (`llm_unavailable`); if no step can continue → `run.failed` + `session.ended` (`finish_reason=failed`) | LLM client |
+| Applicant retry (`POST /sessions/{token}/retry`) | re-runs the failed step (planner or interviewer) without resetting its attempt budget | runner |
+| LLM HTTP error/timeout | 1× retry on the same model, no fallback; failure → `node.failed` (`will_retry=false`) + retryable `error` (`llm_unavailable`); planner/interviewer wait for `POST /retry`; a second failure of that step or a non-retryable node failure → `run.failed` + `session.ended` (`finish_reason=failed`) | LLM client + runner |
 | Applicant answer length | max 2,000 characters | API validation |
 
 `finish_reason`: `completed` (all topics done), `time_limit`, `question_limit`, `abandoned` (no answer for 10 minutes, applied by the sweeper), `failed` (permanent graph failure). For every finish_reason except `failed`, the scorer still runs on the existing transcript; `failed` skips scoring, sets the application to `failed`, and lets the recruiter issue a new invite.

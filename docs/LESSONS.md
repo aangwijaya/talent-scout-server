@@ -23,6 +23,22 @@ Rules:
 
 ## Entries
 
+### 2026-11-09 — #9 Sweeper: track in-flight steps, not live runners
+- **Context:** Adding the session runner meant the sweeper had to stop finishing sessions a graph step was using, without leaving idle sessions `active` forever.
+- **Problem:** A registry of "sessions with a live runner" skips a session between answers too, so an applicant who stops answering is never abandoned, and (with the guard not built yet) nothing ends the session at the 15-minute limit.
+- **Cause:** Liveness was modelled as the existence of a runner goroutine/state, but the runners stay alive while waiting for the applicant.
+- **Lesson:** Mark a session only while a graph step is in flight and clear the mark when the step ends; then the sweeper can abandon on `ABANDON_AFTER` idle and finish on the time limit (`time_limit`, never `abandoned`), emitting `session.ended` through the live runner or persisting it when no runner exists.
+- **Follow-up:** tests in `internal/session/sweeper_test.go` and `TestSweepEndsIdleLiveSessionThroughManager`
+- **Repeated?:** first time
+
+### 2026-11-09 — #9 Retry attempts: derive the next attempt, never hard-code it
+- **Context:** The manual `/sessions/{token}/retry` path re-ran the interviewer after a transport retry had already emitted `node.started` attempt 2.
+- **Problem:** The retry closure used a fixed `attempt=2`, so `node.started(interviewer, 2)` and `loop.retry` attempt numbers repeated.
+- **Cause:** `streamInterviewer` discarded its current attempt when it returned an error, leaving the caller no way to continue the counter.
+- **Lesson:** Return the attempt actually emitted even on error and compute the retry as `lastAttempt+1`; attempt numbers must be derived from emitted events, never constants.
+- **Follow-up:** test `TestManualRetryContinuesInterviewerAttempts`
+- **Repeated?:** first time
+
 ### 2026-11-09 — #9 SSE: a stalled reader must not be able to freeze the runner
 - **Context:** The session SSE handler fans persisted graph events from the in-process bus, which blocks `Emit` until the subscriber accepts an event, unsubscribes, or the emit context ends.
 - **Problem:** A connected client that stops reading fills the 128-event buffer, and because the runner emits with a background context that never cancels, `Emit` blocks the whole session indefinitely.

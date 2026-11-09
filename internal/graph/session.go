@@ -58,7 +58,7 @@ func NewSessionManager(cfg config.Config, st store.Store, bus *Bus, client llm.C
 	if logger == nil {
 		logger = slog.Default()
 	}
-	return &SessionManager{
+	m := &SessionManager{
 		cfg:      cfg,
 		store:    st,
 		bus:      bus,
@@ -68,6 +68,10 @@ func NewSessionManager(cfg config.Config, st store.Store, bus *Bus, client llm.C
 		logger:   logger,
 		states:   make(map[string]*liveSession),
 	}
+	// The sweeper finishes idle sessions; when this process still owns the
+	// session it emits session.ended through the runner so clients see it.
+	registry.SetFinishHook(m.finishExternally)
+	return m
 }
 
 // Start creates the graph run and launches the opening step (planner →
@@ -78,6 +82,9 @@ func (m *SessionManager) Start(ctx context.Context, sess domain.Session) error {
 	}
 	runID := domain.NewID()
 	if err := m.store.CreateGraphRun(ctx, domain.GraphRun{ID: runID, SessionID: sess.ID, Status: domain.GraphRunStatusRunning}); err != nil {
+		// The session is already active (StartSession ran); do not strand it
+		// active with no run. Failing it lets the recruiter issue a new invite.
+		m.abortStart(ctx, sess)
 		return err
 	}
 	st := &liveSession{
@@ -107,6 +114,7 @@ func (m *SessionManager) SubmitAnswer(ctx context.Context, sess domain.Session, 
 	}
 	st.busy = true
 	m.mu.Unlock()
+	m.registry.Add(sess.ID)
 
 	topic, err := m.activeTopic(ctx, sess.ID)
 	if err == nil {
@@ -157,6 +165,7 @@ func (m *SessionManager) Retry(ctx context.Context, sess domain.Session) error {
 	st.retry = nil
 	m.mu.Unlock()
 
+	m.registry.Add(sess.ID)
 	go fn(context.Background())
 	return nil
 }
@@ -326,7 +335,7 @@ func (m *SessionManager) runInterviewer(ctx context.Context, sess domain.Session
 	limiter := newWordLimiter(maxInterviewerWords)
 	res, err := st.runner.streamInterviewer(ctx, attempt, interviewerMessages(topic, transcript, kind), inputSummary, messageID, limiter)
 	if err != nil {
-		m.handleInterviewerError(ctx, sess, st, topic, kind, err)
+		m.handleInterviewerError(ctx, sess, st, topic, kind, res.Attempt, err)
 		return
 	}
 
@@ -358,14 +367,17 @@ func (m *SessionManager) runInterviewer(ctx context.Context, sess domain.Session
 	m.idle(st)
 }
 
-func (m *SessionManager) handleInterviewerError(ctx context.Context, sess domain.Session, st *liveSession, topic domain.Topic, kind domain.MessageKind, err error) {
+func (m *SessionManager) handleInterviewerError(ctx context.Context, sess domain.Session, st *liveSession, topic domain.Topic, kind domain.MessageKind, lastAttempt int, err error) {
 	m.mu.Lock()
 	canRetry := errors.Is(err, llm.ErrUnavailable) && st.manualRetries == 0 && !st.done
 	if canRetry {
+		// The retry continues the attempt counter after the last attempt the
+		// transport layer emitted, so node.started numbers never repeat.
+		nextAttempt := lastAttempt + 1
 		st.waitingRetry = true
 		st.busy = false
 		st.retry = func(retryCtx context.Context) {
-			_ = st.runner.EmitLoopRetry(retryCtx, "interviewer", 2, 2, "llm_unavailable", err.Error())
+			_ = st.runner.EmitLoopRetry(retryCtx, "interviewer", nextAttempt, nextAttempt, "llm_unavailable", err.Error())
 			st.executed["interviewer"] = true
 			transcript, loadErr := m.store.ListMessagesBySession(retryCtx, sess.ID, false)
 			if loadErr != nil {
@@ -375,9 +387,9 @@ func (m *SessionManager) handleInterviewerError(ctx context.Context, sess domain
 			inputSummary := topic.Title + " (" + string(kind) + ")"
 			messageID := domain.NewID()
 			limiter := newWordLimiter(maxInterviewerWords)
-			res, streamErr := st.runner.streamInterviewer(retryCtx, 2, interviewerMessages(topic, transcript, kind), inputSummary, messageID, limiter)
+			res, streamErr := st.runner.streamInterviewer(retryCtx, nextAttempt, interviewerMessages(topic, transcript, kind), inputSummary, messageID, limiter)
 			if streamErr != nil {
-				m.handleInterviewerError(retryCtx, sess, st, topic, kind, streamErr)
+				m.handleInterviewerError(retryCtx, sess, st, topic, kind, res.Attempt, streamErr)
 				return
 			}
 			message := domain.Message{ID: messageID, SessionID: sess.ID, TopicID: &topic.ID, Role: domain.MessageRoleAssistant, Kind: kind, Content: res.Text}
@@ -399,6 +411,9 @@ func (m *SessionManager) handleInterviewerError(ctx context.Context, sess domain
 			m.idle(st)
 		}
 		m.mu.Unlock()
+		// No step is in flight while the applicant decides to retry, so the
+		// sweeper may abandon the session if they never come back.
+		m.registry.Remove(sess.ID)
 		_, _ = m.bus.Emit(ctx, st.runID, Event{
 			Type:    EventError,
 			Payload: ErrorEvent{Code: "llm_unavailable", Message: err.Error(), Retryable: true},
@@ -417,17 +432,17 @@ func (m *SessionManager) failRun(ctx context.Context, sess domain.Session, st *l
 		_ = st.runner.EmitNodeSkipped(ctx, nodeID, "run_failed")
 	}
 	_ = st.runner.Fail(ctx, reason)
-	_, _ = m.bus.Emit(ctx, st.runID, Event{Type: EventSessionEnded, Payload: SessionEnded{FinishReason: string(domain.FinishReasonFailed)}})
 
+	// Update the session and application before session.ended so a client that
+	// reads them after seeing the event cannot observe an active session.
 	now := time.Now().UTC()
-	if fresh, err := m.store.GetSession(ctx, sess.ID); err == nil {
-		reasonValue := domain.FinishReasonFailed
-		fresh.Status = domain.SessionStatusCompleted
-		fresh.FinishReason = &reasonValue
-		fresh.EndedAt = &now
-		_ = m.store.UpdateSession(ctx, fresh)
+	changed, _ := m.store.FinishSession(ctx, sess.ID, domain.FinishReasonFailed, now)
+	if changed {
+		if app, err := m.store.GetApplication(ctx, sess.ApplicationID); err == nil && app.Status == domain.ApplicationStatusInSession {
+			_ = m.store.UpdateApplicationStatus(ctx, sess.ApplicationID, domain.ApplicationStatusFailed)
+		}
 	}
-	_ = m.store.UpdateApplicationStatus(ctx, sess.ApplicationID, domain.ApplicationStatusFailed)
+	_, _ = m.bus.Emit(ctx, st.runID, Event{Type: EventSessionEnded, Payload: SessionEnded{FinishReason: string(domain.FinishReasonFailed)}})
 	m.registry.Remove(sess.ID)
 
 	m.mu.Lock()
@@ -436,6 +451,45 @@ func (m *SessionManager) failRun(ctx context.Context, sess domain.Session, st *l
 	st.waitingRetry = false
 	st.retry = nil
 	m.mu.Unlock()
+}
+
+// abortStart finishes a session whose graph run could not be created so it is
+// not left active without a runner. A failed application can get a new invite.
+func (m *SessionManager) abortStart(ctx context.Context, sess domain.Session) {
+	now := time.Now().UTC()
+	changed, _ := m.store.FinishSession(ctx, sess.ID, domain.FinishReasonFailed, now)
+	if !changed {
+		return
+	}
+	if app, err := m.store.GetApplication(ctx, sess.ApplicationID); err == nil && app.Status == domain.ApplicationStatusInSession {
+		_ = m.store.UpdateApplicationStatus(ctx, app.ID, domain.ApplicationStatusFailed)
+	}
+}
+
+// finishExternally reports a session.ended the sweeper already committed to the
+// store. It returns false when this process has no live state for the session,
+// in which case the sweeper persists the event directly.
+func (m *SessionManager) finishExternally(sessionID string, reason domain.FinishReason) bool {
+	m.mu.Lock()
+	st, ok := m.states[sessionID]
+	if !ok {
+		m.mu.Unlock()
+		return false
+	}
+	if st.done {
+		m.mu.Unlock()
+		return true
+	}
+	st.done = true
+	st.busy = false
+	st.waitingRetry = false
+	st.retry = nil
+	runID := st.runID
+	m.mu.Unlock()
+
+	m.registry.Remove(sessionID)
+	_, _ = m.bus.Emit(context.Background(), runID, Event{Type: EventSessionEnded, Payload: SessionEnded{FinishReason: string(reason)}})
+	return true
 }
 
 func (m *SessionManager) recordQuestion(ctx context.Context, sessionID string) (domain.Session, error) {
@@ -503,6 +557,7 @@ func (m *SessionManager) emitSessionUpdated(ctx context.Context, st *liveSession
 }
 
 func (m *SessionManager) idle(st *liveSession) {
+	m.registry.Remove(st.sessionID)
 	m.mu.Lock()
 	st.busy = false
 	m.mu.Unlock()

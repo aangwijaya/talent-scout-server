@@ -80,7 +80,7 @@ func main() {
 	defer stop()
 
 	if st != nil {
-		sweeper := session.NewSweeper(st, registry, logger)
+		sweeper := session.NewSweeper(st, registry, time.Duration(cfg.SessionMaxMinutes)*time.Minute, logger)
 		go sweeper.Run(ctx)
 	}
 

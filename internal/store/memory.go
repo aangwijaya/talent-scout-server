@@ -384,6 +384,27 @@ func (m *Memory) AbandonSession(_ context.Context, id string, now time.Time) (bo
 	return true, nil
 }
 
+// FinishSession transitions an active session to completed with the given
+// finish_reason. It reports whether the transition happened; a session that is
+// no longer active is skipped (changed=false).
+func (m *Memory) FinishSession(_ context.Context, id string, reason domain.FinishReason, now time.Time) (bool, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	session, ok := m.sessions[id]
+	if !ok {
+		return false, ErrNotFound
+	}
+	if session.Status != domain.SessionStatusActive {
+		return false, nil
+	}
+	session.Status = domain.SessionStatusCompleted
+	session.FinishReason = &reason
+	session.EndedAt = &now
+	m.sessions[id] = session
+	return true, nil
+}
+
 func (m *Memory) CreateTopics(_ context.Context, topics []domain.Topic) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()

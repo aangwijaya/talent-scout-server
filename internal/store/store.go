@@ -76,6 +76,7 @@ type Store interface {
 	StartSession(ctx context.Context, id string, startedAt time.Time) (domain.Session, error)
 	ExpireSession(ctx context.Context, id string, now time.Time) (bool, error)
 	AbandonSession(ctx context.Context, id string, now time.Time) (bool, error)
+	FinishSession(ctx context.Context, id string, reason domain.FinishReason, now time.Time) (bool, error)
 
 	CreateTopics(ctx context.Context, topics []domain.Topic) error
 	ListTopicsBySession(ctx context.Context, sessionID string) ([]domain.Topic, error)

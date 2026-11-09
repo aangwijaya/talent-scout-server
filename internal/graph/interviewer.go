@@ -150,7 +150,7 @@ func (r *Runner) streamInterviewer(ctx context.Context, attempt int, messages []
 	}
 
 	if err := r.emitNodeStarted(ctx, "interviewer", currentAttempt, &model, inputSummary); err != nil {
-		return streamResult{}, err
+		return streamResult{Attempt: currentAttempt, Model: model, StartedAt: start}, err
 	}
 
 	onDelta := func(delta string) error {
@@ -174,13 +174,13 @@ func (r *Runner) streamInterviewer(ctx context.Context, attempt int, messages []
 	resp, err := r.llm.Stream(ctx, req, onDelta)
 	if err != nil && !errors.Is(err, errWordLimit) && !errors.Is(err, llm.ErrTruncated) {
 		_ = r.emitNodeFailed(ctx, "interviewer", currentAttempt, &model, err.Error(), false)
-		return streamResult{}, err
+		return streamResult{Attempt: currentAttempt, Model: model, StartedAt: start}, err
 	}
 
 	text := limiter.Text()
 	if strings.TrimSpace(text) == "" {
 		_ = r.emitNodeFailed(ctx, "interviewer", currentAttempt, &model, errEmptyReply.Error(), false)
-		return streamResult{}, errEmptyReply
+		return streamResult{Attempt: currentAttempt, Model: model, StartedAt: start}, errEmptyReply
 	}
 	return streamResult{Text: text, Model: model, Attempt: currentAttempt, Usage: resp.Usage, StartedAt: start}, nil
 }

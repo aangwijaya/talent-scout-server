@@ -350,6 +350,20 @@ func (p *Postgres) AbandonSession(ctx context.Context, id string, now time.Time)
 	return tag.RowsAffected() > 0, nil
 }
 
+// FinishSession transitions an active session to completed with the given
+// finish_reason, and reports whether the transition happened. A session that is
+// no longer active is skipped.
+func (p *Postgres) FinishSession(ctx context.Context, id string, reason domain.FinishReason, now time.Time) (bool, error) {
+	tag, err := p.pool.Exec(ctx, `
+		UPDATE sessions SET status = $2, finish_reason = $3, ended_at = $4
+		WHERE id = $1 AND status = $5`,
+		id, domain.SessionStatusCompleted, reason, now, domain.SessionStatusActive)
+	if err != nil {
+		return false, mapError(err)
+	}
+	return tag.RowsAffected() > 0, nil
+}
+
 func (p *Postgres) CreateTopics(ctx context.Context, topics []domain.Topic) error {
 	tx, err := p.pool.Begin(ctx)
 	if err != nil {

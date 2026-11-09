@@ -59,6 +59,15 @@ func (r *Runner) RunLLMNode(ctx context.Context, nodeID string, attempt int, req
 // transport retry advances that number, so a caller continuing after an error
 // must use it instead of the loop attempt to keep node.started numbers unique.
 func (r *Runner) runLLMNode(ctx context.Context, nodeID string, attempt int, req llm.Request, inputSummary string, onDelta func(string) error) (llm.Response, int, error) {
+	return r.runLLMNodeWithSummary(ctx, nodeID, attempt, req, inputSummary, onDelta, func(resp llm.Response) string {
+		return summarize(resp.Content, 80)
+	})
+}
+
+// runLLMNodeWithSummary is runLLMNode with a custom node.completed summary. The
+// judge uses it so an invalid JSON reply is recorded as the default it produced
+// (sufficient) instead of the raw, unusable model output.
+func (r *Runner) runLLMNodeWithSummary(ctx context.Context, nodeID string, attempt int, req llm.Request, inputSummary string, onDelta func(string) error, summaryOf func(llm.Response) string) (llm.Response, int, error) {
 	node, err := r.models.Node(nodeID)
 	if err != nil {
 		return llm.Response{}, attempt, err
@@ -102,7 +111,7 @@ func (r *Runner) runLLMNode(ctx context.Context, nodeID string, attempt int, req
 		return llm.Response{}, currentAttempt, err
 	}
 
-	if err := r.emitNodeCompleted(ctx, nodeID, currentAttempt, &model, summarize(resp.Content, 80),
+	if err := r.emitNodeCompleted(ctx, nodeID, currentAttempt, &model, summaryOf(resp),
 		resp.Usage.PromptTokens, resp.Usage.CompletionTokens, time.Since(start)); err != nil {
 		return llm.Response{}, currentAttempt, err
 	}

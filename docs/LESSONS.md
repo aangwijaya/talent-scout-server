@@ -23,6 +23,22 @@ Rules:
 
 ## Entries
 
+### 2026-11-09 — #10 Judge transport failure is run-fatal; only invalid JSON defaults
+- **Context:** Review of the judge/guard loop, where a first attempt made any judge LLM error degrade to the default `sufficient` verdict.
+- **Problem:** That degrade was an unapproved contract change: `EVENTS.md` §6.3 uses the judge as its example for `node.failed(will_retry=false)` → `node.skipped` → `run.failed` → `session.ended(failed)`, and `ARCHITECTURE.md` §2 allows the default `sufficient` only for invalid JSON. Separately, the guard checked question/time limits before "the last topic is done", so a sufficient final answer at Q15 finished as `question_limit` instead of `completed`.
+- **Cause:** The gate's safe-default rule was applied to transport failures as well as invalid output, and the guard ordered budget limits before the completion condition.
+- **Lesson:** Default a gate to its safe value only for invalid output; a transport or execution failure follows the §6.3 permanent-failure sequence (no applicant retry). Evaluate "no topics left and the answer is sufficient → completed" before any budget limit; and pass judge feedback into the follow-up prompt only inside `prompts.WrapUntrusted("judge_feedback", …)` because it derives from the applicant's answer.
+- **Follow-up:** tests in `internal/graph/interview_loop_review_test.go`, `internal/graph/guard_test.go` and `internal/graph/judge_test.go`
+- **Repeated?:** first time
+
+### 2026-11-09 — #10 Guard must reserve budget for remaining topics
+- **Context:** Adding the deterministic guard after the judge.
+- **Problem:** A rule that only checks `verdict=follow_up && follow_up_count < 2` spends the last question or minute on a follow-up and loses a later topic.
+- **Cause:** Follow-up affordability was judged against the per-topic counter only, not against the session's remaining questions/time and the pending topics.
+- **Lesson:** Allow a follow-up only when the remaining question budget and observed pace (`elapsed/questions`) can still fit the follow-up plus one question per remaining topic; record an invalid judge reply as the default verdict it produced in `node.completed` because the judge is never retried.
+- **Follow-up:** tests in `internal/graph/guard_test.go` (15 cases) and `TestGuardDropsFollowUpWhenQuestionsCannotCoverTopics`
+- **Repeated?:** first time
+
 ### 2026-11-09 — #40 Planner transport outage must be applicant-retryable
 - **Context:** A planner `llm.ErrUnavailable` during session start called `failRun` directly, permanently failing the application.
 - **Problem:** The planner step mixed two different failures: a `plan_check` rejection (automatic retry, max 2 attempts) and a transport outage (should wait for `POST /retry`). Treating both as run-fatal made a transient 5xx strand the applicant.

@@ -31,6 +31,10 @@ func (m *SessionManager) judgeAndGuard(ctx context.Context, sess domain.Session,
 		return
 	}
 	verdict, _, err := m.runJudge(ctx, st, topic, question, answer.Content)
+	if m.externallyFinishing(st) {
+		m.abortExternalTurn(st)
+		return
+	}
 	if err != nil {
 		// The judge is a gate with a safe default: a transport outage after its
 		// retry continues with sufficient, exactly like invalid JSON. Any other
@@ -47,6 +51,10 @@ func (m *SessionManager) judgeAndGuard(ctx context.Context, sess domain.Session,
 		return
 	}
 	decision, err := m.runGuard(ctx, sess, st, topic, verdict)
+	if m.externallyFinishing(st) {
+		m.abortExternalTurn(st)
+		return
+	}
 	if err != nil {
 		m.failRun(ctx, sess, st, "guard_failed")
 		return
@@ -75,6 +83,7 @@ func (m *SessionManager) judgeAndGuard(ctx context.Context, sess domain.Session,
 				m.failRun(ctx, sess, st, "edge_failed")
 				return
 			}
+			st.finishEdge = true
 			m.finishInterview(ctx, sess, st, domain.FinishReasonCompleted)
 			return
 		}
@@ -94,6 +103,7 @@ func (m *SessionManager) judgeAndGuard(ctx context.Context, sess domain.Session,
 			m.failRun(ctx, sess, st, "edge_failed")
 			return
 		}
+		st.finishEdge = true
 		m.finishInterview(ctx, sess, st, decision.FinishReason)
 	}
 }

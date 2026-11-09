@@ -383,3 +383,192 @@ func TestScoringFailureSkipsEvidenceCheckBeforeRunFailed(t *testing.T) {
 		t.Errorf("application status = %q, want failed", app.Status)
 	}
 }
+
+// finishThroughSweeper simulates the sweeper winning the finish race while a
+// graph turn is still in flight: it ends the session in the store, moves the
+// application to scoring, and notifies the live manager.
+func finishThroughSweeper(t *testing.T, st *store.Memory, registry *session.Registry, sess domain.Session) {
+	t.Helper()
+	now := time.Now().UTC()
+	changed, err := st.FinishSession(context.Background(), sess.ID, domain.FinishReasonTimeLimit, now)
+	if err != nil {
+		t.Fatalf("FinishSession: %v", err)
+	}
+	if !changed {
+		t.Fatal("FinishSession changed = false, want the sweeper to win the finish")
+	}
+	app, err := st.GetApplication(context.Background(), sess.ApplicationID)
+	if err != nil {
+		t.Fatalf("GetApplication: %v", err)
+	}
+	if err := st.UpdateApplicationStatus(context.Background(), app.ID, domain.ApplicationStatusScoring); err != nil {
+		t.Fatalf("UpdateApplicationStatus: %v", err)
+	}
+	if !registry.NotifyFinished(sess.ID, domain.FinishReasonTimeLimit) {
+		t.Fatal("NotifyFinished = false, want the live manager to handle the finish")
+	}
+}
+
+func waitApplicationStatus(t *testing.T, st *store.Memory, applicationID string, want domain.ApplicationStatus) {
+	t.Helper()
+	deadline := time.Now().Add(3 * time.Second)
+	for {
+		app, err := st.GetApplication(context.Background(), applicationID)
+		if err != nil {
+			t.Fatalf("GetApplication: %v", err)
+		}
+		if app.Status == want {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("application status = %q, want %q", app.Status, want)
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+}
+
+// TestExternalFinishWaitsForInFlightTurn proves the sweeper finish path does
+// not score concurrently with a turn already running: scoring and
+// session.ended wait for judge/guard/interviewer work to stop, and the run is
+// completed exactly once with exactly one guard→scorer edge.
+func TestExternalFinishWaitsForInFlightTurn(t *testing.T) {
+	st, sess := seedGraphSession(t)
+	judgeEntered := make(chan struct{})
+	releaseJudge := make(chan struct{})
+	client := &stubClient{chat: func(req llm.Request) (llm.Response, error) {
+		switch req.Node {
+		case "judge":
+			close(judgeEntered)
+			<-releaseJudge
+			return sufficientJudgeReply()
+		case "scorer":
+			return llm.Response{Content: FakeReplies["scorer"]}, nil
+		default:
+			return llm.Response{Content: FakeReplies[req.Node]}, nil
+		}
+	}}
+	manager, registry := newTestManager(t, st, client)
+	if err := manager.Start(context.Background(), sess); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	waitIdle(t, manager, sess.ID)
+
+	if _, err := manager.SubmitAnswer(context.Background(), sess, "I moved the state into a separate store so each page stayed small and easy to test."); err != nil {
+		t.Fatalf("SubmitAnswer: %v", err)
+	}
+	select {
+	case <-judgeEntered:
+	case <-time.After(2 * time.Second):
+		t.Fatal("the judge never started")
+	}
+
+	finishThroughSweeper(t, st, registry, sess)
+	close(releaseJudge)
+	waitApplicationStatus(t, st, sess.ApplicationID, domain.ApplicationStatusReview)
+
+	events := sessionEvents(t, st, sess.ID)
+	guardScorerEdges, ended, completed, failed := 0, 0, 0, 0
+	endedAt, scorerAt := -1, -1
+	for i, event := range events {
+		switch event.Type {
+		case EventEdgeTraversed:
+			var payload EdgeTraversed
+			if err := json.Unmarshal(event.Payload, &payload); err != nil {
+				t.Fatalf("unmarshal edge: %v", err)
+			}
+			if payload.From == "guard" && payload.To == "scorer" && payload.Label == "finish" {
+				guardScorerEdges++
+			}
+		case EventSessionEnded:
+			ended++
+			endedAt = i
+		case EventNodeStarted:
+			if event.NodeID != nil && *event.NodeID == "scorer" && scorerAt < 0 {
+				scorerAt = i
+			}
+		case EventRunCompleted:
+			completed++
+		case EventRunFailed:
+			failed++
+		}
+	}
+	if guardScorerEdges != 1 {
+		t.Errorf("guard→scorer edges = %d, want 1", guardScorerEdges)
+	}
+	if ended != 1 {
+		t.Errorf("session.ended events = %d, want 1", ended)
+	}
+	if completed != 1 {
+		t.Errorf("run.completed events = %d, want 1", completed)
+	}
+	if failed != 0 {
+		t.Errorf("run.failed events = %d, want 0", failed)
+	}
+	if endedAt < 0 || scorerAt < 0 || endedAt > scorerAt {
+		t.Errorf("session.ended at %d, scorer started at %d; want session.ended before scoring", endedAt, scorerAt)
+	}
+	for i, event := range events {
+		if i <= endedAt || event.NodeID == nil {
+			continue
+		}
+		switch *event.NodeID {
+		case "judge", "guard", "interviewer":
+			t.Errorf("node %q emitted %q after session.ended, want the turn stopped first", *event.NodeID, event.Type)
+		}
+	}
+}
+
+// TestExternalFinishStopsLateTurnFailure proves a turn that fails after the
+// sweeper already ended the session does not also fail the run: the external
+// finish owns the ending, so the run is completed once and never failed.
+func TestExternalFinishStopsLateTurnFailure(t *testing.T) {
+	st, sess := seedGraphSession(t)
+	judgeEntered := make(chan struct{})
+	releaseJudge := make(chan struct{})
+	client := &stubClient{chat: func(req llm.Request) (llm.Response, error) {
+		switch req.Node {
+		case "judge":
+			close(judgeEntered)
+			<-releaseJudge
+			return llm.Response{}, errors.New("judge boom")
+		case "scorer":
+			return llm.Response{Content: FakeReplies["scorer"]}, nil
+		default:
+			return llm.Response{Content: FakeReplies[req.Node]}, nil
+		}
+	}}
+	manager, registry := newTestManager(t, st, client)
+	if err := manager.Start(context.Background(), sess); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	waitIdle(t, manager, sess.ID)
+
+	if _, err := manager.SubmitAnswer(context.Background(), sess, "I moved the state into a separate store so each page stayed small and easy to test."); err != nil {
+		t.Fatalf("SubmitAnswer: %v", err)
+	}
+	select {
+	case <-judgeEntered:
+	case <-time.After(2 * time.Second):
+		t.Fatal("the judge never started")
+	}
+
+	finishThroughSweeper(t, st, registry, sess)
+	close(releaseJudge)
+	waitApplicationStatus(t, st, sess.ApplicationID, domain.ApplicationStatusReview)
+
+	completed, failed := 0, 0
+	for _, event := range sessionEvents(t, st, sess.ID) {
+		switch event.Type {
+		case EventRunCompleted:
+			completed++
+		case EventRunFailed:
+			failed++
+		}
+	}
+	if completed != 1 {
+		t.Errorf("run.completed events = %d, want 1", completed)
+	}
+	if failed != 0 {
+		t.Errorf("run.failed events = %d, want 0; a turn stopped by the sweeper must not fail the run", failed)
+	}
+}

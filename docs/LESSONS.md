@@ -23,6 +23,14 @@ Rules:
 
 ## Entries
 
+### 2026-11-10 — #11 An external finish must serialize with the turn in flight
+- **Context:** Review of the sweeper finish path: `finishExternally` emitted `session.ended` and launched scoring while a turn could still be running judge/guard/interviewer.
+- **Problem:** The runner and `st.executed` are not concurrency safe, so scoring beside a live turn is a fatal concurrent-map-write, interleaves node events after `session.ended`, can emit `guard→scorer` twice, and can end the run as both `run.failed` and `run.completed`.
+- **Cause:** The sweeper's registry check happens outside the manager, so it can win the finish race just after an applicant turn starts; `finishExternally` only cleared `st.busy` instead of coordinating with that turn.
+- **Lesson:** Serialize every graph step and the external finish path on one per-session mutex (`runStep`); make the finish edge idempotent with a flag set where the edge is emitted; and when the sweeper already ended the session, make the in-flight turn abort quietly instead of calling `failRun`, so the external finish owns session.ended and scoring.
+- **Follow-up:** tests in `internal/graph/session_review_test.go` (`TestExternalFinishWaitsForInFlightTurn`, `TestExternalFinishStopsLateTurnFailure`)
+- **Repeated?:** first time
+
 ### 2026-11-10 — #11 A sweeper finish hook must not run the scorer inline
 - **Context:** Review of the scorer: the sweeper's `NotifyFinished` callback ran `runScoring` synchronously, and that path skipped the `guard→scorer` edge.
 - **Problem:** Up to 3 scorer calls plus transport retries blocked the single sweep loop, delaying every other `time_limit`/`abandoned` session; replay of a swept run also had `node.started(scorer)` with no preceding `edge.traversed`.

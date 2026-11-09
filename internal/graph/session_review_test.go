@@ -2,6 +2,7 @@ package graph
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"io"
 	"log/slog"
@@ -193,5 +194,192 @@ func TestSweepEndsIdleLiveSessionThroughManager(t *testing.T) {
 	}
 	if err := manager.Retry(context.Background(), sess); !errors.Is(err, ErrInvalidState) {
 		t.Errorf("Retry after sweep = %v, want ErrInvalidState", err)
+	}
+}
+
+// TestSweepScoresAsyncAndEmitsGuardEdge proves the sweeper scoring path runs in
+// its own goroutine (ARCHITECTURE §3 step 8: "The scorer runs async") instead
+// of blocking the sweep loop, and emits the same guard→scorer transition as
+// the in-process path before node.started(scorer).
+func TestSweepScoresAsyncAndEmitsGuardEdge(t *testing.T) {
+	st, sess := seedGraphSession(t)
+	scorerEntered := make(chan struct{})
+	release := make(chan struct{}, 1)
+	entered := false
+	client := &stubClient{chat: func(req llm.Request) (llm.Response, error) {
+		switch req.Node {
+		case "judge":
+			return sufficientJudgeReply()
+		case "scorer":
+			if !entered {
+				entered = true
+				close(scorerEntered)
+			}
+			<-release
+			return llm.Response{Content: `{"scores":[
+				{"rubric_key":"frontend_depth","score":4,"rationale":"Svelte work.","evidence":[{"message_id":"m1","quote":"I built the frontend with Svelte"}]}
+			]}`}, nil
+		default:
+			return llm.Response{Content: FakeReplies[req.Node]}, nil
+		}
+	}}
+	manager, registry := newTestManager(t, st, client)
+	if err := manager.Start(context.Background(), sess); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	waitIdle(t, manager, sess.ID)
+	if _, err := manager.SubmitAnswer(context.Background(), sess, "I built the frontend with Svelte."); err != nil {
+		t.Fatalf("SubmitAnswer: %v", err)
+	}
+	waitIdle(t, manager, sess.ID)
+
+	fresh, err := st.GetSession(context.Background(), sess.ID)
+	if err != nil {
+		t.Fatalf("GetSession: %v", err)
+	}
+	past := time.Now().Add(-20 * time.Minute)
+	fresh.StartedAt = &past
+	if err := st.UpdateSession(context.Background(), fresh); err != nil {
+		t.Fatalf("UpdateSession: %v", err)
+	}
+
+	sweeper := session.NewSweeper(st, registry, 15*time.Minute, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	sweepErr := make(chan error, 1)
+	done := make(chan struct{})
+	go func() {
+		_, _, _, err := sweeper.SweepOnce(context.Background())
+		sweepErr <- err
+		close(done)
+	}()
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		release <- struct{}{}
+		<-done
+		t.Fatal("SweepOnce blocked while the scorer was still running; scoring must be async")
+	}
+	if err := <-sweepErr; err != nil {
+		t.Fatalf("SweepOnce: %v", err)
+	}
+
+	select {
+	case <-scorerEntered:
+	case <-time.After(2 * time.Second):
+		t.Fatal("the scorer never started after the sweep finished the session")
+	}
+	app, err := st.GetApplication(context.Background(), sess.ApplicationID)
+	if err != nil {
+		t.Fatalf("GetApplication: %v", err)
+	}
+	if app.Status != domain.ApplicationStatusScoring {
+		t.Errorf("application status while the scorer is blocked = %q, want scoring", app.Status)
+	}
+
+	release <- struct{}{}
+
+	deadline := time.Now().Add(3 * time.Second)
+	for {
+		app, err = st.GetApplication(context.Background(), sess.ApplicationID)
+		if err != nil {
+			t.Fatalf("GetApplication: %v", err)
+		}
+		if app.Status == domain.ApplicationStatusReview {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("application status = %q, want review after async scoring", app.Status)
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+
+	events := sessionEvents(t, st, sess.ID)
+	edgeAt, scorerAt := -1, -1
+	for i, event := range events {
+		switch event.Type {
+		case EventEdgeTraversed:
+			var payload EdgeTraversed
+			if err := json.Unmarshal(event.Payload, &payload); err != nil {
+				t.Fatalf("unmarshal edge: %v", err)
+			}
+			if payload.From == "guard" && payload.To == "scorer" && payload.Label == "finish" {
+				edgeAt = i
+			}
+		case EventNodeStarted:
+			if event.NodeID != nil && *event.NodeID == "scorer" {
+				scorerAt = i
+			}
+		}
+	}
+	if edgeAt < 0 {
+		t.Fatal("no edge.traversed(guard→scorer, finish) on the sweeper scoring path")
+	}
+	if scorerAt < 0 {
+		t.Fatal("no node.started(scorer) on the sweeper scoring path")
+	}
+	if edgeAt > scorerAt {
+		t.Errorf("edge.traversed(guard→scorer) at %d after node.started(scorer) at %d, want before", edgeAt, scorerAt)
+	}
+}
+
+// TestScoringFailureSkipsEvidenceCheckBeforeRunFailed proves a scorer transport
+// failure on the final attempt marks evidence_check skipped before run.failed
+// (docs/EVENTS.md §6.3) and leaves the application failed.
+func TestScoringFailureSkipsEvidenceCheckBeforeRunFailed(t *testing.T) {
+	st, sess := seedGraphSession(t)
+	client := &stubClient{chat: func(req llm.Request) (llm.Response, error) {
+		if req.Node == "scorer" {
+			return llm.Response{}, llm.ErrUnavailable
+		}
+		if req.Node == "judge" {
+			return sufficientJudgeReply()
+		}
+		return llm.Response{Content: FakeReplies[req.Node]}, nil
+	}}
+	manager := scoringManager(t, st, client, 15)
+	if err := manager.Start(context.Background(), sess); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	waitIdle(t, manager, sess.ID)
+	finishWithAnswers(t, manager, sess,
+		"I built the frontend with Svelte.",
+		"I designed the system boundaries.",
+		"I tested accessibility carefully and explained tradeoffs.",
+	)
+
+	events := sessionEvents(t, st, sess.ID)
+	var lastScorerFailed, skippedAt, runFailedAt int = -1, -1, -1
+	for i, event := range events {
+		switch event.Type {
+		case EventNodeFailed:
+			if event.NodeID != nil && *event.NodeID == "scorer" {
+				lastScorerFailed = i
+			}
+		case EventNodeSkipped:
+			if event.NodeID != nil && *event.NodeID == "evidence_check" {
+				skippedAt = i
+			}
+		case EventRunFailed:
+			runFailedAt = i
+		}
+	}
+	if lastScorerFailed < 0 {
+		t.Fatal("no node.failed(scorer) event")
+	}
+	if skippedAt < 0 {
+		t.Fatal("no node.skipped(evidence_check) before run.failed")
+	}
+	if runFailedAt < 0 {
+		t.Fatal("no run.failed event")
+	}
+	if !(lastScorerFailed < skippedAt && skippedAt < runFailedAt) {
+		t.Errorf("event order scorer.failed=%d skipped=%d run.failed=%d, want scorer.failed < skipped < run.failed",
+			lastScorerFailed, skippedAt, runFailedAt)
+	}
+	app, err := st.GetApplication(context.Background(), sess.ApplicationID)
+	if err != nil {
+		t.Fatalf("GetApplication: %v", err)
+	}
+	if app.Status != domain.ApplicationStatusFailed {
+		t.Errorf("application status = %q, want failed", app.Status)
 	}
 }

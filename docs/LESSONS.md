@@ -23,6 +23,14 @@ Rules:
 
 ## Entries
 
+### 2026-11-10 — #11 A sweeper finish hook must not run the scorer inline
+- **Context:** Review of the scorer: the sweeper's `NotifyFinished` callback ran `runScoring` synchronously, and that path skipped the `guard→scorer` edge.
+- **Problem:** Up to 3 scorer calls plus transport retries blocked the single sweep loop, delaying every other `time_limit`/`abandoned` session; replay of a swept run also had `node.started(scorer)` with no preceding `edge.traversed`.
+- **Cause:** The in-process and sweeper finish paths were written at different times and only the in-process path followed the EVENTS.md §6 sequence; "the scorer runs async" was implemented per call site instead of inside the shared finish hook.
+- **Lesson:** Start scoring in a goroutine inside the sweeper finish hook after emitting `session.ended` (fetching the session inside the goroutine), emit the same `guard→scorer` edge as the in-process path before `node.started(scorer)`, and have a scoring failure emit `node.skipped(evidence_check, run_failed)` before `run.failed`.
+- **Follow-up:** tests in `internal/graph/session_review_test.go` (`TestSweepScoresAsyncAndEmitsGuardEdge`, `TestScoringFailureSkipsEvidenceCheckBeforeRunFailed`)
+- **Repeated?:** first time
+
 ### 2026-11-09 — #11 Retry only failed criteria; map internal evidence reasons to the contract
 - **Context:** Adding the scorer and the evidence check retry loop (max 3 attempts) after the interview ends.
 - **Problem:** `domain.EvidenceQuoteRejectReason` returns `quote_too_short` / `quote_too_long`, but `docs/EVENTS.md` only documents `quote_not_found` as a check/retry reason. Retrying every criterion would also re-score already-valid ones, and a static fake scorer reply only works if its quotes match the deterministic fake transcript exactly.

@@ -603,12 +603,23 @@ func (m *SessionManager) finishExternally(sessionID string, reason domain.Finish
 	m.mu.Unlock()
 
 	m.registry.Remove(sessionID)
+	// The in-process path emits this transition before it finishes the session;
+	// the sweeper path must emit it too so guards can follow the run linearly.
+	if err := st.runner.EmitEdge(context.Background(), "guard", "scorer", "finish"); err != nil {
+		m.logger.Error("sweeper scoring edge failed", "session_id", sessionID, "error", err)
+	}
 	_, _ = m.bus.Emit(context.Background(), runID, Event{Type: EventSessionEnded, Payload: SessionEnded{FinishReason: string(reason)}})
-	if sess, err := m.store.GetSession(context.Background(), sessionID); err == nil {
+	// Scoring is async (ARCHITECTURE §3 step 8): a slow scorer plus its retries
+	// must not block the sweep loop for every other due session.
+	go func() {
+		sess, err := m.store.GetSession(context.Background(), sessionID)
+		if err != nil {
+			return
+		}
 		if err := m.runScoring(context.Background(), sess, st, reason); err != nil {
 			m.failScoring(context.Background(), sess, st, err)
 		}
-	}
+	}()
 	return true
 }
 
@@ -616,6 +627,9 @@ func (m *SessionManager) finishExternally(sessionID string, reason domain.Finish
 // ended, so only the run and application state change here.
 func (m *SessionManager) failScoring(ctx context.Context, sess domain.Session, st *liveSession, err error) {
 	m.logger.Error("scoring failed", "session_id", sess.ID, "error", err)
+	if !st.executed["evidence_check"] {
+		_ = st.runner.EmitNodeSkipped(ctx, "evidence_check", "run_failed")
+	}
 	_ = st.runner.Fail(ctx, "scoring_failed")
 	if app, appErr := m.store.GetApplication(ctx, sess.ApplicationID); appErr == nil && app.Status == domain.ApplicationStatusScoring {
 		_ = m.store.UpdateApplicationStatus(ctx, app.ID, domain.ApplicationStatusFailed)

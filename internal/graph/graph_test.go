@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"testing"
 	"time"
 
@@ -688,5 +689,28 @@ func TestBusCancelUnblocksStalledPublisher(t *testing.T) {
 		}
 	case <-time.After(2 * time.Second):
 		t.Fatal("Emit still blocked after the subscription was cancelled")
+	}
+}
+
+func TestRunStartedIncludesApplicantRetryEdges(t *testing.T) {
+	runner, st, ctx := newRunner(t)
+	if err := runner.Start(ctx); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	events, err := st.ListNodeEvents(ctx, runner.RunID(), 0)
+	if err != nil {
+		t.Fatalf("ListNodeEvents: %v", err)
+	}
+	var payload RunStarted
+	if err := json.Unmarshal(events[0].Payload, &payload); err != nil {
+		t.Fatalf("unmarshal run.started: %v", err)
+	}
+	for _, want := range []EdgeRef{
+		{From: "planner", To: "planner"},
+		{From: "interviewer", To: "interviewer"},
+	} {
+		if !slices.Contains(payload.Edges, want) {
+			t.Errorf("run.started edges %v lack %+v (applicant retry self-loop)", payload.Edges, want)
+		}
 	}
 }

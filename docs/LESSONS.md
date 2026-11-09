@@ -27,8 +27,8 @@ Rules:
 - **Context:** A planner `llm.ErrUnavailable` during session start called `failRun` directly, permanently failing the application.
 - **Problem:** The planner step mixed two different failures: a `plan_check` rejection (automatic retry, max 2 attempts) and a transport outage (should wait for `POST /retry`). Treating both as run-fatal made a transient 5xx strand the applicant.
 - **Cause:** `runPlanner` returned one error for both paths and `startRun` had no retry hook for the planner.
-- **Lesson:** Split a node's executor into "one attempt" and "automatic loop" so a manual retry can replay the single failed attempt (plus its check) at `lastAttempt+1`; transport failures use the applicant retry budget (`nextAttempt + MaxRetries`), not the plan_check budget.
-- **Follow-up:** tests in `internal/graph/planner_retry_test.go`
+- **Lesson:** Split a node's executor into "one attempt" and "automatic loop", and carry the loop's check budget and latest feedback through an applicant retry: the retry re-enters the loop (outages consume an attempt number but not a check attempt), rather than replaying one isolated attempt that would drop the remaining automatic retries and the rejection feedback.
+- **Follow-up:** tests in `internal/graph/planner_retry_test.go` (`TestApplicantRetryAfterOutageKeepsPlanCheckBudget`, `TestApplicantRetryAfterOutageKeepsPlanCheckFeedback`) and `TestRunStartedIncludesApplicantRetryEdges`
 - **Repeated?:** first time
 
 ### 2026-11-09 — #9 Planner output is untrusted downstream of the CV

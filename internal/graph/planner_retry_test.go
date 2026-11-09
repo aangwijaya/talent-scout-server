@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"slices"
+	"strings"
 	"testing"
 
 	"github.com/aangwijaya/talent-scout-server/internal/domain"
@@ -252,5 +253,118 @@ func TestManualRetryContinuesPlannerAttempts(t *testing.T) {
 	}
 	if retryAttempt != 3 {
 		t.Errorf("loop.retry attempt = %d, want 3", retryAttempt)
+	}
+}
+
+// An outage on the first attempt must not consume the plan_check budget: the
+// applicant retry runs plan_check once, and an invalid plan there still gets
+// the automatic second plan_check attempt.
+func TestApplicantRetryAfterOutageKeepsPlanCheckBudget(t *testing.T) {
+	st, sess := seedGraphSession(t)
+	var plannerCalls int
+	client := &stubClient{chat: func(req llm.Request) (llm.Response, error) {
+		if req.Node != "planner" {
+			return llm.Response{Content: FakeReplies[req.Node]}, nil
+		}
+		plannerCalls++
+		switch plannerCalls {
+		case 1:
+			return llm.Response{}, llm.ErrUnavailable
+		case 2:
+			return llm.Response{Content: `{"topics":[]}`}, nil
+		default:
+			return llm.Response{Content: FakeReplies["planner"]}, nil
+		}
+	}}
+	manager, _ := newTestManager(t, st, client)
+	if err := manager.Start(context.Background(), sess); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	waitIdle(t, manager, sess.ID)
+	if !hasRetryableError(t, st, sess.ID) {
+		t.Fatal("planner outage did not send a retryable error")
+	}
+
+	if err := manager.Retry(context.Background(), sess); err != nil {
+		t.Fatalf("Retry: %v", err)
+	}
+	waitIdle(t, manager, sess.ID)
+
+	if plannerCalls != 3 {
+		t.Errorf("planner calls = %d, want 3 (outage, applicant retry, automatic plan_check retry)", plannerCalls)
+	}
+	fresh, _ := st.GetSession(context.Background(), sess.ID)
+	if fresh.Status != domain.SessionStatusActive {
+		t.Errorf("session status = %q, want active", fresh.Status)
+	}
+	topics, _ := st.ListTopicsBySession(context.Background(), sess.ID)
+	if len(topics) != 3 {
+		t.Errorf("topics = %d, want 3", len(topics))
+	}
+	messages, _ := st.ListMessagesBySession(context.Background(), sess.ID, false)
+	if len(messages) != 1 || messages[0].Kind != domain.MessageKindOpening {
+		t.Errorf("messages = %+v, want one opening message", messages)
+	}
+
+	var sawAutomaticRetry bool
+	for _, e := range sessionEvents(t, st, sess.ID) {
+		if e.Type != EventLoopRetry {
+			continue
+		}
+		var payload LoopRetry
+		if err := json.Unmarshal(e.Payload, &payload); err != nil {
+			t.Fatalf("unmarshal loop.retry: %v", err)
+		}
+		if payload.Reason == "invalid_plan" && payload.Attempt == 3 {
+			sawAutomaticRetry = true
+		}
+	}
+	if !sawAutomaticRetry {
+		t.Error("no automatic plan_check loop.retry at attempt 3")
+	}
+}
+
+// A plan_check rejection followed by an outage on the automatic retry must keep
+// the rejection feedback so the applicant's planner retry sees it.
+func TestApplicantRetryAfterOutageKeepsPlanCheckFeedback(t *testing.T) {
+	st, sess := seedGraphSession(t)
+	var plannerRequests []llm.Request
+	client := &stubClient{chat: func(req llm.Request) (llm.Response, error) {
+		if req.Node != "planner" {
+			return llm.Response{Content: FakeReplies[req.Node]}, nil
+		}
+		plannerRequests = append(plannerRequests, req)
+		switch len(plannerRequests) {
+		case 1:
+			return llm.Response{Content: `{"topics":[]}`}, nil
+		case 2:
+			return llm.Response{}, llm.ErrUnavailable
+		default:
+			return llm.Response{Content: FakeReplies["planner"]}, nil
+		}
+	}}
+	manager, _ := newTestManager(t, st, client)
+	if err := manager.Start(context.Background(), sess); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	waitIdle(t, manager, sess.ID)
+	if !hasRetryableError(t, st, sess.ID) {
+		t.Fatal("planner outage after a plan_check failure did not send a retryable error")
+	}
+	if err := manager.Retry(context.Background(), sess); err != nil {
+		t.Fatalf("Retry: %v", err)
+	}
+	waitIdle(t, manager, sess.ID)
+
+	if len(plannerRequests) != 3 {
+		t.Fatalf("planner calls = %d, want 3", len(plannerRequests))
+	}
+	var feedback strings.Builder
+	for _, msg := range plannerRequests[2].Messages {
+		feedback.WriteString(msg.Content)
+		feedback.WriteString("\n")
+	}
+	if !strings.Contains(feedback.String(), "topic_count must be between 3 and 5") {
+		t.Errorf("applicant retry planner request lacks attempt 1 plan_check errors:\n%s", feedback.String())
 	}
 }

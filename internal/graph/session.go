@@ -25,6 +25,15 @@ var errPlanInvalid = errors.New("planner produced an invalid plan after retries"
 // path instead and do not consume this budget.
 const maxPlannerAttempts = 2
 
+// plannerProgress carries the plan_check budget and the latest rejection across
+// an applicant retry, so re-entering the planner loop never resets them. An
+// outage consumes an attempt number but not a plan_check attempt.
+type plannerProgress struct {
+	planChecks  int
+	feedback    []PlanCheckError
+	nextAttempt int
+}
+
 // interviewerUnavailableMessage is the only text the applicant sees for a
 // temporary interviewer failure. The provider's error stays in the server log.
 const interviewerUnavailableMessage = "The interviewer is temporarily unavailable. Please try again."
@@ -206,21 +215,28 @@ func (m *SessionManager) startRun(ctx context.Context, sess domain.Session, st *
 	fresh, _ := m.store.GetSession(ctx, sess.ID)
 	m.emitSessionUpdated(ctx, st, fresh, nil)
 
-	plan, attempt, err := m.runPlanner(ctx, sess, st)
+	plan, attempt, progress, err := m.runPlanner(ctx, sess, st, plannerProgress{nextAttempt: 1})
 	if err != nil {
-		if errors.Is(err, llm.ErrUnavailable) {
-			m.handlePlannerError(ctx, sess, st, attempt, err, false)
-			return
-		}
-		reason := err.Error()
-		if errors.Is(err, errPlanInvalid) {
-			reason = "planner_invalid_after_retries"
-		}
-		m.failRun(ctx, sess, st, reason)
+		m.plannerFailed(ctx, sess, st, progress, err, false)
 		return
 	}
 
 	m.launchInterviewer(ctx, sess, st, plan, attempt)
+}
+
+// plannerFailed routes a failed planner loop: a transport outage offers the
+// applicant a retry, anything else (including an exhausted plan_check budget)
+// ends the run.
+func (m *SessionManager) plannerFailed(ctx context.Context, sess domain.Session, st *liveSession, progress plannerProgress, err error, alreadyRetried bool) {
+	if errors.Is(err, llm.ErrUnavailable) {
+		m.handlePlannerError(ctx, sess, st, progress, err, alreadyRetried)
+		return
+	}
+	reason := err.Error()
+	if errors.Is(err, errPlanInvalid) {
+		reason = "planner_invalid_after_retries"
+	}
+	m.failRun(ctx, sess, st, reason)
 }
 
 func (m *SessionManager) continueAfterAnswer(ctx context.Context, sess domain.Session, st *liveSession, topic *domain.Topic) {
@@ -233,33 +249,47 @@ func (m *SessionManager) continueAfterAnswer(ctx context.Context, sess domain.Se
 	m.runInterviewer(ctx, sess, st, *topic, domain.MessageKindFollowUp, 1)
 }
 
-func (m *SessionManager) runPlanner(ctx context.Context, sess domain.Session, st *liveSession) ([]PlannedTopic, int, error) {
+// runPlanner runs the planner loop while the plan_check budget is not spent,
+// feeding the latest rejection back into the next attempt. It returns the
+// attempt number of the plan_check that accepted the plan (or of the last
+// attempt before a failure) and the progress to continue from after an
+// applicant retry. Only plan_check runs consume the budget; an outage leaves it
+// untouched. A loop.retry/edge pair is emitted only when the loop continues
+// from a plan_check rejection, because an applicant retry already emitted its
+// own loop.retry/edge.
+func (m *SessionManager) runPlanner(ctx context.Context, sess domain.Session, st *liveSession, progress plannerProgress) ([]PlannedTopic, int, plannerProgress, error) {
 	job, app, err := m.loadPlannerInputs(ctx, sess)
 	if err != nil {
-		return nil, 0, err
+		return nil, progress.nextAttempt, progress, err
 	}
 
-	var feedback []PlanCheckError
-	for attempt := 1; attempt <= maxPlannerAttempts; attempt++ {
-		if attempt > 1 {
-			if err := st.runner.EmitLoopRetry(ctx, "planner", attempt, maxPlannerAttempts, "invalid_plan", planFeedback(feedback)); err != nil {
-				return nil, attempt, err
+	retryFromCheck := false
+	for progress.planChecks < maxPlannerAttempts {
+		attempt := progress.nextAttempt
+		if retryFromCheck {
+			// The last automatic attempt the plan_check budget allows.
+			maxAttempts := attempt + (maxPlannerAttempts - progress.planChecks) - 1
+			if err := st.runner.EmitLoopRetry(ctx, "planner", attempt, maxAttempts, "invalid_plan", planFeedback(progress.feedback)); err != nil {
+				return nil, attempt, progress, err
 			}
 			if err := st.runner.EmitEdge(ctx, "plan_check", "planner", "invalid"); err != nil {
-				return nil, attempt, err
+				return nil, attempt, progress, err
 			}
 		}
 
-		plan, checkErrs, emitted, err := m.runPlannerOnce(ctx, sess, st, job, app, attempt, feedback)
+		plan, checkErrs, emitted, err := m.runPlannerOnce(ctx, sess, st, job, app, attempt, progress.feedback)
+		progress.nextAttempt = emitted + 1
 		if err != nil {
-			return nil, emitted, err
+			return nil, attempt, progress, err
 		}
 		if len(checkErrs) == 0 {
-			return plan.Topics, attempt, nil
+			return plan.Topics, attempt, progress, nil
 		}
-		feedback = checkErrs
+		progress.planChecks++
+		progress.feedback = checkErrs
+		retryFromCheck = true
 	}
-	return nil, maxPlannerAttempts, errPlanInvalid
+	return nil, progress.nextAttempt - 1, progress, errPlanInvalid
 }
 
 func (m *SessionManager) loadPlannerInputs(ctx context.Context, sess domain.Session) (domain.Job, domain.Application, error) {
@@ -365,37 +395,27 @@ func (m *SessionManager) launchInterviewer(ctx context.Context, sess domain.Sess
 
 // handlePlannerError gives the applicant one manual retry when the planner's
 // model is unavailable. alreadyRetried is true when the retry of the same step
-// failed, so a second failure ends the run. A plan_check failure never reaches
-// here; it keeps its own automatic retry budget.
-func (m *SessionManager) handlePlannerError(ctx context.Context, sess domain.Session, st *liveSession, lastAttempt int, err error, alreadyRetried bool) {
-	m.logger.Error("planner step failed", "session_id", sess.ID, "attempt", lastAttempt, "error", err)
+// failed, so a second failure ends the run. The retry re-enters the planner
+// loop with the preserved plan_check budget and feedback; a plan_check failure
+// keeps its own automatic retry budget.
+func (m *SessionManager) handlePlannerError(ctx context.Context, sess domain.Session, st *liveSession, progress plannerProgress, err error, alreadyRetried bool) {
+	m.logger.Error("planner step failed", "session_id", sess.ID, "attempt", progress.nextAttempt-1, "error", err)
 	m.mu.Lock()
 	canRetry := errors.Is(err, llm.ErrUnavailable) && !alreadyRetried && !st.done
 	if canRetry {
-		nextAttempt := lastAttempt + 1
+		nextAttempt := progress.nextAttempt
 		maxAttempts := nextAttempt + m.models.MaxRetries()
 		st.waitingRetry = true
 		st.busy = false
 		st.retry = func(retryCtx context.Context) {
 			_ = st.runner.EmitLoopRetry(retryCtx, "planner", nextAttempt, maxAttempts, "llm_unavailable", err.Error())
 			_ = st.runner.EmitEdge(retryCtx, "planner", "planner", "retry")
-			job, app, loadErr := m.loadPlannerInputs(retryCtx, sess)
-			if loadErr != nil {
-				m.failRun(retryCtx, sess, st, "load_planner_inputs_failed")
-				return
-			}
-			plan, checkErrs, _, planErr := m.runPlannerOnce(retryCtx, sess, st, job, app, nextAttempt, nil)
+			plan, attempt, nextProgress, planErr := m.runPlanner(retryCtx, sess, st, progress)
 			if planErr != nil {
-				m.handlePlannerError(retryCtx, sess, st, nextAttempt, planErr, true)
+				m.plannerFailed(retryCtx, sess, st, nextProgress, planErr, true)
 				return
 			}
-			if len(checkErrs) > 0 {
-				// The manual retry re-runs the planner once; an invalid plan
-				// after it is a permanent failure.
-				m.failRun(retryCtx, sess, st, "planner_invalid_after_retries")
-				return
-			}
-			m.launchInterviewer(retryCtx, sess, st, plan.Topics, nextAttempt)
+			m.launchInterviewer(retryCtx, sess, st, plan, attempt)
 		}
 		m.mu.Unlock()
 		// No step is in flight while the applicant decides to retry, so the

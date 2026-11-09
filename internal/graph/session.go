@@ -20,6 +20,11 @@ var ErrInvalidState = errors.New("invalid state")
 
 var errPlanInvalid = errors.New("planner produced an invalid plan after retries")
 
+// maxPlannerAttempts is the automatic plan_check retry budget (ARCHITECTURE
+// §3: initial attempt + 1 retry). Transport failures use the applicant retry
+// path instead and do not consume this budget.
+const maxPlannerAttempts = 2
+
 // interviewerUnavailableMessage is the only text the applicant sees for a
 // temporary interviewer failure. The provider's error stays in the server log.
 const interviewerUnavailableMessage = "The interviewer is temporarily unavailable. Please try again."
@@ -203,6 +208,10 @@ func (m *SessionManager) startRun(ctx context.Context, sess domain.Session, st *
 
 	plan, attempt, err := m.runPlanner(ctx, sess, st)
 	if err != nil {
+		if errors.Is(err, llm.ErrUnavailable) {
+			m.handlePlannerError(ctx, sess, st, attempt, err, false)
+			return
+		}
 		reason := err.Error()
 		if errors.Is(err, errPlanInvalid) {
 			reason = "planner_invalid_after_retries"
@@ -211,6 +220,112 @@ func (m *SessionManager) startRun(ctx context.Context, sess domain.Session, st *
 		return
 	}
 
+	m.launchInterviewer(ctx, sess, st, plan, attempt)
+}
+
+func (m *SessionManager) continueAfterAnswer(ctx context.Context, sess domain.Session, st *liveSession, topic *domain.Topic) {
+	if topic == nil {
+		m.failRun(ctx, sess, st, "no_active_topic")
+		return
+	}
+	// server#10 inserts judge → guard here; until then the interviewer asks a
+	// follow-up on the same topic.
+	m.runInterviewer(ctx, sess, st, *topic, domain.MessageKindFollowUp, 1)
+}
+
+func (m *SessionManager) runPlanner(ctx context.Context, sess domain.Session, st *liveSession) ([]PlannedTopic, int, error) {
+	job, app, err := m.loadPlannerInputs(ctx, sess)
+	if err != nil {
+		return nil, 0, err
+	}
+
+	var feedback []PlanCheckError
+	for attempt := 1; attempt <= maxPlannerAttempts; attempt++ {
+		if attempt > 1 {
+			if err := st.runner.EmitLoopRetry(ctx, "planner", attempt, maxPlannerAttempts, "invalid_plan", planFeedback(feedback)); err != nil {
+				return nil, attempt, err
+			}
+			if err := st.runner.EmitEdge(ctx, "plan_check", "planner", "invalid"); err != nil {
+				return nil, attempt, err
+			}
+		}
+
+		plan, checkErrs, err := m.runPlannerOnce(ctx, sess, st, job, app, attempt, feedback)
+		if err != nil {
+			return nil, attempt, err
+		}
+		if len(checkErrs) == 0 {
+			return plan.Topics, attempt, nil
+		}
+		feedback = checkErrs
+	}
+	return nil, maxPlannerAttempts, errPlanInvalid
+}
+
+func (m *SessionManager) loadPlannerInputs(ctx context.Context, sess domain.Session) (domain.Job, domain.Application, error) {
+	app, err := m.store.GetApplication(ctx, sess.ApplicationID)
+	if err != nil {
+		return domain.Job{}, domain.Application{}, err
+	}
+	job, err := m.store.GetJob(ctx, app.JobID)
+	if err != nil {
+		return domain.Job{}, domain.Application{}, err
+	}
+	return job, app, nil
+}
+
+// runPlannerOnce runs one planner attempt and its plan_check. A plan_check
+// failure is returned as check errors so the caller's automatic retry loop can
+// feed them back; a transport failure is returned as err so the caller can
+// offer the applicant a manual retry instead of failing the run.
+func (m *SessionManager) runPlannerOnce(ctx context.Context, sess domain.Session, st *liveSession, job domain.Job, app domain.Application, attempt int, feedback []PlanCheckError) (Plan, []PlanCheckError, error) {
+	st.executed["planner"] = true
+	resp, err := st.runner.RunLLMNode(ctx, "planner", attempt, llm.Request{
+		Messages:       plannerMessages(job, app.CVText, feedback),
+		ResponseFormat: plannerResponseFormat(),
+	}, "job+rubric+cv", nil)
+	if err != nil {
+		return Plan{}, nil, err
+	}
+	if err := st.runner.EmitEdge(ctx, "planner", "plan_check", "planned"); err != nil {
+		return Plan{}, nil, err
+	}
+
+	st.executed["plan_check"] = true
+	start := time.Now()
+	if err := st.runner.emitNodeStarted(ctx, "plan_check", attempt, nil, "validating plan"); err != nil {
+		return Plan{}, nil, err
+	}
+	plan, parseErr := parsePlan(resp.Content)
+	var checkErrs []PlanCheckError
+	if parseErr != nil {
+		checkErrs = []PlanCheckError{{Reason: "invalid_json: " + parseErr.Error()}}
+	} else {
+		checkErrs = CheckPlan(plan, job.Rubric)
+	}
+	summary := "valid"
+	if len(checkErrs) > 0 {
+		summary = "invalid"
+	}
+	if err := st.runner.emitNodeCompleted(ctx, "plan_check", attempt, nil, summary, 0, 0, time.Since(start)); err != nil {
+		return Plan{}, nil, err
+	}
+
+	if len(checkErrs) == 0 {
+		if err := st.runner.EmitCheckPassed(ctx, "plan_check", attempt, "plan_topics", map[string]any{"topics": len(plan.Topics)}); err != nil {
+			return Plan{}, nil, err
+		}
+		return plan, nil, nil
+	}
+	if err := st.runner.EmitCheckFailed(ctx, "plan_check", attempt, "plan_topics", planCheckPayload(checkErrs)); err != nil {
+		return Plan{}, nil, err
+	}
+	return Plan{}, checkErrs, nil
+}
+
+// launchInterviewer persists the plan's topics, reports the first topic and
+// enters the normal plan_check → interviewer path.
+func (m *SessionManager) launchInterviewer(ctx context.Context, sess domain.Session, st *liveSession, plan []PlannedTopic, attempt int) {
 	topics := make([]domain.Topic, 0, len(plan))
 	for i, planned := range plan {
 		status := domain.TopicStatusPending
@@ -238,7 +353,7 @@ func (m *SessionManager) startRun(ctx context.Context, sess domain.Session, st *
 		m.failRun(ctx, sess, st, "topic_changed_failed")
 		return
 	}
-	fresh, _ = m.store.GetSession(ctx, sess.ID)
+	fresh, _ := m.store.GetSession(ctx, sess.ID)
 	m.emitSessionUpdated(ctx, st, fresh, &first)
 	if err := st.runner.EmitEdge(ctx, "plan_check", "interviewer", "valid"); err != nil {
 		m.failRun(ctx, sess, st, "edge_failed")
@@ -248,81 +363,52 @@ func (m *SessionManager) startRun(ctx context.Context, sess domain.Session, st *
 	m.runInterviewer(ctx, sess, st, first, domain.MessageKindOpening, 1)
 }
 
-func (m *SessionManager) continueAfterAnswer(ctx context.Context, sess domain.Session, st *liveSession, topic *domain.Topic) {
-	if topic == nil {
-		m.failRun(ctx, sess, st, "no_active_topic")
+// handlePlannerError gives the applicant one manual retry when the planner's
+// model is unavailable. alreadyRetried is true when the retry of the same step
+// failed, so a second failure ends the run. A plan_check failure never reaches
+// here; it keeps its own automatic retry budget.
+func (m *SessionManager) handlePlannerError(ctx context.Context, sess domain.Session, st *liveSession, lastAttempt int, err error, alreadyRetried bool) {
+	m.logger.Error("planner step failed", "session_id", sess.ID, "attempt", lastAttempt, "error", err)
+	m.mu.Lock()
+	canRetry := errors.Is(err, llm.ErrUnavailable) && !alreadyRetried && !st.done
+	if canRetry {
+		nextAttempt := lastAttempt + 1
+		maxAttempts := nextAttempt + m.models.MaxRetries()
+		st.waitingRetry = true
+		st.busy = false
+		st.retry = func(retryCtx context.Context) {
+			_ = st.runner.EmitLoopRetry(retryCtx, "planner", nextAttempt, maxAttempts, "llm_unavailable", err.Error())
+			_ = st.runner.EmitEdge(retryCtx, "planner", "planner", "retry")
+			job, app, loadErr := m.loadPlannerInputs(retryCtx, sess)
+			if loadErr != nil {
+				m.failRun(retryCtx, sess, st, "load_planner_inputs_failed")
+				return
+			}
+			plan, checkErrs, planErr := m.runPlannerOnce(retryCtx, sess, st, job, app, nextAttempt, nil)
+			if planErr != nil {
+				m.handlePlannerError(retryCtx, sess, st, nextAttempt, planErr, true)
+				return
+			}
+			if len(checkErrs) > 0 {
+				// The manual retry re-runs the planner once; an invalid plan
+				// after it is a permanent failure.
+				m.failRun(retryCtx, sess, st, "planner_invalid_after_retries")
+				return
+			}
+			m.launchInterviewer(retryCtx, sess, st, plan.Topics, nextAttempt)
+		}
+		m.mu.Unlock()
+		// No step is in flight while the applicant decides to retry, so the
+		// sweeper may abandon the session if they never come back.
+		m.registry.Remove(sess.ID)
+		_, _ = m.bus.Emit(ctx, st.runID, Event{
+			Type:    EventError,
+			Payload: ErrorEvent{Code: "llm_unavailable", Message: interviewerUnavailableMessage, Retryable: true},
+		})
 		return
 	}
-	// server#10 inserts judge → guard here; until then the interviewer asks a
-	// follow-up on the same topic.
-	m.runInterviewer(ctx, sess, st, *topic, domain.MessageKindFollowUp, 1)
-}
-
-func (m *SessionManager) runPlanner(ctx context.Context, sess domain.Session, st *liveSession) ([]PlannedTopic, int, error) {
-	app, err := m.store.GetApplication(ctx, sess.ApplicationID)
-	if err != nil {
-		return nil, 0, err
-	}
-	job, err := m.store.GetJob(ctx, app.JobID)
-	if err != nil {
-		return nil, 0, err
-	}
-
-	var feedback []PlanCheckError
-	for attempt := 1; attempt <= 2; attempt++ {
-		if attempt == 2 {
-			if err := st.runner.EmitLoopRetry(ctx, "planner", attempt, 2, "invalid_plan", planFeedback(feedback)); err != nil {
-				return nil, attempt, err
-			}
-			if err := st.runner.EmitEdge(ctx, "plan_check", "planner", "invalid"); err != nil {
-				return nil, attempt, err
-			}
-		}
-
-		st.executed["planner"] = true
-		resp, err := st.runner.RunLLMNode(ctx, "planner", attempt, llm.Request{
-			Messages:       plannerMessages(job, app.CVText, feedback),
-			ResponseFormat: plannerResponseFormat(),
-		}, "job+rubric+cv", nil)
-		if err != nil {
-			return nil, attempt, err
-		}
-		if err := st.runner.EmitEdge(ctx, "planner", "plan_check", "planned"); err != nil {
-			return nil, attempt, err
-		}
-
-		st.executed["plan_check"] = true
-		start := time.Now()
-		if err := st.runner.emitNodeStarted(ctx, "plan_check", attempt, nil, "validating plan"); err != nil {
-			return nil, attempt, err
-		}
-		plan, parseErr := parsePlan(resp.Content)
-		var checkErrs []PlanCheckError
-		if parseErr != nil {
-			checkErrs = []PlanCheckError{{Reason: "invalid_json: " + parseErr.Error()}}
-		} else {
-			checkErrs = CheckPlan(plan, job.Rubric)
-		}
-		summary := "valid"
-		if len(checkErrs) > 0 {
-			summary = "invalid"
-		}
-		if err := st.runner.emitNodeCompleted(ctx, "plan_check", attempt, nil, summary, 0, 0, time.Since(start)); err != nil {
-			return nil, attempt, err
-		}
-
-		if len(checkErrs) == 0 {
-			if err := st.runner.EmitCheckPassed(ctx, "plan_check", attempt, "plan_topics", map[string]any{"topics": len(plan.Topics)}); err != nil {
-				return nil, attempt, err
-			}
-			return plan.Topics, attempt, nil
-		}
-		if err := st.runner.EmitCheckFailed(ctx, "plan_check", attempt, "plan_topics", planCheckPayload(checkErrs)); err != nil {
-			return nil, attempt, err
-		}
-		feedback = checkErrs
-	}
-	return nil, 2, errPlanInvalid
+	m.mu.Unlock()
+	m.failRun(ctx, sess, st, "planner_failed")
 }
 
 func (m *SessionManager) runInterviewer(ctx context.Context, sess domain.Session, st *liveSession, topic domain.Topic, kind domain.MessageKind, attempt int) {

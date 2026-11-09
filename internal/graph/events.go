@@ -73,6 +73,7 @@ var nodeTypes = map[string]NodeType{
 // retry (EVENTS.md §6.2).
 var Edges = []EdgeRef{
 	{From: "planner", To: "plan_check"},
+	{From: "planner", To: "planner"},
 	{From: "plan_check", To: "planner"},
 	{From: "plan_check", To: "interviewer"},
 	{From: "interviewer", To: "judge"},

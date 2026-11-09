@@ -2,6 +2,7 @@ package graph
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
 
@@ -31,8 +32,14 @@ func (m *SessionManager) judgeAndGuard(ctx context.Context, sess domain.Session,
 	}
 	verdict, _, err := m.runJudge(ctx, st, topic, question, answer.Content)
 	if err != nil {
-		m.failRun(ctx, sess, st, "judge_failed")
-		return
+		// The judge is a gate with a safe default: a transport outage after its
+		// retry continues with sufficient, exactly like invalid JSON. Any other
+		// failure (config, event persistence) still ends the run.
+		if !errors.Is(err, llm.ErrUnavailable) {
+			m.failRun(ctx, sess, st, "judge_failed")
+			return
+		}
+		verdict = defaultJudgeVerdict()
 	}
 
 	if err := st.runner.EmitEdge(ctx, "judge", "guard", "verdict"); err != nil {
@@ -93,8 +100,8 @@ func (m *SessionManager) judgeAndGuard(ctx context.Context, sess domain.Session,
 
 // runJudge runs one judge attempt. An invalid reply still completes the node
 // (with the default verdict recorded in node_events) and is never retried. A
-// transport failure is a permanent node failure per docs/EVENTS.md §6.3, so the
-// caller ends the run; only invalid JSON gets the sufficient fallback.
+// transport failure after the 1× retry is also defaulted to sufficient by the
+// caller (docs/EVENTS.md §6.3); only a non-transport failure ends the run.
 func (m *SessionManager) runJudge(ctx context.Context, st *liveSession, topic domain.Topic, question, answer string) (JudgeVerdict, int, error) {
 	st.executed["judge"] = true
 	var verdict JudgeVerdict

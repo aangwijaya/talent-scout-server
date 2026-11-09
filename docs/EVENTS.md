@@ -147,6 +147,18 @@ node.started(judge, attempt=2) → node.completed(judge, attempt=2)
 
 If the transport retry also fails (`will_retry=false`) or a node cannot continue, the run emits `node.failed` (and `node.skipped` for downstream machine nodes) → `run.failed`, and the session stream sends `session.ended` with `finish_reason: "failed"`. The application becomes `failed`.
 
+The **judge is the exception**. It is a gate with the safe default `sufficient`, so a transport outage after the retry does not end the run. The judge emits `node.failed(judge, will_retry=false)` and the run continues exactly as for invalid JSON: `edge.traversed(judge→guard, verdict)` with the default verdict `sufficient` (recorded in `node_events`) and the guard runs. There is no `run.failed`, no `session.ended(failed)`, no applicant `error` event, and no `node.skipped` for the judge's downstream nodes. Every other node keeps the rule above.
+
+```
+node.started(judge, attempt=1) → node.failed(judge, error=timeout, will_retry=true)
+node.started(judge, attempt=2) → node.failed(judge, error=timeout, will_retry=false)
+edge.traversed(judge→guard, verdict)
+node.started(guard, attempt=1) → node.completed(guard, attempt=1, next_topic)
+topic.changed(guard, topic N, active)
+edge.traversed(guard→interviewer, next_topic)
+node.started(interviewer, attempt=1) → message.completed(assistant, question) → node.completed(interviewer, attempt=1)
+```
+
 If `evidence_check` still fails on its final allowed attempt (`max_attempts=3`), no further `loop.retry` is emitted: `check.failed` is emitted for that final attempt, the criterion becomes `needs_manual`, `evidence_check` completes, the transition to `recruiter_gate` is emitted, and `run.completed` reports `needs_manual_count > 0`.
 
 The client mock (Day 1) must be able to replay these sequences from fixture files.

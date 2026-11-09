@@ -38,21 +38,48 @@ type subscriber struct {
 // Bus persists every event (except message.delta) to node_events and fans it
 // out to subscribers, ordered by the store-assigned seq.
 type Bus struct {
-	store  store.Store
-	mu     sync.RWMutex
-	subs   map[string]map[int64]*subscriber
-	nextID int64
+	store       store.Store
+	mu          sync.RWMutex
+	subs        map[string]map[int64]*subscriber
+	sessionSubs map[string]map[int64]*subscriber
+	runSession  map[string]string
+	nextID      int64
 }
 
 // NewBus returns a bus that persists to st.
 func NewBus(st store.Store) *Bus {
-	return &Bus{store: st, subs: make(map[string]map[int64]*subscriber)}
+	return &Bus{
+		store:       st,
+		subs:        make(map[string]map[int64]*subscriber),
+		sessionSubs: make(map[string]map[int64]*subscriber),
+		runSession:  make(map[string]string),
+	}
+}
+
+// BindSession associates a run with its session so events emitted for the run
+// also reach session subscribers. It must be called before the run's first
+// event (ARCHITECTURE §7: pub/sub per run_id and session_id).
+func (b *Bus) BindSession(runID, sessionID string) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	b.runSession[runID] = sessionID
 }
 
 // Subscribe returns a channel of events for runID and a cancel function. The
 // channel is never closed by the bus (cancel only stops delivery); once cancel
 // is called and the reader returns, the channel is garbage-collected.
 func (b *Bus) Subscribe(runID string) (<-chan domain.NodeEvent, func()) {
+	return b.subscribe(b.subs, runID)
+}
+
+// SubscribeSession returns a channel of every event for a session, including
+// events emitted before the run exists. The SSE handler uses it so a client can
+// connect while the session is still invited.
+func (b *Bus) SubscribeSession(sessionID string) (<-chan domain.NodeEvent, func()) {
+	return b.subscribe(b.sessionSubs, sessionID)
+}
+
+func (b *Bus) subscribe(index map[string]map[int64]*subscriber, key string) (<-chan domain.NodeEvent, func()) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	id := b.nextID
@@ -61,15 +88,15 @@ func (b *Bus) Subscribe(runID string) (<-chan domain.NodeEvent, func()) {
 		ch:   make(chan domain.NodeEvent, subscriberBuffer),
 		done: make(chan struct{}),
 	}
-	if b.subs[runID] == nil {
-		b.subs[runID] = make(map[int64]*subscriber)
+	if index[key] == nil {
+		index[key] = make(map[int64]*subscriber)
 	}
-	b.subs[runID][id] = sub
+	index[key][id] = sub
 	var once sync.Once
 	return sub.ch, func() {
 		once.Do(func() {
 			b.mu.Lock()
-			delete(b.subs[runID], id)
+			delete(index[key], id)
 			b.mu.Unlock()
 			close(sub.done)
 		})
@@ -114,6 +141,11 @@ func (b *Bus) publish(ctx context.Context, runID string, evt domain.NodeEvent) {
 	subs := make([]*subscriber, 0, len(b.subs[runID]))
 	for _, sub := range b.subs[runID] {
 		subs = append(subs, sub)
+	}
+	if sessionID, ok := b.runSession[runID]; ok {
+		for _, sub := range b.sessionSubs[sessionID] {
+			subs = append(subs, sub)
+		}
 	}
 	b.mu.RUnlock()
 

@@ -88,3 +88,17 @@ func TestStartSessionMatchesContract(t *testing.T) {
 	}
 	validator.ValidateResponse(t, req, rec.Result())
 }
+
+func TestListMessagesMatchesContract(t *testing.T) {
+	router, raw := sessionRouter(t)
+	validator := conformance.New(t)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/sessions/"+raw+"/messages", nil)
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200 (body: %s)", rec.Code, rec.Body.String())
+	}
+	validator.ValidateResponse(t, req, rec.Result())
+}

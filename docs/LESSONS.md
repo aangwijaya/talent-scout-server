@@ -23,6 +23,14 @@ Rules:
 
 ## Entries
 
+### 2026-11-09 — #9 SSE: a stalled reader must not be able to freeze the runner
+- **Context:** The session SSE handler fans persisted graph events from the in-process bus, which blocks `Emit` until the subscriber accepts an event, unsubscribes, or the emit context ends.
+- **Problem:** A connected client that stops reading fills the 128-event buffer, and because the runner emits with a background context that never cancels, `Emit` blocks the whole session indefinitely.
+- **Cause:** The handler had no per-write deadline and did not cancel its subscription when a write failed, so the bus could never release the blocked publisher.
+- **Lesson:** Every SSE write needs a `ResponseController.SetWriteDeadline` and a failed/late write must cancel the subscription before returning; the client then reconnects with `Last-Event-ID` and replays.
+- **Follow-up:** tests in `internal/sse/writer_test.go` and `TestBusCancelUnblocksStalledPublisher` in `internal/graph/graph_test.go`
+- **Repeated?:** first time
+
 ### 2026-11-08 — #8 LLM client: zero-valued config and truncated replies must not look successful
 - **Context:** Hardening the LLM client after review: temperature 0.0 for judge/scorer disappeared from the request, and a reply cut off at `max_tokens` was returned as success.
 - **Problem:** `json:"temperature,omitempty"` drops a deliberate 0.0 so OpenRouter used its own default; `parseChat`/`parseStream` ignored `finish_reason`, so truncated JSON reached the caller as a valid response. Also the fake keyed replies by model id, but three nodes share one model.

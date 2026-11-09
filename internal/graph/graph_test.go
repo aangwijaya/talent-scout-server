@@ -650,3 +650,43 @@ func TestBusMessageDeltaIsDroppable(t *testing.T) {
 		t.Fatal("message.delta blocked while the subscriber buffer was full; deltas must stay droppable")
 	}
 }
+
+// A connected but stalled subscriber fills its buffer and would otherwise block
+// every persisted Emit. Cancelling the subscription (what the SSE handler does
+// after a write deadline) must unblock the publisher.
+func TestBusCancelUnblocksStalledPublisher(t *testing.T) {
+	st := store.NewMemory()
+	bus := NewBus(st)
+	runID := domain.NewID()
+	_, cancel := bus.Subscribe(runID)
+
+	done := make(chan error, 1)
+	go func() {
+		for i := 0; i < subscriberBuffer+5; i++ {
+			if _, err := bus.Emit(context.Background(), runID, Event{
+				Type:    EventNodeStarted,
+				Payload: NodeStarted{InputSummary: "x"},
+			}); err != nil {
+				done <- err
+				return
+			}
+		}
+		done <- nil
+	}()
+
+	select {
+	case <-done:
+		t.Fatal("Emit finished although the subscriber never read")
+	case <-time.After(50 * time.Millisecond):
+	}
+
+	cancel()
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("Emit after cancel: %v", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("Emit still blocked after the subscription was cancelled")
+	}
+}

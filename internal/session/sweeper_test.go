@@ -17,9 +17,16 @@ func seedSession(t *testing.T, st store.Store, s domain.Session) {
 	}
 }
 
-func newSweeper(t *testing.T, st store.Store) *Sweeper {
+func seedMessage(t *testing.T, st store.Store, message domain.Message) {
 	t.Helper()
-	return NewSweeper(st, 15*time.Minute, slog.New(slog.NewTextHandler(discardWriter{}, nil)))
+	if err := st.CreateMessage(context.Background(), message); err != nil {
+		t.Fatalf("seed message: %v", err)
+	}
+}
+
+func newSweeper(t *testing.T, st store.Store, registry *Registry) *Sweeper {
+	t.Helper()
+	return NewSweeper(st, registry, slog.New(slog.NewTextHandler(discardWriter{}, nil)))
 }
 
 type discardWriter struct{}
@@ -43,7 +50,7 @@ func TestSweepExpiresInvitedPastTTL(t *testing.T) {
 		ExpiresAt:     time.Now().Add(time.Hour),
 	})
 
-	expired, abandoned, err := newSweeper(t, st).SweepOnce(context.Background())
+	expired, abandoned, err := newSweeper(t, st, nil).SweepOnce(context.Background())
 	if err != nil {
 		t.Fatalf("SweepOnce: %v", err)
 	}
@@ -64,7 +71,7 @@ func TestSweepExpiresInvitedPastTTL(t *testing.T) {
 	}
 }
 
-func TestSweepAbandonsActivePastDeadline(t *testing.T) {
+func TestSweepAbandonsIdleActiveSessionWithNoRunner(t *testing.T) {
 	st := store.NewMemory()
 	started := time.Now().Add(-16 * time.Minute)
 	seedSession(t, st, domain.Session{
@@ -85,7 +92,7 @@ func TestSweepAbandonsActivePastDeadline(t *testing.T) {
 		StartedAt:     &recent,
 	})
 
-	_, abandoned, err := newSweeper(t, st).SweepOnce(context.Background())
+	_, abandoned, err := newSweeper(t, st, nil).SweepOnce(context.Background())
 	if err != nil {
 		t.Fatalf("SweepOnce: %v", err)
 	}
@@ -109,6 +116,62 @@ func TestSweepAbandonsActivePastDeadline(t *testing.T) {
 	}
 }
 
+func TestSweepLeavesLiveRunnerPastDeadlineAlone(t *testing.T) {
+	st := store.NewMemory()
+	started := time.Now().Add(-2 * time.Hour)
+	seedSession(t, st, domain.Session{
+		ID:            "s-live",
+		ApplicationID: "a1",
+		TokenHash:     "hash-live",
+		Status:        domain.SessionStatusActive,
+		ExpiresAt:     time.Now().Add(24 * time.Hour),
+		StartedAt:     &started,
+	})
+	registry := NewRegistry()
+	registry.Add("s-live")
+
+	_, abandoned, err := newSweeper(t, st, registry).SweepOnce(context.Background())
+	if err != nil {
+		t.Fatalf("SweepOnce: %v", err)
+	}
+	if abandoned != 0 {
+		t.Errorf("abandoned = %d, want 0 for a session with a live runner", abandoned)
+	}
+	got, _ := st.GetSession(context.Background(), "s-live")
+	if got.Status != domain.SessionStatusActive {
+		t.Errorf("s-live status = %q, want active (guard owns the time limit)", got.Status)
+	}
+}
+
+func TestSweepUsesLastApplicantMessageForIdle(t *testing.T) {
+	st := store.NewMemory()
+	started := time.Now().Add(-30 * time.Minute)
+	seedSession(t, st, domain.Session{
+		ID:            "s-answered",
+		ApplicationID: "a1",
+		TokenHash:     "hash-answered",
+		Status:        domain.SessionStatusActive,
+		ExpiresAt:     time.Now().Add(24 * time.Hour),
+		StartedAt:     &started,
+	})
+	seedMessage(t, st, domain.Message{
+		ID: "m-answer", SessionID: "s-answered", Role: domain.MessageRoleApplicant,
+		Kind: domain.MessageKindAnswer, Content: "recent answer", CreatedAt: time.Now().Add(-2 * time.Minute),
+	})
+
+	_, abandoned, err := newSweeper(t, st, nil).SweepOnce(context.Background())
+	if err != nil {
+		t.Fatalf("SweepOnce: %v", err)
+	}
+	if abandoned != 0 {
+		t.Errorf("abandoned = %d, want 0: the last applicant answer was only 2 minutes ago", abandoned)
+	}
+	got, _ := st.GetSession(context.Background(), "s-answered")
+	if got.Status != domain.SessionStatusActive {
+		t.Errorf("s-answered status = %q, want active", got.Status)
+	}
+}
+
 func TestSweepIgnoresCompleted(t *testing.T) {
 	st := store.NewMemory()
 	ended := time.Now()
@@ -122,7 +185,7 @@ func TestSweepIgnoresCompleted(t *testing.T) {
 		EndedAt:       &ended,
 	})
 
-	expired, abandoned, err := newSweeper(t, st).SweepOnce(context.Background())
+	expired, abandoned, err := newSweeper(t, st, nil).SweepOnce(context.Background())
 	if err != nil {
 		t.Fatalf("SweepOnce: %v", err)
 	}
@@ -150,7 +213,7 @@ func TestSweepCountsOnlySessionsItChanged(t *testing.T) {
 		Status: domain.SessionStatusActive, ExpiresAt: time.Now().Add(time.Hour), StartedAt: &started,
 	})
 
-	expired, abandoned, err := newSweeper(t, raceStore{mem}).SweepOnce(context.Background())
+	expired, abandoned, err := newSweeper(t, raceStore{mem}, nil).SweepOnce(context.Background())
 	if err != nil {
 		t.Fatalf("SweepOnce: %v", err)
 	}

@@ -120,6 +120,7 @@ func TestNoAnswerSessionScoresNeedsManualWithoutScorerCall(t *testing.T) {
 		"edge.scorer-evidence_check",
 		"node.started.evidence_check",
 		"node.completed.evidence_check",
+		"edge.evidence_check-recruiter_gate",
 		"run.completed",
 	}
 	next := 0
@@ -146,6 +147,8 @@ func TestNoAnswerSessionScoresNeedsManualWithoutScorerCall(t *testing.T) {
 				name = "edge.guard-scorer"
 			case payload.From == "scorer" && payload.To == "evidence_check" && payload.Label == "scored":
 				name = "edge.scorer-evidence_check"
+			case payload.From == "evidence_check" && payload.To == "recruiter_gate" && payload.Label == "scored":
+				name = "edge.evidence_check-recruiter_gate"
 			}
 		}
 		if name == "" {

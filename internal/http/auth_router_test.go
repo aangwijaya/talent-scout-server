@@ -133,6 +133,7 @@ func TestRecruiterBearerIsHeaderOnly(t *testing.T) {
 	}{
 		{name: "valid bearer", target: "/api/v1/jobs", token: token, want: http.StatusOK},
 		{name: "no credentials", target: "/api/v1/jobs", want: http.StatusUnauthorized},
+		{name: "job detail needs credentials", target: "/api/v1/jobs/7c9e6679-7425-40de-944b-e07fc1f90ae7", want: http.StatusUnauthorized},
 		{name: "access_token in query is rejected", target: "/api/v1/jobs?access_token=" + token, want: http.StatusUnauthorized},
 		{name: "invalid bearer token", target: "/api/v1/jobs", token: "not-a-token", want: http.StatusUnauthorized},
 		{name: "expired bearer token", target: "/api/v1/jobs", token: expired, want: http.StatusUnauthorized},

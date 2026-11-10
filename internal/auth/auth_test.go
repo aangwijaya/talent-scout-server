@@ -131,3 +131,23 @@ func forgeAccessToken(t *testing.T, secret string, expiresAt time.Time) string {
 	mac.Write([]byte(encoded))
 	return encoded + "." + base64.RawURLEncoding.EncodeToString(mac.Sum(nil))
 }
+
+// A token signed with the right secret but another audience (such as the
+// 60-second SSE token from server#19) must never work as a recruiter token.
+func TestVerifyAccessTokenRejectsOtherAudience(t *testing.T) {
+	now := time.Date(2026, 11, 10, 8, 0, 0, 0, time.UTC)
+	manager := auth.NewWithClock(validSecret, func() time.Time { return now })
+
+	body, err := json.Marshal(map[string]any{"aud": "sse", "run_id": "r1", "exp": now.Add(time.Hour).Unix()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	encoded := base64.RawURLEncoding.EncodeToString(body)
+	mac := hmac.New(sha256.New, []byte(validSecret))
+	mac.Write([]byte(encoded))
+	token := encoded + "." + base64.RawURLEncoding.EncodeToString(mac.Sum(nil))
+
+	if _, err := manager.VerifyAccessToken(token); !errors.Is(err, auth.ErrInvalidToken) {
+		t.Fatalf("VerifyAccessToken(aud=sse) error = %v, want ErrInvalidToken", err)
+	}
+}

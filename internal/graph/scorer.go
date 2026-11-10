@@ -196,7 +196,7 @@ func (m *SessionManager) runScoring(ctx context.Context, sess domain.Session, st
 	feedback := ""
 	attempt := 1
 
-	for attempt <= maxScorerAttempts {
+	for attempt <= maxScorerAttempts && len(scorableKeys) > 0 {
 		criteria := make([]domain.RubricCriterion, 0, len(pending))
 		for _, key := range pending {
 			if criterion, ok := byKey[key]; ok {
@@ -300,6 +300,12 @@ func (m *SessionManager) runScoring(ctx context.Context, sess domain.Session, st
 		attempt++
 	}
 
+	if len(scorableKeys) == 0 {
+		if err := m.emitNoScorableEvaluation(ctx, st); err != nil {
+			return err
+		}
+	}
+
 	final := make([]domain.Score, 0, len(job.Rubric))
 	needsManual := 0
 	for _, criterion := range job.Rubric {
@@ -346,6 +352,34 @@ func (m *SessionManager) runScoring(ctx context.Context, sess domain.Session, st
 		return err
 	}
 	return st.runner.Complete(ctx, string(finishReason), needsManual)
+}
+
+// emitNoScorableEvaluation keeps the documented scorer/evidence_check node
+// lifecycle when no criterion has an applicant answer, without calling the LLM
+// or recording a check on an empty set.
+func (m *SessionManager) emitNoScorableEvaluation(ctx context.Context, st *liveSession) error {
+	node, err := m.models.Node("scorer")
+	if err != nil {
+		return err
+	}
+	model := node.Model
+	st.executed["scorer"] = true
+	if err := st.runner.emitNodeStarted(ctx, "scorer", 1, &model, "rubric and transcript"); err != nil {
+		return err
+	}
+	if err := st.runner.emitNodeCompleted(ctx, "scorer", 1, &model, "no scorable criteria", 0, 0, 0); err != nil {
+		return err
+	}
+	if err := st.runner.EmitEdge(ctx, "scorer", "evidence_check", "scored"); err != nil {
+		return err
+	}
+	st.executed["evidence_check"] = true
+	if err := st.runner.RunCodeNode(ctx, "evidence_check", 1, "scorer output", func() (string, error) {
+		return "valid", nil
+	}); err != nil {
+		return err
+	}
+	return st.runner.EmitEdge(ctx, "evidence_check", "recruiter_gate", "scored")
 }
 
 func evidenceFeedback(issues []evidenceIssue) string {

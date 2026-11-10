@@ -49,7 +49,7 @@ func authRouter(t *testing.T) (http.Handler, config.Config) {
 		EmailMode:         "log",
 		PublicAppURL:      "https://talentscout.vercel.app",
 		RecruiterPassword: "correct horse",
-		AuthTokenSecret:   "test-auth-secret",
+		AuthTokenSecret:   "0123456789abcdef0123456789abcdef",
 	}
 	return httpapi.NewRouter(cfg, httpapi.Deps{Store: st}), cfg
 }

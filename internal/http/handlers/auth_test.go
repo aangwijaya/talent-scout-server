@@ -19,7 +19,7 @@ func authConfig() config.Config {
 		LLMMode:           "fake",
 		EmailMode:         "log",
 		RecruiterPassword: "correct horse",
-		AuthTokenSecret:   "test-auth-secret",
+		AuthTokenSecret:   "0123456789abcdef0123456789abcdef",
 	}
 }
 

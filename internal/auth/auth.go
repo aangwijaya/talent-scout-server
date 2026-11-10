@@ -17,11 +17,15 @@ const (
 	// AudienceAccess marks a full recruiter access token, distinct from the
 	// short-lived SSE tokens minted for graph run streams.
 	AudienceAccess = "recruiter"
+	// MinSecretBytes is the minimum AUTH_TOKEN_SECRET length from
+	// docs/TECH-STACK.md. A shorter HMAC key is rejected rather than used.
+	MinSecretBytes = 32
 )
 
 var (
 	ErrInvalidToken = errors.New("invalid token")
 	ErrExpiredToken = errors.New("expired token")
+	ErrWeakSecret   = fmt.Errorf("auth token secret must be at least %d bytes", MinSecretBytes)
 )
 
 // Claims are the payload of a signed token.
@@ -39,23 +43,32 @@ type payload struct {
 
 // Manager signs and verifies stateless HMAC-SHA256 tokens with one secret.
 type Manager struct {
-	secret []byte
-	now    func() time.Time
+	secret    []byte
+	secretErr error
+	now       func() time.Time
 }
 
 func New(secret string) *Manager {
 	return NewWithClock(secret, time.Now)
 }
 
-// NewWithClock is New with an injectable clock, for tests.
+// NewWithClock is New with an injectable clock, for tests. A secret shorter
+// than MinSecretBytes leaves the manager unable to issue or verify tokens.
 func NewWithClock(secret string, now func() time.Time) *Manager {
 	if now == nil {
 		now = time.Now
 	}
-	return &Manager{secret: []byte(secret), now: now}
+	m := &Manager{secret: []byte(secret), now: now}
+	if len(secret) < MinSecretBytes {
+		m.secretErr = ErrWeakSecret
+	}
+	return m
 }
 
 func (m *Manager) IssueAccessToken() (string, time.Time, error) {
+	if m.secretErr != nil {
+		return "", time.Time{}, m.secretErr
+	}
 	expiresAt := m.now().UTC().Add(AccessTokenTTL)
 	token, err := m.sign(Claims{Audience: AudienceAccess, ExpiresAt: expiresAt})
 	if err != nil {
@@ -65,6 +78,9 @@ func (m *Manager) IssueAccessToken() (string, time.Time, error) {
 }
 
 func (m *Manager) VerifyAccessToken(token string) (Claims, error) {
+	if m.secretErr != nil {
+		return Claims{}, ErrInvalidToken
+	}
 	claims, err := m.verify(token)
 	if err != nil {
 		return Claims{}, err

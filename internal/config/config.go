@@ -5,6 +5,8 @@ import (
 	"os"
 	"strconv"
 	"strings"
+
+	"github.com/aangwijaya/talent-scout-server/internal/auth"
 )
 
 const (
@@ -108,6 +110,9 @@ func (c Config) validate() error {
 		if origin == "*" {
 			return fmt.Errorf("FRONTEND_ORIGIN must not contain a wildcard")
 		}
+	}
+	if len(c.AuthTokenSecret) < auth.MinSecretBytes {
+		return fmt.Errorf("AUTH_TOKEN_SECRET must be at least %d bytes", auth.MinSecretBytes)
 	}
 	return nil
 }

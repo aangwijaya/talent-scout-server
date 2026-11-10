@@ -6,6 +6,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
+	"github.com/aangwijaya/talent-scout-server/internal/auth"
 	"github.com/aangwijaya/talent-scout-server/internal/config"
 	"github.com/aangwijaya/talent-scout-server/internal/cv"
 	"github.com/aangwijaya/talent-scout-server/internal/email"
@@ -42,8 +43,19 @@ func NewRouter(cfg config.Config, deps Deps) http.Handler {
 		manager = graph.NewSessionManager(cfg, deps.Store, bus, deps.LLM, deps.Models, deps.Registry, slog.Default())
 	}
 
+	tokens := auth.New(cfg.AuthTokenSecret)
+	requireRecruiter := middleware.Bearer(tokens)
+
 	r.Route("/api/v1", func(r chi.Router) {
 		r.Method(http.MethodGet, "/health", handlers.NewHealth(cfg, deps.DB))
+
+		login := handlers.NewAuth(cfg, tokens)
+		r.Method(http.MethodPost, "/auth/login", http.HandlerFunc(login.Login))
+
+		jobs := handlers.NewJobs(cfg, deps.Store)
+		r.With(requireRecruiter).Method(http.MethodGet, "/jobs", http.HandlerFunc(jobs.List))
+		r.With(requireRecruiter).Method(http.MethodGet, "/jobs/{jobId}", http.HandlerFunc(jobs.Get))
+		r.Method(http.MethodGet, "/jobs/{jobId}/public", http.HandlerFunc(jobs.Public))
 
 		apply := handlers.NewApply(cfg, deps.Store, deps.Storage, deps.Extractor, deps.Mailer)
 		limiter := middleware.NewRateLimiter(middleware.ApplyRateLimit, middleware.ApplyRateLimitWindow)

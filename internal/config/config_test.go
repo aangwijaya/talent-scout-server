@@ -2,6 +2,8 @@ package config
 
 import "testing"
 
+const validAuthTokenSecret = "0123456789abcdef0123456789abcdef"
+
 var allEnv = []string{
 	"PORT", "APP_ENV", "DATABASE_URL", "SUPABASE_URL",
 	"SUPABASE_SERVICE_ROLE_KEY", "SUPABASE_STORAGE_BUCKET", "PUBLIC_APP_URL",
@@ -21,6 +23,7 @@ func clearEnv(t *testing.T) {
 
 func TestLoadDefaults(t *testing.T) {
 	clearEnv(t)
+	t.Setenv("AUTH_TOKEN_SECRET", validAuthTokenSecret)
 
 	cfg, err := Load()
 	if err != nil {
@@ -54,6 +57,7 @@ func TestLoadFromEnv(t *testing.T) {
 	t.Setenv("LLM_MODE", "fake")
 	t.Setenv("FRONTEND_ORIGIN", " https://a.example , ,http://localhost:5173 ")
 	t.Setenv("SESSION_TTL_HOURS", "24")
+	t.Setenv("AUTH_TOKEN_SECRET", validAuthTokenSecret)
 
 	cfg, err := Load()
 	if err != nil {
@@ -75,6 +79,9 @@ func TestLoadFromEnv(t *testing.T) {
 	if len(cfg.FrontendOrigins) != 2 || cfg.FrontendOrigins[0] != "https://a.example" || cfg.FrontendOrigins[1] != "http://localhost:5173" {
 		t.Errorf("FrontendOrigins = %v", cfg.FrontendOrigins)
 	}
+	if cfg.AuthTokenSecret != validAuthTokenSecret {
+		t.Errorf("AuthTokenSecret = %q, want the configured value", cfg.AuthTokenSecret)
+	}
 }
 
 func TestLoadRejectsInvalidValues(t *testing.T) {
@@ -87,6 +94,8 @@ func TestLoadRejectsInvalidValues(t *testing.T) {
 		{name: "llm mode", key: "LLM_MODE", val: "ollama"},
 		{name: "wildcard origin", key: "FRONTEND_ORIGIN", val: "*"},
 		{name: "session ttl", key: "SESSION_TTL_HOURS", val: "week"},
+		{name: "empty auth secret", key: "AUTH_TOKEN_SECRET", val: ""},
+		{name: "short auth secret", key: "AUTH_TOKEN_SECRET", val: "too-short"},
 	}
 
 	for _, tc := range tests {

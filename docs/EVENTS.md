@@ -44,6 +44,8 @@ The session stream does **not** send node/score events (applicants never see the
 
 **Auth & reconnect.** The browser connects directly to the API with a short-lived `sse_token` (60 s, `aud=sse`, bound to `run_id`; minted via `POST /auth/sse-token` by the SvelteKit server, see API.md). The token is checked only at connect time. Because a reconnect with the old URL fails once the token has expired (401 ends the `EventSource`), the client handles reconnects itself: on `error` → close the `EventSource` → fetch a fresh `sse_token` from its own SvelteKit endpoint → reopen with `since_seq=<last seq received>`. CORS: `GET` only, origins from `FRONTEND_ORIGIN`, no credentials.
 
+**Graph shape.** `run.started.edges` lists every transition the runner can traverse. It includes the two applicant-retry self-loops `planner → planner` and `interviewer → interviewer`; those fire only on a manual retry (`POST /sessions/{token}/retry`, §6.4). Automatic retries are not self-loops: `plan_check → planner` (`invalid`) and `evidence_check → scorer` (`retry`).
+
 | Event | `node_id` | Payload `data` |
 |---|---|---|
 | `run.started` | null | `{ "session_id": "7c9e6679-…", "nodes": [ {id,type} ], "edges": [ {from,to} ] }` |
@@ -53,7 +55,7 @@ The session stream does **not** send node/score events (applicants never see the
 | `node.skipped` | node | `{ "reason": "run_failed" }` (the node was not executed because the run ended first) |
 | `check.passed` | code node (`plan_check`/`guard`/`evidence_check`) or the checked node | `{ "check": "evidence_quotes", "details": {} }` |
 | `check.failed` | code node | `{ "check": "evidence_quotes", "errors": [ { "rubric_key": "frontend_depth", "reason": "quote_not_found", "quote": "..." } ] }` |
-| `loop.retry` | the retried node (`planner`, `max_attempts` 2 / `scorer`, `max_attempts` 3) | `{ "attempt": 2, "max_attempts": 3, "reason": "quote_not_found", "feedback": "..." }` |
+| `loop.retry` | the retried node (`planner` / `interviewer` for an applicant manual retry; `planner` for an automatic plan_check retry; `scorer` for an automatic evidence-check retry) | `{ "attempt": 2, "max_attempts": 3, "reason": "quote_not_found", "feedback": "..." }`. Reasons: `invalid_plan` (automatic planner retry, `max_attempts` 2); `quote_not_found` (scorer, `max_attempts` 3); `llm_unavailable` (applicant manual retry of `planner` or `interviewer`, `max_attempts` = `attempt` + the HTTP retry count, i.e. 4 with the 1× retry) |
 | `edge.traversed` | null | `{ "from": "guard", "to": "interviewer", "label": "follow_up" }` |
 | `topic.changed` | `plan_check` (first topic) / `guard` (next topic) | `{ "topic_id": "7c9e6679-…", "position": 3, "title": "...", "status": "active" }` |
 | `message.completed` | `interviewer` | `{ "message": Message }` (also for applicant answers, `role=applicant`) |
@@ -145,9 +147,11 @@ node.started(judge, attempt=1) → node.failed(judge, error=timeout, will_retry=
 node.started(judge, attempt=2) → node.completed(judge, attempt=2)
 ```
 
-If the transport retry also fails (`will_retry=false`) or a node cannot continue, the run emits `node.failed` (and `node.skipped` for downstream machine nodes) → `run.failed`, and the session stream sends `session.ended` with `finish_reason: "failed"`. The application becomes `failed`.
+If the transport retry also fails (`will_retry=false`) or a node cannot continue, what happens next depends on the node:
 
-The **judge is the exception**. It is a gate with the safe default `sufficient`, so a transport outage after the retry does not end the run. The judge emits `node.failed(judge, will_retry=false)` and the run continues exactly as for invalid JSON: `edge.traversed(judge→guard, verdict)` with the default verdict `sufficient` (recorded in `node_events`) and the guard runs. There is no `run.failed`, no `session.ended(failed)`, no applicant `error` event, and no `node.skipped` for the judge's downstream nodes. Every other node keeps the rule above.
+- **`planner` / `interviewer`.** The failure does **not** end the run. The session stream sends a retryable `error` (`code: "llm_unavailable"`, `retryable: true`) and the run waits for the applicant's manual retry (`POST /sessions/{token}/retry`), once per failed step; §6.4 shows the sequences. Only a failure of that manual retry ends the run: `node.failed` (and `node.skipped` for downstream machine nodes) → `run.failed`, `session.ended` with `finish_reason: "failed"`, and the application becomes `failed`. No further applicant retry is offered for that step.
+- **`judge`.** It is the exception: a gate with the safe default `sufficient`, so a transport outage after the retry does not end the run. The judge emits `node.failed(judge, will_retry=false)` and the run continues exactly as for invalid JSON: `edge.traversed(judge→guard, verdict)` with the default verdict `sufficient` (recorded in `node_events`) and the guard runs. There is no `run.failed`, no `session.ended(failed)`, no applicant `error` event, and no `node.skipped` for the judge's downstream nodes.
+- **Every other node.** A failure ends the run immediately: `node.failed` (and `node.skipped` for downstream machine nodes) → `run.failed`, `session.ended` with `finish_reason: "failed"`, and the application becomes `failed`.
 
 ```
 node.started(judge, attempt=1) → node.failed(judge, error=timeout, will_retry=true)
@@ -162,3 +166,35 @@ node.started(interviewer, attempt=1) → message.completed(assistant, question) 
 If `evidence_check` still fails on its final allowed attempt (`max_attempts=3`), no further `loop.retry` is emitted: `check.failed` is emitted for that final attempt, the criterion becomes `needs_manual`, `evidence_check` completes, the transition to `recruiter_gate` is emitted, and `run.completed` reports `needs_manual_count > 0`.
 
 The client mock (Day 1) must be able to replay these sequences from fixture files.
+
+### 6.4 Manual retry (applicant retry of planner or interviewer)
+
+A `planner` or `interviewer` failure after the 1× transport retry does not end the run (§6.3). The session stream sends `error` with `code: "llm_unavailable"`, `retryable: true`; the applicant calls `POST /sessions/{token}/retry` once per failed step. The manual retry emits `loop.retry` (`reason: "llm_unavailable"`, `max_attempts = attempt + <HTTP retry count>`, i.e. 4 with the 1× retry) and the self-loop `edge.traversed` before the step runs again. Attempt numbers continue from the last attempt the transport layer emitted; they never repeat. If the manual retry fails, the run ends per §6.3 (`run.failed` + `session.ended(failed)`) and no further retry is offered for that step.
+
+Interviewer, with the 1× HTTP retry:
+
+```
+node.started(interviewer, attempt=1) → node.failed(interviewer, attempt=1, will_retry=true)
+node.started(interviewer, attempt=2) → node.failed(interviewer, attempt=2, will_retry=false)
+(applicant: POST /sessions/{token}/retry)
+loop.retry(interviewer, attempt=3, max_attempts=4, reason=llm_unavailable)
+edge.traversed(interviewer→interviewer, retry)
+node.started(interviewer, attempt=3) → message.completed(assistant, …) → node.completed(interviewer, attempt=3)
+```
+
+Planner, with the 1× HTTP retry (the recovered planner continues into `plan_check`, which reuses the retry attempt number):
+
+```
+node.started(planner, attempt=1) → node.failed(planner, attempt=1, will_retry=true)
+node.started(planner, attempt=2) → node.failed(planner, attempt=2, will_retry=false)
+(applicant: POST /sessions/{token}/retry)
+loop.retry(planner, attempt=3, max_attempts=4, reason=llm_unavailable)
+edge.traversed(planner→planner, retry)
+node.started(planner, attempt=3) → node.completed(planner, attempt=3)
+edge.traversed(planner→plan_check, planned)
+node.started(plan_check, attempt=3) → node.completed(plan_check, attempt=3, valid)
+check.passed(plan_check)
+topic.changed(plan_check, topic 1, active)
+edge.traversed(plan_check→interviewer, valid)
+node.started(interviewer, attempt=1) → message.completed(assistant, opening) → node.completed(interviewer, attempt=1)
+```

@@ -17,7 +17,10 @@ import (
 	"github.com/aangwijaya/talent-scout-server/internal/store"
 )
 
-const authRouterJobID = "7c9e6679-0000-4000-8000-000000000055"
+const (
+	authRouterJobID = "7c9e6679-0000-4000-8000-000000000055"
+	authRouterRunID = "7c9e6679-0000-4000-8000-000000000057"
+)
 
 func authRouter(t *testing.T) (http.Handler, config.Config) {
 	t.Helper()
@@ -41,6 +44,13 @@ func authRouter(t *testing.T) (http.Handler, config.Config) {
 		Status: domain.ApplicationStatusApplied,
 	}); err != nil {
 		t.Fatalf("seed application: %v", err)
+	}
+	if err := st.CreateGraphRun(context.Background(), domain.GraphRun{
+		ID:        authRouterRunID,
+		SessionID: "7c9e6679-0000-4000-8000-000000000058",
+		Status:    domain.GraphRunStatusRunning,
+	}); err != nil {
+		t.Fatalf("seed graph run: %v", err)
 	}
 
 	cfg := config.Config{
@@ -203,5 +213,139 @@ func TestNoRefreshOrLogoutEndpoint(t *testing.T) {
 		if rec.Code != http.StatusNotFound && rec.Code != http.StatusMethodNotAllowed {
 			t.Errorf("%s status = %d, want 404/405", target, rec.Code)
 		}
+	}
+}
+
+func TestSSETokenEndpointMatchesContract(t *testing.T) {
+	router, cfg := authRouter(t)
+	access := login(t, router)
+	validator := conformance.New(t)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/auth/sse-token", strings.NewReader(`{"run_id":"`+authRouterRunID+`"}`))
+	req.Header.Set("Authorization", "Bearer "+access)
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200 (body: %s)", rec.Code, rec.Body.String())
+	}
+	validator.ValidateResponse(t, req, rec.Result())
+
+	var got struct {
+		SSEToken  string    `json:"sse_token"`
+		ExpiresAt time.Time `json:"expires_at"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+		t.Fatalf("decode sse-token response: %v", err)
+	}
+	if got.SSEToken == "" {
+		t.Fatal("sse_token is empty")
+	}
+
+	claims, err := auth.New(cfg.AuthTokenSecret).VerifySSEToken(got.SSEToken, authRouterRunID)
+	if err != nil {
+		t.Fatalf("issued sse_token does not verify: %v", err)
+	}
+	if claims.Audience != auth.AudienceSSE {
+		t.Errorf("aud = %q, want %q", claims.Audience, auth.AudienceSSE)
+	}
+	if claims.RunID != authRouterRunID {
+		t.Errorf("run_id = %q, want %q", claims.RunID, authRouterRunID)
+	}
+	if !claims.ExpiresAt.Equal(got.ExpiresAt) {
+		t.Errorf("expires_at = %v, verified claim = %v", got.ExpiresAt, claims.ExpiresAt)
+	}
+	if got.ExpiresAt.Nanosecond() != 0 {
+		t.Errorf("expires_at = %v, want whole seconds", got.ExpiresAt)
+	}
+}
+
+func TestSSETokenEndpointRejectsBadRequests(t *testing.T) {
+	router, _ := authRouter(t)
+	access := login(t, router)
+	validator := conformance.New(t)
+
+	tests := []struct {
+		name   string
+		body   string
+		token  string
+		target string
+		status int
+	}{
+		{name: "missing bearer", body: `{"run_id":"` + authRouterRunID + `"}`, target: "/api/v1/auth/sse-token", status: http.StatusUnauthorized},
+		{name: "access_token in query", body: `{"run_id":"` + authRouterRunID + `"}`, token: "", target: "/api/v1/auth/sse-token?access_token=" + access, status: http.StatusUnauthorized},
+		{name: "unknown run", body: `{"run_id":"7c9e6679-0000-4000-8000-000000000099"}`, token: access, target: "/api/v1/auth/sse-token", status: http.StatusNotFound},
+		{name: "malformed run id", body: `{"run_id":"not-a-uuid"}`, token: access, target: "/api/v1/auth/sse-token", status: http.StatusNotFound},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			req := httptest.NewRequest(http.MethodPost, tc.target, strings.NewReader(tc.body))
+			if tc.token != "" {
+				req.Header.Set("Authorization", "Bearer "+tc.token)
+			}
+			rec := httptest.NewRecorder()
+			router.ServeHTTP(rec, req)
+
+			if rec.Code != tc.status {
+				t.Fatalf("status = %d, want %d (body: %s)", rec.Code, tc.status, rec.Body.String())
+			}
+			validator.ValidateResponse(t, req, rec.Result())
+		})
+	}
+}
+
+func TestRunSSERequiresSSEToken(t *testing.T) {
+	router, cfg := authRouter(t)
+	access := login(t, router)
+	validator := conformance.New(t)
+
+	manager := auth.New(cfg.AuthTokenSecret)
+	valid, _, err := manager.IssueSSEToken(authRouterRunID)
+	if err != nil {
+		t.Fatalf("IssueSSEToken: %v", err)
+	}
+	otherRun, _, err := manager.IssueSSEToken("7c9e6679-0000-4000-8000-000000000099")
+	if err != nil {
+		t.Fatalf("IssueSSEToken: %v", err)
+	}
+	expiredIssuer := auth.NewWithClock(cfg.AuthTokenSecret, func() time.Time {
+		return time.Now().Add(-2 * time.Minute)
+	})
+	expired, _, err := expiredIssuer.IssueSSEToken(authRouterRunID)
+	if err != nil {
+		t.Fatalf("IssueSSEToken: %v", err)
+	}
+
+	path := "/api/v1/graph-runs/" + authRouterRunID + "/events"
+	tests := []struct {
+		name   string
+		target string
+		header string
+		status int
+	}{
+		{name: "valid sse token", target: path + "?sse_token=" + valid, status: http.StatusOK},
+		{name: "missing token", target: path, status: http.StatusUnauthorized},
+		{name: "expired token", target: path + "?sse_token=" + expired, status: http.StatusUnauthorized},
+		{name: "wrong audience", target: path + "?sse_token=" + access, status: http.StatusUnauthorized},
+		{name: "wrong run id", target: path + "?sse_token=" + otherRun, status: http.StatusUnauthorized},
+		{name: "access_token in query", target: path + "?access_token=" + access, status: http.StatusUnauthorized},
+		{name: "bearer header only", target: path, header: "Bearer " + access, status: http.StatusUnauthorized},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			req := httptest.NewRequest(http.MethodGet, tc.target, nil)
+			if tc.header != "" {
+				req.Header.Set("Authorization", tc.header)
+			}
+			rec := httptest.NewRecorder()
+			router.ServeHTTP(rec, req)
+
+			if rec.Code != tc.status {
+				t.Fatalf("status = %d, want %d (body: %s)", rec.Code, tc.status, rec.Body.String())
+			}
+			validator.ValidateResponse(t, req, rec.Result())
+		})
 	}
 }

@@ -14,9 +14,13 @@ import (
 const (
 	// AccessTokenTTL is the recruiter bearer token lifetime from docs/API.md.
 	AccessTokenTTL = 12 * time.Hour
+	// SSETokenTTL is the run-stream token lifetime from docs/API.md.
+	SSETokenTTL = 60 * time.Second
 	// AudienceAccess marks a full recruiter access token, distinct from the
 	// short-lived SSE tokens minted for graph run streams.
 	AudienceAccess = "recruiter"
+	// AudienceSSE marks a short-lived token bound to one graph run stream.
+	AudienceSSE = "sse"
 	// MinSecretBytes is the minimum AUTH_TOKEN_SECRET length from
 	// docs/TECH-STACK.md. A shorter HMAC key is rejected rather than used.
 	MinSecretBytes = 32
@@ -69,7 +73,7 @@ func (m *Manager) IssueAccessToken() (string, time.Time, error) {
 	if m.secretErr != nil {
 		return "", time.Time{}, m.secretErr
 	}
-	expiresAt := m.now().UTC().Add(AccessTokenTTL)
+	expiresAt := m.now().UTC().Add(AccessTokenTTL).Truncate(time.Second)
 	token, err := m.sign(Claims{Audience: AudienceAccess, ExpiresAt: expiresAt})
 	if err != nil {
 		return "", time.Time{}, err
@@ -86,6 +90,32 @@ func (m *Manager) VerifyAccessToken(token string) (Claims, error) {
 		return Claims{}, err
 	}
 	if claims.Audience != AudienceAccess {
+		return Claims{}, ErrInvalidToken
+	}
+	return claims, nil
+}
+
+func (m *Manager) IssueSSEToken(runID string) (string, time.Time, error) {
+	if m.secretErr != nil {
+		return "", time.Time{}, m.secretErr
+	}
+	expiresAt := m.now().UTC().Add(SSETokenTTL).Truncate(time.Second)
+	token, err := m.sign(Claims{Audience: AudienceSSE, RunID: runID, ExpiresAt: expiresAt})
+	if err != nil {
+		return "", time.Time{}, err
+	}
+	return token, expiresAt, nil
+}
+
+func (m *Manager) VerifySSEToken(token, runID string) (Claims, error) {
+	if m.secretErr != nil {
+		return Claims{}, ErrInvalidToken
+	}
+	claims, err := m.verify(token)
+	if err != nil {
+		return Claims{}, err
+	}
+	if runID == "" || claims.Audience != AudienceSSE || claims.RunID != runID {
 		return Claims{}, ErrInvalidToken
 	}
 	return claims, nil

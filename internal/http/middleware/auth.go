@@ -4,6 +4,8 @@ import (
 	"net/http"
 	"strings"
 
+	"github.com/go-chi/chi/v5"
+
 	"github.com/aangwijaya/talent-scout-server/internal/auth"
 	"github.com/aangwijaya/talent-scout-server/internal/http/apierror"
 )
@@ -24,6 +26,30 @@ func Bearer(tokens *auth.Manager) func(http.Handler) http.Handler {
 				return
 			}
 			if _, err := tokens.VerifyAccessToken(token); err != nil {
+				writeUnauthorized(w)
+				return
+			}
+			next.ServeHTTP(w, r)
+		})
+	}
+}
+
+// SSEToken accepts the short-lived stream token only from ?sse_token=, bound
+// to the runId path parameter. The recruiter access token is not accepted.
+func SSEToken(tokens *auth.Manager) func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if tokens == nil {
+				writeUnauthorized(w)
+				return
+			}
+			token := r.URL.Query().Get("sse_token")
+			runID := chi.URLParam(r, "runId")
+			if token == "" || runID == "" {
+				writeUnauthorized(w)
+				return
+			}
+			if _, err := tokens.VerifySSEToken(token, runID); err != nil {
 				writeUnauthorized(w)
 				return
 			}

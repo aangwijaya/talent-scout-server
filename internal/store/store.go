@@ -64,6 +64,7 @@ type Store interface {
 	GetApplication(ctx context.Context, id string) (domain.Application, error)
 	GetApplicationByJobEmail(ctx context.Context, jobID, email string) (domain.Application, error)
 	ListApplicationsByJob(ctx context.Context, jobID string, status *domain.ApplicationStatus) ([]domain.Application, error)
+	CountApplicationsByJob(ctx context.Context, jobID string) (int, error)
 	UpdateApplicationStatus(ctx context.Context, id string, status domain.ApplicationStatus) error
 	SetApplicationDecision(ctx context.Context, id string, status domain.ApplicationStatus, note string, decidedAt time.Time) (domain.Application, error)
 
@@ -77,6 +78,7 @@ type Store interface {
 	ExpireSession(ctx context.Context, id string, now time.Time) (bool, error)
 	AbandonSession(ctx context.Context, id string, now time.Time) (bool, error)
 	FinishSession(ctx context.Context, id string, reason domain.FinishReason, now time.Time) (bool, error)
+	ResendInvite(ctx context.Context, revokeSessionID *string, session domain.Session) error
 
 	CreateTopics(ctx context.Context, topics []domain.Topic) error
 	ListTopicsBySession(ctx context.Context, sessionID string) ([]domain.Topic, error)

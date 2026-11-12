@@ -122,7 +122,7 @@ func (h *Jobs) getJob(w http.ResponseWriter, r *http.Request) (domain.Job, bool)
 }
 
 func (h *Jobs) jobResponse(ctx context.Context, job domain.Job) (jobResponse, error) {
-	applications, err := h.store.ListApplicationsByJob(ctx, job.ID, nil)
+	applicationCount, err := h.store.CountApplicationsByJob(ctx, job.ID)
 	if err != nil {
 		return jobResponse{}, err
 	}
@@ -133,7 +133,7 @@ func (h *Jobs) jobResponse(ctx context.Context, job domain.Job) (jobResponse, er
 		Rubric:           append([]domain.RubricCriterion{}, job.Rubric...),
 		Status:           job.Status,
 		ApplyURL:         strings.TrimRight(h.cfg.PublicAppURL, "/") + "/apply/" + job.ID,
-		ApplicationCount: len(applications),
+		ApplicationCount: applicationCount,
 		CreatedAt:        job.CreatedAt,
 		UpdatedAt:        job.UpdatedAt,
 	}, nil

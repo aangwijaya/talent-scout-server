@@ -3,16 +3,21 @@ package storage
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
 	"strings"
 )
 
+// ErrNotFound means the object does not exist in the bucket.
+var ErrNotFound = errors.New("storage object not found")
+
 // Storage uploads and downloads CV files in the private bucket `cvs`.
 // The backend is the only caller; the client never touches Supabase Storage.
 type Storage interface {
 	Upload(ctx context.Context, path string, data []byte, contentType string) error
+	Download(ctx context.Context, path string) ([]byte, error)
 }
 
 // Supabase uploads objects to Supabase Storage using the service role key.
@@ -54,4 +59,28 @@ func (s *Supabase) Upload(ctx context.Context, path string, data []byte, content
 		return fmt.Errorf("storage upload: status %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))
 	}
 	return nil
+}
+
+func (s *Supabase) Download(ctx context.Context, path string) ([]byte, error) {
+	url := fmt.Sprintf("%s/storage/v1/object/%s/%s", s.baseURL, s.bucket, path)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return nil, fmt.Errorf("build storage download request: %w", err)
+	}
+	req.Header.Set("Authorization", "Bearer "+s.apiKey)
+
+	resp, err := s.client.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("storage download: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode == http.StatusNotFound {
+		return nil, ErrNotFound
+	}
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<10))
+		return nil, fmt.Errorf("storage download: status %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))
+	}
+	return io.ReadAll(resp.Body)
 }

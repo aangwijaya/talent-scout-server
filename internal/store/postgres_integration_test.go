@@ -141,6 +141,29 @@ func TestPostgresStore(t *testing.T) {
 		t.Fatalf("CreateApplicationWithSession session = %+v, %v", got, err)
 	}
 
+	count, err := s.CountApplicationsByJob(ctx, job.ID)
+	if err != nil || count != 2 {
+		t.Fatalf("CountApplicationsByJob = %d, %v; want 2, nil", count, err)
+	}
+
+	nextSession := domain.Session{
+		ID:            domain.NewID(),
+		ApplicationID: app2.ID,
+		TokenHash:     "hash-next",
+		Status:        domain.SessionStatusInvited,
+		ExpiresAt:     expiresAt,
+	}
+	if err := s.ResendInvite(ctx, &sess2.ID, nextSession); err != nil {
+		t.Fatalf("ResendInvite: %v", err)
+	}
+	revoked, err := s.GetSession(ctx, sess2.ID)
+	if err != nil || revoked.Status != domain.SessionStatusRevoked {
+		t.Fatalf("revoked session = %+v, %v", revoked, err)
+	}
+	if got, err := s.GetSession(ctx, nextSession.ID); err != nil || got.Status != domain.SessionStatusInvited {
+		t.Fatalf("new session = %+v, %v", got, err)
+	}
+
 	dupApp := domain.Application{
 		ID:           domain.NewID(),
 		JobID:        job.ID,

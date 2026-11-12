@@ -189,3 +189,32 @@ func TestGetPublicJobNotFound(t *testing.T) {
 		}
 	}
 }
+
+type listFailingStore struct{ *store.Memory }
+
+func (listFailingStore) ListApplicationsByJob(context.Context, string, *domain.ApplicationStatus) ([]domain.Application, error) {
+	return nil, context.DeadlineExceeded
+}
+
+func TestListJobsUsesApplicationCountQuery(t *testing.T) {
+	st := listFailingStore{jobsStore(t)}
+	h := handlers.NewJobs(jobsConfig(), st)
+
+	rec := httptest.NewRecorder()
+	h.List(rec, httptest.NewRequest(http.MethodGet, "/api/v1/jobs", nil))
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200 (body: %s)", rec.Code, rec.Body.String())
+	}
+	var got struct {
+		Items []struct {
+			ApplicationCount int `json:"application_count"`
+		} `json:"items"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if len(got.Items) != 1 || got.Items[0].ApplicationCount != 2 {
+		t.Fatalf("items = %+v, want one job with application_count 2", got.Items)
+	}
+}

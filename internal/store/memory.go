@@ -190,6 +190,19 @@ func (m *Memory) ListApplicationsByJob(_ context.Context, jobID string, status *
 	return apps, nil
 }
 
+func (m *Memory) CountApplicationsByJob(_ context.Context, jobID string) (int, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	count := 0
+	for _, app := range m.applications {
+		if app.JobID == jobID {
+			count++
+		}
+	}
+	return count, nil
+}
+
 func (m *Memory) UpdateApplicationStatus(_ context.Context, id string, status domain.ApplicationStatus) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -403,6 +416,49 @@ func (m *Memory) FinishSession(_ context.Context, id string, reason domain.Finis
 	session.EndedAt = &now
 	m.sessions[id] = session
 	return true, nil
+}
+
+// ResendInvite revokes the current invited session (when revokeSessionID is
+// set), inserts a new invited session, and returns the application to invited
+// in one lock so a failure cannot leave the applicant without a usable token.
+func (m *Memory) ResendInvite(_ context.Context, revokeSessionID *string, session domain.Session) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	if _, ok := m.sessions[session.ID]; ok {
+		return ErrConflict
+	}
+	for _, existing := range m.sessions {
+		if existing.TokenHash == session.TokenHash {
+			return ErrConflict
+		}
+	}
+	if revokeSessionID != nil {
+		old, ok := m.sessions[*revokeSessionID]
+		if !ok {
+			return ErrNotFound
+		}
+		if old.Status != domain.SessionStatusInvited || old.ApplicationID != session.ApplicationID {
+			return ErrConflict
+		}
+	}
+	app, ok := m.applications[session.ApplicationID]
+	if !ok {
+		return ErrNotFound
+	}
+	if revokeSessionID != nil {
+		old := m.sessions[*revokeSessionID]
+		old.Status = domain.SessionStatusRevoked
+		m.sessions[old.ID] = old
+	}
+	defaultSessionStatus(&session)
+	if session.CreatedAt.IsZero() {
+		session.CreatedAt = time.Now().UTC()
+	}
+	m.sessions[session.ID] = session
+	app.Status = domain.ApplicationStatusInvited
+	m.applications[app.ID] = app
+	return nil
 }
 
 func (m *Memory) CreateTopics(_ context.Context, topics []domain.Topic) error {

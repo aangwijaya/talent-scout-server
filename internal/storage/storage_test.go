@@ -2,6 +2,7 @@ package storage_test
 
 import (
 	"context"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -72,5 +73,66 @@ func TestFakeStoresAndReturns(t *testing.T) {
 	}
 	if string(got) != "data" {
 		t.Errorf("Get() = %q, want data", got)
+	}
+}
+
+func TestSupabaseDownload(t *testing.T) {
+	var gotPath, gotAuth string
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPath = r.URL.Path
+		gotAuth = r.Header.Get("Authorization")
+		w.Header().Set("Content-Type", "application/pdf")
+		w.Write([]byte("%PDF-1.4 body"))
+	}))
+	defer server.Close()
+
+	s := storage.NewSupabase(server.URL, "cvs", "secret-key")
+	data, err := s.Download(context.Background(), "abc.pdf")
+	if err != nil {
+		t.Fatalf("Download() error: %v", err)
+	}
+
+	if gotPath != "/storage/v1/object/cvs/abc.pdf" {
+		t.Errorf("path = %q", gotPath)
+	}
+	if gotAuth != "Bearer secret-key" {
+		t.Errorf("auth header = %q", gotAuth)
+	}
+	if string(data) != "%PDF-1.4 body" {
+		t.Errorf("body = %q", data)
+	}
+}
+
+func TestSupabaseDownloadNotFound(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, `{"error":"not found"}`, http.StatusNotFound)
+	}))
+	defer server.Close()
+
+	s := storage.NewSupabase(server.URL, "cvs", "secret-key")
+	_, err := s.Download(context.Background(), "missing.pdf")
+	if !errors.Is(err, storage.ErrNotFound) {
+		t.Fatalf("Download() error = %v, want ErrNotFound", err)
+	}
+	if strings.Contains(err.Error(), "secret-key") {
+		t.Errorf("error must not leak the service role key: %v", err)
+	}
+}
+
+func TestFakeDownload(t *testing.T) {
+	f := storage.NewFake()
+	if err := f.Upload(context.Background(), "abc.pdf", []byte("data"), "application/pdf"); err != nil {
+		t.Fatalf("Upload() error: %v", err)
+	}
+	got, err := f.Download(context.Background(), "abc.pdf")
+	if err != nil {
+		t.Fatalf("Download() error: %v", err)
+	}
+	if string(got) != "data" {
+		t.Errorf("Download() = %q, want data", got)
+	}
+	if _, err := f.Download(context.Background(), "missing.pdf"); !errors.Is(err, storage.ErrNotFound) {
+		t.Fatalf("Download() missing error = %v, want ErrNotFound", err)
 	}
 }

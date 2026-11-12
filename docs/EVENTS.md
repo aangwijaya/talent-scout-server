@@ -156,7 +156,7 @@ If the transport retry also fails (`will_retry=false`) or a node cannot continue
 
 ```
 node.started(judge, attempt=1) → node.failed(judge, error=timeout, will_retry=true)
-node.started(judge, attempt=2) → node.failed(judge, error=timeout, will_retry=false)
+node.started(judge, attempt=2) → node.failed(judge, error=llm_unavailable, will_retry=false)
 edge.traversed(judge→guard, verdict)
 node.started(guard, attempt=1) → node.completed(guard, attempt=1, next_topic)
 topic.changed(guard, topic N, active)

@@ -359,6 +359,62 @@ func TestRunStreamDeliversHandoverEventExactlyOnce(t *testing.T) {
 	expectEOFWithin(t, reader, 500*time.Millisecond)
 }
 
+// beforeListStore runs a callback once, just before the replay read. An event
+// emitted there is already subscribed to (live) and also stored (replay), so
+// the stream must drop the live copy.
+type beforeListStore struct {
+	store.Store
+	once   sync.Once
+	before func()
+}
+
+func (s *beforeListStore) ListNodeEvents(ctx context.Context, runID string, sinceSeq int64) ([]domain.NodeEvent, error) {
+	s.once.Do(s.before)
+	return s.Store.ListNodeEvents(ctx, runID, sinceSeq)
+}
+
+func TestRunStreamDoesNotRepeatEventInReplayAndLive(t *testing.T) {
+	st := store.NewMemory()
+	runID := graphHandlersRunID
+	if err := st.CreateGraphRun(context.Background(), domain.GraphRun{
+		ID:        runID,
+		SessionID: "7c9e6679-0000-4000-8000-000000000402",
+		Status:    domain.GraphRunStatusRunning,
+	}); err != nil {
+		t.Fatalf("CreateGraphRun: %v", err)
+	}
+	bus := graph.NewBus(st)
+	wrapped := &beforeListStore{Store: st, before: func() {
+		if _, err := bus.Emit(context.Background(), runID, graph.Event{
+			NodeID:  domain.StrPtr("guard"),
+			Type:    graph.EventNodeStarted,
+			Payload: map[string]any{},
+		}); err != nil {
+			t.Errorf("Emit(node.started): %v", err)
+		}
+	}}
+	handler := NewGraphRuns(wrapped)
+	handler.SetBus(bus)
+	if _, err := st.AppendNodeEvent(context.Background(), domain.NodeEvent{
+		RunID: runID, Type: graph.EventRunStarted, Payload: []byte(`{}`),
+	}); err != nil {
+		t.Fatalf("AppendNodeEvent: %v", err)
+	}
+
+	reader := startRunStream(t, handler, runID, "1", "")
+	replayed := readFrameWithin(t, reader, time.Second)
+	if !strings.Contains(replayed, "event: node.started") || !strings.Contains(replayed, "id: 2") {
+		t.Fatalf("replayed frame = %q, want node.started id 2", replayed)
+	}
+
+	emitRunEvent(t, bus, runID, graph.EventRunCompleted, "")
+	next := readFrameWithin(t, reader, time.Second)
+	if !strings.Contains(next, "event: run.completed") || !strings.Contains(next, "id: 3") {
+		t.Fatalf("next frame = %q, want run.completed id 3 (the live copy of id 2 must be dropped)", next)
+	}
+	expectEOFWithin(t, reader, 500*time.Millisecond)
+}
+
 // stalledResponseWriter blocks every Write until its write deadline fires,
 // mimicking a connected browser that never reads the response body.
 type stalledResponseWriter struct {

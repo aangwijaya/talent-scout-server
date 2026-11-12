@@ -216,3 +216,72 @@ func readSSEFrame(t *testing.T, reader *bufio.Reader) string {
 		}
 	}
 }
+
+// rejectingLookupStore fails the test if a handler reaches the store for an id
+// that is not a UUID. A malformed path parameter must be rejected first.
+type rejectingLookupStore struct {
+	store.Store
+	t *testing.T
+}
+
+func (s rejectingLookupStore) GetGraphRun(context.Context, string) (domain.GraphRun, error) {
+	s.t.Errorf("GetGraphRun called for a malformed run id")
+	return domain.GraphRun{}, store.ErrNotFound
+}
+
+func (s rejectingLookupStore) ListNodeEvents(context.Context, string, int64) ([]domain.NodeEvent, error) {
+	s.t.Errorf("ListNodeEvents called for a malformed run id")
+	return nil, store.ErrNotFound
+}
+
+func TestGraphRunMalformedIDReturnsNotFoundBeforeStore(t *testing.T) {
+	cfg := graphRunsConfig()
+	st := rejectingLookupStore{Store: store.NewMemory(), t: t}
+	router := httpapi.NewRouter(cfg, httpapi.Deps{Store: st})
+	tokens := auth.New(cfg.AuthTokenSecret)
+	access, _, err := tokens.IssueAccessToken()
+	if err != nil {
+		t.Fatalf("IssueAccessToken: %v", err)
+	}
+	sseToken, _, err := tokens.IssueSSEToken("not-a-uuid")
+	if err != nil {
+		t.Fatalf("IssueSSEToken: %v", err)
+	}
+	validator := conformance.New(t)
+
+	cases := []struct {
+		name   string
+		path   string
+		bearer string
+	}{
+		{name: "snapshot", path: "/api/v1/graph-runs/not-a-uuid", bearer: access},
+		{name: "events", path: "/api/v1/graph-runs/not-a-uuid/events?sse_token=" + sseToken},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			req := httptest.NewRequest(http.MethodGet, tc.path, nil)
+			if tc.bearer != "" {
+				req.Header.Set("Authorization", "Bearer "+tc.bearer)
+			}
+			rec := httptest.NewRecorder()
+			router.ServeHTTP(rec, req)
+
+			if rec.Code != http.StatusNotFound {
+				t.Fatalf("status = %d, want 404 (body: %s)", rec.Code, rec.Body.String())
+			}
+			validator.ValidateResponse(t, req, rec.Result())
+
+			var body struct {
+				Error struct {
+					Code string `json:"code"`
+				} `json:"error"`
+			}
+			if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+				t.Fatalf("decode error body: %v", err)
+			}
+			if body.Error.Code != "not_found" {
+				t.Errorf("error code = %q, want not_found", body.Error.Code)
+			}
+		})
+	}
+}

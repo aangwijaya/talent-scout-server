@@ -4,8 +4,10 @@ import (
 	"bufio"
 	"context"
 	"errors"
+	"io"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -107,24 +109,254 @@ func TestRunStreamReplaysThenStreamsLive(t *testing.T) {
 	if !strings.Contains(completed, "event: run.completed") {
 		t.Fatalf("final frame = %q, want run.completed", completed)
 	}
-	if _, err := reader.ReadString('\n'); err == nil {
-		t.Fatal("stream stayed open after run.completed")
-	}
+	expectEOFWithin(t, reader, 500*time.Millisecond)
 }
 
 func readFrame(t *testing.T, reader *bufio.Reader) string {
 	t.Helper()
+	frame, err := readFrameErr(reader)
+	if err != nil {
+		t.Fatalf("read SSE frame: %v (partial: %q)", err, frame)
+	}
+	return frame
+}
+
+func readFrameErr(reader *bufio.Reader) (string, error) {
 	var frame strings.Builder
 	for {
 		line, err := reader.ReadString('\n')
 		if err != nil {
-			t.Fatalf("read SSE frame: %v (partial: %q)", err, frame.String())
+			return frame.String(), err
 		}
 		frame.WriteString(line)
 		if line == "\n" {
-			return frame.String()
+			return frame.String(), nil
 		}
 	}
+}
+
+func readFrameWithin(t *testing.T, reader *bufio.Reader, timeout time.Duration) string {
+	t.Helper()
+	type result struct {
+		frame string
+		err   error
+	}
+	ch := make(chan result, 1)
+	go func() {
+		frame, err := readFrameErr(reader)
+		ch <- result{frame: frame, err: err}
+	}()
+	select {
+	case res := <-ch:
+		if res.err != nil {
+			t.Fatalf("read SSE frame: %v (partial: %q)", res.err, res.frame)
+		}
+		return res.frame
+	case <-time.After(timeout):
+		t.Fatalf("timed out after %s waiting for an SSE frame", timeout)
+		return ""
+	}
+}
+
+func expectEOFWithin(t *testing.T, reader *bufio.Reader, timeout time.Duration) {
+	t.Helper()
+	ch := make(chan error, 1)
+	go func() {
+		_, err := reader.ReadString('\n')
+		ch <- err
+	}()
+	select {
+	case err := <-ch:
+		if !errors.Is(err, io.EOF) {
+			t.Fatalf("stream read error = %v, want io.EOF", err)
+		}
+	case <-time.After(timeout):
+		t.Fatalf("stream did not reach EOF within %s", timeout)
+	}
+}
+
+// afterListStore runs afterList once, right after ListNodeEvents returns. It
+// reproduces events that land between the replay read and the live loop.
+type afterListStore struct {
+	store.Store
+	once  sync.Once
+	after func()
+}
+
+func (s *afterListStore) ListNodeEvents(ctx context.Context, runID string, sinceSeq int64) ([]domain.NodeEvent, error) {
+	events, err := s.Store.ListNodeEvents(ctx, runID, sinceSeq)
+	s.once.Do(s.after)
+	return events, err
+}
+
+func newAfterListFixture(t *testing.T, after func(st *store.Memory, bus *graph.Bus, runID string)) (*store.Memory, *graph.Bus, *GraphRuns, string) {
+	t.Helper()
+	st := store.NewMemory()
+	runID := graphHandlersRunID
+	if err := st.CreateGraphRun(context.Background(), domain.GraphRun{
+		ID:        runID,
+		SessionID: "7c9e6679-0000-4000-8000-000000000402",
+		Status:    domain.GraphRunStatusRunning,
+	}); err != nil {
+		t.Fatalf("CreateGraphRun: %v", err)
+	}
+	bus := graph.NewBus(st)
+	wrapped := &afterListStore{Store: st, after: func() { after(st, bus, runID) }}
+	handler := NewGraphRuns(wrapped)
+	handler.SetBus(bus)
+	return st, bus, handler, runID
+}
+
+func startRunStream(t *testing.T, handler *GraphRuns, runID, lastEventID, rawQuery string) *bufio.Reader {
+	t.Helper()
+	server := httptest.NewServer(runStreamRouter(handler))
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	t.Cleanup(func() {
+		cancel()
+		server.Close()
+	})
+	url := server.URL + "/graph-runs/" + runID + "/events"
+	if rawQuery != "" {
+		url += "?" + rawQuery
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		t.Fatalf("NewRequest: %v", err)
+	}
+	if lastEventID != "" {
+		req.Header.Set("Last-Event-ID", lastEventID)
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("connect: %v", err)
+	}
+	t.Cleanup(func() { resp.Body.Close() })
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, want 200", resp.StatusCode)
+	}
+	return bufio.NewReader(resp.Body)
+}
+
+func TestRunStreamDeliversTerminalEventEmittedDuringReplay(t *testing.T) {
+	st, _, handler, runID := newAfterListFixture(t, func(st *store.Memory, bus *graph.Bus, runID string) {
+		if _, err := bus.Emit(context.Background(), runID, graph.Event{
+			Type:    graph.EventRunCompleted,
+			Payload: map[string]any{},
+		}); err != nil {
+			t.Errorf("Emit(run.completed): %v", err)
+		}
+		if err := st.UpdateGraphRun(context.Background(), domain.GraphRun{
+			ID:     runID,
+			Status: domain.GraphRunStatusSucceeded,
+		}); err != nil {
+			t.Errorf("UpdateGraphRun(succeeded): %v", err)
+		}
+	})
+	if _, err := st.AppendNodeEvent(context.Background(), domain.NodeEvent{
+		RunID: runID, Type: graph.EventRunStarted, Payload: []byte(`{}`),
+	}); err != nil {
+		t.Fatalf("AppendNodeEvent: %v", err)
+	}
+
+	reader := startRunStream(t, handler, runID, "", "")
+	if frame := readFrameWithin(t, reader, time.Second); !strings.Contains(frame, "event: run.started") {
+		t.Fatalf("first frame = %q, want run.started", frame)
+	}
+	terminal := readFrameWithin(t, reader, time.Second)
+	if !strings.Contains(terminal, "event: run.completed") {
+		t.Fatalf("terminal frame = %q, want run.completed", terminal)
+	}
+	expectEOFWithin(t, reader, 500*time.Millisecond)
+}
+
+func TestRunStreamClosesWithEOFAfterTerminalEvent(t *testing.T) {
+	st, bus, handler, runID := graphHandlersFixture(t)
+	if _, err := st.AppendNodeEvent(context.Background(), domain.NodeEvent{
+		RunID: runID, Type: graph.EventRunStarted, Payload: []byte(`{}`),
+	}); err != nil {
+		t.Fatalf("AppendNodeEvent: %v", err)
+	}
+
+	reader := startRunStream(t, handler, runID, "", "")
+	if frame := readFrameWithin(t, reader, time.Second); !strings.Contains(frame, "event: run.started") {
+		t.Fatalf("first frame = %q, want run.started", frame)
+	}
+
+	emitRunEvent(t, bus, runID, graph.EventRunCompleted, "")
+	terminal := readFrameWithin(t, reader, time.Second)
+	if !strings.Contains(terminal, "event: run.completed") {
+		t.Fatalf("terminal frame = %q, want run.completed", terminal)
+	}
+	expectEOFWithin(t, reader, 500*time.Millisecond)
+}
+
+func TestRunStreamHeartbeatsWhileIdle(t *testing.T) {
+	_, _, handler, runID := graphHandlersFixture(t)
+	handler.heartbeatInterval = 20 * time.Millisecond
+
+	reader := startRunStream(t, handler, runID, "", "")
+	frame := readFrameWithin(t, reader, 500*time.Millisecond)
+	if !strings.Contains(frame, ": ping") {
+		t.Fatalf("idle frame = %q, want a : ping heartbeat", frame)
+	}
+}
+
+func TestEndedRunStreamClosesAfterReplay(t *testing.T) {
+	st, _, handler, runID := graphHandlersFixture(t)
+	if _, err := st.AppendNodeEvent(context.Background(), domain.NodeEvent{
+		RunID: runID, Type: graph.EventRunStarted, Payload: []byte(`{}`),
+	}); err != nil {
+		t.Fatalf("AppendNodeEvent: %v", err)
+	}
+	terminal, err := st.AppendNodeEvent(context.Background(), domain.NodeEvent{
+		RunID: runID, Type: graph.EventRunCompleted, Payload: []byte(`{}`),
+	})
+	if err != nil {
+		t.Fatalf("AppendNodeEvent: %v", err)
+	}
+	if err := st.UpdateGraphRun(context.Background(), domain.GraphRun{
+		ID:     runID,
+		Status: domain.GraphRunStatusSucceeded,
+	}); err != nil {
+		t.Fatalf("UpdateGraphRun: %v", err)
+	}
+
+	if terminal.Seq <= 0 {
+		t.Fatalf("terminal seq = %d, want > 0", terminal.Seq)
+	}
+	// The replay is empty (since_seq = last seq); the stream must close at once.
+	reader := startRunStream(t, handler, runID, "", "since_seq="+strconv.FormatInt(terminal.Seq, 10))
+	expectEOFWithin(t, reader, 500*time.Millisecond)
+}
+
+func TestRunStreamDeliversHandoverEventExactlyOnce(t *testing.T) {
+	st, bus, handler, runID := newAfterListFixture(t, func(_ *store.Memory, bus *graph.Bus, runID string) {
+		if _, err := bus.Emit(context.Background(), runID, graph.Event{
+			NodeID:  domain.StrPtr("guard"),
+			Type:    graph.EventNodeStarted,
+			Payload: map[string]any{},
+		}); err != nil {
+			t.Errorf("Emit(node.started): %v", err)
+		}
+	})
+	if _, err := st.AppendNodeEvent(context.Background(), domain.NodeEvent{
+		RunID: runID, Type: graph.EventRunStarted, Payload: []byte(`{}`),
+	}); err != nil {
+		t.Fatalf("AppendNodeEvent: %v", err)
+	}
+
+	reader := startRunStream(t, handler, runID, "1", "")
+	handover := readFrameWithin(t, reader, time.Second)
+	if !strings.Contains(handover, "event: node.started") || !strings.Contains(handover, "id: 2") {
+		t.Fatalf("handover frame = %q, want node.started id 2", handover)
+	}
+
+	emitRunEvent(t, bus, runID, graph.EventRunCompleted, "")
+	next := readFrameWithin(t, reader, time.Second)
+	if !strings.Contains(next, "event: run.completed") || !strings.Contains(next, "id: 3") {
+		t.Fatalf("next frame = %q, want run.completed id 3 (handover must not repeat)", next)
+	}
+	expectEOFWithin(t, reader, 500*time.Millisecond)
 }
 
 // stalledResponseWriter blocks every Write until its write deadline fires,

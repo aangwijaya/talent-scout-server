@@ -23,6 +23,14 @@ Rules:
 
 ## Entries
 
+### 2026-11-12 — #60 Run SSE must not re-read status after the replay
+- **Context:** Hardening the graph-run stream found while verifying server#13.
+- **Problem:** The handler re-read the run status after replaying, but the runner emits `run.completed`/`run.failed` before `finishRun` persists the status, so the re-read could see `succeeded` and close the stream before live delivered the terminal event. Stream tests still passed when close-after-terminal was removed because they only checked for any error after the 3 s client timeout.
+- **Cause:** An unnecessary post-replay status read raced the terminal event already buffered by the pre-replay subscription; the tests did not bound time-to-EOF.
+- **Lesson:** Subscribe before replay and never re-read run status to decide when to close; assert `io.EOF` within about 500 ms after the terminal event, and reject a non-UUID path parameter before any store call (Postgres returns 22P02 → 500).
+- **Follow-up:** tests in `internal/http/handlers/graph_test.go` and `internal/http/graph_runs_router_test.go`
+- **Repeated?:** first time
+
 ### 2026-11-10 — #11 An external finish must serialize with the turn in flight
 - **Context:** Review of the sweeper finish path: `finishExternally` emitted `session.ended` and launched scoring while a turn could still be running judge/guard/interviewer.
 - **Problem:** The runner and `st.executed` are not concurrency safe, so scoring beside a live turn is a fatal concurrent-map-write, interleaves node events after `session.ended`, can emit `guard→scorer` twice, and can end the run as both `run.failed` and `run.completed`.

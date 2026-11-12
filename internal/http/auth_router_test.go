@@ -13,7 +13,9 @@ import (
 	"github.com/aangwijaya/talent-scout-server/internal/config"
 	"github.com/aangwijaya/talent-scout-server/internal/conformance"
 	"github.com/aangwijaya/talent-scout-server/internal/domain"
+	"github.com/aangwijaya/talent-scout-server/internal/graph"
 	httpapi "github.com/aangwijaya/talent-scout-server/internal/http"
+	"github.com/aangwijaya/talent-scout-server/internal/llm"
 	"github.com/aangwijaya/talent-scout-server/internal/store"
 )
 
@@ -48,7 +50,7 @@ func authRouter(t *testing.T) (http.Handler, config.Config) {
 	if err := st.CreateGraphRun(context.Background(), domain.GraphRun{
 		ID:        authRouterRunID,
 		SessionID: "7c9e6679-0000-4000-8000-000000000058",
-		Status:    domain.GraphRunStatusRunning,
+		Status:    domain.GraphRunStatusSucceeded,
 	}); err != nil {
 		t.Fatalf("seed graph run: %v", err)
 	}
@@ -61,7 +63,11 @@ func authRouter(t *testing.T) (http.Handler, config.Config) {
 		RecruiterPassword: "correct horse",
 		AuthTokenSecret:   "0123456789abcdef0123456789abcdef",
 	}
-	return httpapi.NewRouter(cfg, httpapi.Deps{Store: st}), cfg
+	return httpapi.NewRouter(cfg, httpapi.Deps{
+		Store:  st,
+		LLM:    llm.NewFake(graph.FakeReplies),
+		Models: testGraphModels(),
+	}), cfg
 }
 
 func login(t *testing.T, router http.Handler) string {

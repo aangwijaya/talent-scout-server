@@ -117,3 +117,11 @@ func IsSessionEvent(eventType string) bool {
 		eventType == graph.EventMessageCompleted ||
 		eventType == graph.EventError
 }
+
+// IsRunEvent applies the EVENTS.md §4 run stream contents: run/node/check/
+// loop/edge/topic/message.completed events, never session-only events.
+func IsRunEvent(eventType string) bool {
+	return !strings.HasPrefix(eventType, "session.") &&
+		eventType != graph.EventError &&
+		eventType != graph.EventMessageDelta
+}

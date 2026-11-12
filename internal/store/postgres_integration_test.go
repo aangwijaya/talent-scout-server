@@ -141,6 +141,58 @@ func TestPostgresStore(t *testing.T) {
 		t.Fatalf("CreateApplicationWithSession session = %+v, %v", got, err)
 	}
 
+	count, err := s.CountApplicationsByJob(ctx, job.ID)
+	if err != nil || count != 2 {
+		t.Fatalf("CountApplicationsByJob = %d, %v; want 2, nil", count, err)
+	}
+
+	nextSession := domain.Session{
+		ID:            domain.NewID(),
+		ApplicationID: app2.ID,
+		TokenHash:     "hash-next",
+		Status:        domain.SessionStatusInvited,
+		ExpiresAt:     expiresAt,
+	}
+	if err := s.ResendInvite(ctx, &sess2.ID, nextSession); err != nil {
+		t.Fatalf("ResendInvite: %v", err)
+	}
+	revoked, err := s.GetSession(ctx, sess2.ID)
+	if err != nil || revoked.Status != domain.SessionStatusRevoked {
+		t.Fatalf("revoked session = %+v, %v", revoked, err)
+	}
+	if got, err := s.GetSession(ctx, nextSession.ID); err != nil || got.Status != domain.SessionStatusInvited {
+		t.Fatalf("new session = %+v, %v", got, err)
+	}
+
+	// Revoking a session that is no longer invited conflicts and stores nothing.
+	stale := domain.Session{ID: domain.NewID(), ApplicationID: app2.ID, TokenHash: "hash-stale", Status: domain.SessionStatusInvited, ExpiresAt: expiresAt}
+	if err := s.ResendInvite(ctx, &sess2.ID, stale); !errors.Is(err, store.ErrConflict) {
+		t.Fatalf("ResendInvite with a revoked session = %v, want ErrConflict", err)
+	}
+	if _, err := s.GetSession(ctx, stale.ID); !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("stale resend stored a session (GetSession err = %v)", err)
+	}
+
+	// The failed-application path (nothing to revoke) works once; a second,
+	// concurrent-style resend after the application left failed conflicts.
+	if err := s.UpdateApplicationStatus(ctx, app2.ID, domain.ApplicationStatusFailed); err != nil {
+		t.Fatalf("UpdateApplicationStatus failed: %v", err)
+	}
+	fromFailed := domain.Session{ID: domain.NewID(), ApplicationID: app2.ID, TokenHash: "hash-failed-1", Status: domain.SessionStatusInvited, ExpiresAt: expiresAt}
+	if err := s.ResendInvite(ctx, nil, fromFailed); err != nil {
+		t.Fatalf("ResendInvite for a failed application: %v", err)
+	}
+	if got, err := s.GetApplication(ctx, app2.ID); err != nil || got.Status != domain.ApplicationStatusInvited {
+		t.Fatalf("application after failed resend = %+v, %v", got, err)
+	}
+	again := domain.Session{ID: domain.NewID(), ApplicationID: app2.ID, TokenHash: "hash-failed-2", Status: domain.SessionStatusInvited, ExpiresAt: expiresAt}
+	if err := s.ResendInvite(ctx, nil, again); !errors.Is(err, store.ErrConflict) {
+		t.Fatalf("second failed-path ResendInvite = %v, want ErrConflict", err)
+	}
+	if _, err := s.GetSession(ctx, again.ID); !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("second failed-path resend stored a session (GetSession err = %v)", err)
+	}
+
 	dupApp := domain.Application{
 		ID:           domain.NewID(),
 		JobID:        job.ID,

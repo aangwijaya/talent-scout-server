@@ -39,3 +39,16 @@ func (f *Fake) Get(path string) ([]byte, bool) {
 	data, ok := f.objects[path]
 	return data, ok
 }
+
+func (f *Fake) Download(_ context.Context, path string) ([]byte, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.err != nil {
+		return nil, f.err
+	}
+	data, ok := f.objects[path]
+	if !ok {
+		return nil, ErrNotFound
+	}
+	return append([]byte(nil), data...), nil
+}

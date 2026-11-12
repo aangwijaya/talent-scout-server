@@ -169,6 +169,14 @@ func (p *Postgres) ListApplicationsByJob(ctx context.Context, jobID string, stat
 	return apps, mapError(rows.Err())
 }
 
+func (p *Postgres) CountApplicationsByJob(ctx context.Context, jobID string) (int, error) {
+	var count int
+	if err := p.pool.QueryRow(ctx, `SELECT count(*) FROM applications WHERE job_id = $1`, jobID).Scan(&count); err != nil {
+		return 0, mapError(err)
+	}
+	return count, nil
+}
+
 func (p *Postgres) UpdateApplicationStatus(ctx context.Context, id string, status domain.ApplicationStatus) error {
 	tag, err := p.pool.Exec(ctx, `UPDATE applications SET status = $2 WHERE id = $1`, id, status)
 	if err != nil {
@@ -362,6 +370,62 @@ func (p *Postgres) FinishSession(ctx context.Context, id string, reason domain.F
 		return false, mapError(err)
 	}
 	return tag.RowsAffected() > 0, nil
+}
+
+// ResendInvite revokes the current invited session (when revokeSessionID is
+// set), inserts a new invited session, and returns the application to invited
+// in one transaction, so a failure cannot leave the applicant without a token.
+// Without a session to revoke it is the failed-application path: the
+// application must still be failed, so of two concurrent resends only one
+// mints an invite and the other gets ErrConflict.
+func (p *Postgres) ResendInvite(ctx context.Context, revokeSessionID *string, session domain.Session) error {
+	defaultSessionStatus(&session)
+	if session.CreatedAt.IsZero() {
+		session.CreatedAt = time.Now().UTC()
+	}
+
+	tx, err := p.pool.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(ctx)
+
+	if revokeSessionID == nil {
+		var status domain.ApplicationStatus
+		if err := tx.QueryRow(ctx, `SELECT status FROM applications WHERE id = $1 FOR UPDATE`, session.ApplicationID).Scan(&status); err != nil {
+			return mapError(err)
+		}
+		if status != domain.ApplicationStatusFailed {
+			return ErrConflict
+		}
+	}
+	if revokeSessionID != nil {
+		tag, err := tx.Exec(ctx, `
+			UPDATE sessions SET status = $2
+			WHERE id = $1 AND status = $3 AND application_id = $4`,
+			*revokeSessionID, domain.SessionStatusRevoked, domain.SessionStatusInvited, session.ApplicationID)
+		if err != nil {
+			return mapError(err)
+		}
+		if tag.RowsAffected() == 0 {
+			return ErrConflict
+		}
+	}
+	if _, err := tx.Exec(ctx, `
+		INSERT INTO sessions (id, application_id, token_hash, status, expires_at, started_at, ended_at, finish_reason, question_count, created_at)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
+		session.ID, session.ApplicationID, session.TokenHash, session.Status, session.ExpiresAt,
+		session.StartedAt, session.EndedAt, session.FinishReason, session.QuestionCount, session.CreatedAt); err != nil {
+		return mapError(err)
+	}
+	tag, err := tx.Exec(ctx, `UPDATE applications SET status = $2 WHERE id = $1`, session.ApplicationID, domain.ApplicationStatusInvited)
+	if err != nil {
+		return mapError(err)
+	}
+	if tag.RowsAffected() == 0 {
+		return ErrNotFound
+	}
+	return mapError(tx.Commit(ctx))
 }
 
 func (p *Postgres) CreateTopics(ctx context.Context, topics []domain.Topic) error {

@@ -1,0 +1,3650 @@
+[
+  {
+    "id": 1,
+    "event": "run.started",
+    "data": {
+      "run_id": "00000000-0000-4000-8000-000000000002",
+      "seq": 1,
+      "ts": "2026-11-12T09:00:01Z",
+      "node_id": null,
+      "attempt": null,
+      "data": {
+        "edges": [
+          {
+            "from": "planner",
+            "to": "plan_check"
+          },
+          {
+            "from": "planner",
+            "to": "planner"
+          },
+          {
+            "from": "plan_check",
+            "to": "planner"
+          },
+          {
+            "from": "plan_check",
+            "to": "interviewer"
+          },
+          {
+            "from": "interviewer",
+            "to": "judge"
+          },
+          {
+            "from": "interviewer",
+            "to": "interviewer"
+          },
+          {
+            "from": "judge",
+            "to": "guard"
+          },
+          {
+            "from": "guard",
+            "to": "interviewer"
+          },
+          {
+            "from": "guard",
+            "to": "scorer"
+          },
+          {
+            "from": "scorer",
+            "to": "evidence_check"
+          },
+          {
+            "from": "evidence_check",
+            "to": "scorer"
+          },
+          {
+            "from": "evidence_check",
+            "to": "recruiter_gate"
+          }
+        ],
+        "nodes": [
+          {
+            "id": "planner",
+            "type": "splitter"
+          },
+          {
+            "id": "plan_check",
+            "type": "code"
+          },
+          {
+            "id": "interviewer",
+            "type": "worker"
+          },
+          {
+            "id": "judge",
+            "type": "gate"
+          },
+          {
+            "id": "guard",
+            "type": "code"
+          },
+          {
+            "id": "scorer",
+            "type": "worker"
+          },
+          {
+            "id": "evidence_check",
+            "type": "code"
+          },
+          {
+            "id": "recruiter_gate",
+            "type": "human_gate"
+          }
+        ],
+        "session_id": "00000000-0000-4000-8000-000000000001"
+      }
+    }
+  },
+  {
+    "id": 3,
+    "event": "node.started",
+    "data": {
+      "run_id": "00000000-0000-4000-8000-000000000002",
+      "seq": 3,
+      "ts": "2026-11-12T09:00:03Z",
+      "node_id": "planner",
+      "attempt": 1,
+      "data": {
+        "input_summary": "job+rubric+cv",
+        "model": "deepseek/deepseek-v4.1-flash"
+      }
+    }
+  },
+  {
+    "id": 4,
+    "event": "node.completed",
+    "data": {
+      "run_id": "00000000-0000-4000-8000-000000000002",
+      "seq": 4,
+      "ts": "2026-11-12T09:00:04Z",
+      "node_id": "planner",
+      "attempt": 1,
+      "data": {
+        "cost_usd": 0.00084156,
+        "duration_ms": 9349,
+        "output_summary": "{\"topics\":[{\"goal\":\"Assess depth in SvelteKit/TypeScript rendering models, react",
+        "tokens_in": 668,
+        "tokens_out": 1623
+      }
+    }
+  },
+  {
+    "id": 5,
+    "event": "edge.traversed",
+    "data": {
+      "run_id": "00000000-0000-4000-8000-000000000002",
+      "seq": 5,
+      "ts": "2026-11-12T09:00:05Z",
+      "node_id": null,
+      "attempt": null,
+      "data": {
+        "from": "planner",
+        "label": "planned",
+        "to": "plan_check"
+      }
+    }
+  },
+  {
+    "id": 6,
+    "event": "node.started",
+    "data": {
+      "run_id": "00000000-0000-4000-8000-000000000002",
+      "seq": 6,
+      "ts": "2026-11-12T09:00:06Z",
+      "node_id": "plan_check",
+      "attempt": 1,
+      "data": {
+        "input_summary": "validating plan",
+        "model": null
+      }
+    }
+  },
+  {
+    "id": 7,
+    "event": "node.completed",
+    "data": {
+      "run_id": "00000000-0000-4000-8000-000000000002",
+      "seq": 7,
+      "ts": "2026-11-12T09:00:07Z",
+      "node_id": "plan_check",
+      "attempt": 1,
+      "data": {
+        "cost_usd": 0,
+        "duration_ms": 0,
+        "output_summary": "valid",
+        "tokens_in": 0,
+        "tokens_out": 0
+      }
+    }
+  },
+  {
+    "id": 8,
+    "event": "check.passed",
+    "data": {
+      "run_id": "00000000-0000-4000-8000-000000000002",
+      "seq": 8,
+      "ts": "2026-11-12T09:00:08Z",
+      "node_id": "plan_check",
+      "attempt": 1,
+      "data": {
+        "check": "plan_topics",
+        "details": {
+          "topics": 5
+        }
+      }
+    }
+  },
+  {
+    "id": 9,
+    "event": "topic.changed",
+    "data": {
+      "run_id": "00000000-0000-4000-8000-000000000002",
+      "seq": 9,
+      "ts": "2026-11-12T09:00:09Z",
+      "node_id": "plan_check",
+      "attempt": 1,
+      "data": {
+        "position": 1,
+        "status": "active",
+        "title": "SvelteKit Rendering and Frontend Performance",
+        "topic_id": "00000000-0000-4000-8000-000000000003"
+      }
+    }
+  },
+  {
+    "id": 11,
+    "event": "edge.traversed",
+    "data": {
+      "run_id": "00000000-0000-4000-8000-000000000002",
+      "seq": 11,
+      "ts": "2026-11-12T09:00:11Z",
+      "node_id": null,
+      "attempt": null,
+      "data": {
+        "from": "plan_check",
+        "label": "valid",
+        "to": "interviewer"
+      }
+    }
+  },
+  {
+    "id": 12,
+    "event": "node.started",
+    "data": {
+      "run_id": "00000000-0000-4000-8000-000000000002",
+      "seq": 12,
+      "ts": "2026-11-12T09:00:12Z",
+      "node_id": "interviewer",
+      "attempt": 1,
+      "data": {
+        "input_summary": "SvelteKit Rendering and Frontend Performance (opening)",
+        "model": "z-ai/glm-5.3-flash"
+      }
+    }
+  },
+  {
+    "id": 13,
+    "event": "message.completed",
+    "data": {
+      "run_id": "00000000-0000-4000-8000-000000000002",
+      "seq": 13,
+      "ts": "2026-11-12T09:00:13Z",
+      "node_id": "interviewer",
+      "attempt": 1,
+      "data": {
+        "message": {
+          "content": "Your CV mentions React and Vue, and that you're learning SvelteKit. Walk me through how you'd build a large, filterable table in SvelteKit: what would live in a load function versus the component, how reactivity flows through the page, and where you'd look first if it felt slow on a mid-range laptop?",
+          "created_at": "0001-01-01T00:00:00Z",
+          "id": "00000000-0000-4000-8000-000000000004",
+          "kind": "opening",
+          "role": "assistant",
+          "session_id": "00000000-0000-4000-8000-000000000001",
+          "topic_id": "00000000-0000-4000-8000-000000000003"
+        }
+      }
+    }
+  },
+  {
+    "id": 14,
+    "event": "node.completed",
+    "data": {
+      "run_id": "00000000-0000-4000-8000-000000000002",
+      "seq": 14,
+      "ts": "2026-11-12T09:00:14Z",
+      "node_id": "interviewer",
+      "attempt": 1,
+      "data": {
+        "cost_usd": 0.0002025,
+        "duration_ms": 3873,
+        "output_summary": "Your CV mentions React and Vue, and that you're learning SvelteKit. Walk me thro",
+        "tokens_in": 340,
+        "tokens_out": 303
+      }
+    }
+  },
+  {
+    "id": 16,
+    "event": "message.completed",
+    "data": {
+      "run_id": "00000000-0000-4000-8000-000000000002",
+      "seq": 16,
+      "ts": "2026-11-12T09:00:16Z",
+      "node_id": "interviewer",
+      "attempt": 1,
+      "data": {
+        "message": {
+          "content": "Yes.",
+          "created_at": "2026-11-12T09:00:16Z",
+          "id": "00000000-0000-4000-8000-000000000005",
+          "kind": "answer",
+          "role": "applicant",
+          "session_id": "00000000-0000-4000-8000-000000000001",
+          "topic_id": "00000000-0000-4000-8000-000000000003"
+        }
+      }
+    }
+  },
+  {
+    "id": 18,
+    "event": "edge.traversed",
+    "data": {
+      "run_id": "00000000-0000-4000-8000-000000000002",
+      "seq": 18,
+      "ts": "2026-11-12T09:00:18Z",
+      "node_id": null,
+      "attempt": null,
+      "data": {
+        "from": "interviewer",
+        "label": "answer",
+        "to": "judge"
+      }
+    }
+  },
+  {
+    "id": 19,
+    "event": "node.started",
+    "data": {
+      "run_id": "00000000-0000-4000-8000-000000000002",
+      "seq": 19,
+      "ts": "2026-11-12T09:00:19Z",
+      "node_id": "judge",
+      "attempt": 1,
+      "data": {
+        "input_summary": "topic 1: SvelteKit Rendering and Frontend Performance",
+        "model": "deepseek/deepseek-v4.1-flash"
+      }
+    }
+  },
+  {
+    "id": 20,
+    "event": "node.completed",
+    "data": {
+      "run_id": "00000000-0000-4000-8000-000000000002",
+      "seq": 20,
+      "ts": "2026-11-12T09:00:20Z",
+      "node_id": "judge",
+      "attempt": 1,
+      "data": {
+        "cost_usd": 0.00015488499999999998,
+        "duration_ms": 1666,
+        "output_summary": "verdict=follow_up",
+        "tokens_in": 653,
+        "tokens_out": 251
+      }
+    }
+  },
+  {
+    "id": 21,
+    "event": "edge.traversed",
+    "data": {
+      "run_id": "00000000-0000-4000-8000-000000000002",
+      "seq": 21,
+      "ts": "2026-11-12T09:00:21Z",
+      "node_id": null,
+      "attempt": null,
+      "data": {
+        "from": "judge",
+        "label": "verdict",
+        "to": "guard"
+      }
+    }
+  },
+  {
+    "id": 22,
+    "event": "node.started",
+    "data": {
+      "run_id": "00000000-0000-4000-8000-000000000002",
+      "seq": 22,
+      "ts": "2026-11-12T09:00:22Z",
+      "node_id": "guard",
+      "attempt": 1,
+      "data": {
+        "input_summary": "verdict=follow_up",
+        "model": null
+      }
+    }
+  },
+  {
+    "id": 23,
+    "event": "node.completed",
+    "data": {
+      "run_id": "00000000-0000-4000-8000-000000000002",
+      "seq": 23,
+      "ts": "2026-11-12T09:00:23Z",
+      "node_id": "guard",
+      "attempt": 1,
+      "data": {
+        "cost_usd": 0,
+        "duration_ms": 0,
+        "output_summary": "follow_up",
+        "tokens_in": 0,
+        "tokens_out": 0
+      }
+    }
+  },
+  {
+    "id": 24,
+    "event": "edge.traversed",
+    "data": {
+      "run_id": "00000000-0000-4000-8000-000000000002",
+      "seq": 24,
+      "ts": "2026-11-12T09:00:24Z",
+      "node_id": null,
+      "attempt": null,
+      "data": {
+        "from": "guard",
+        "label": "follow_up",
+        "to": "interviewer"
+      }
+    }
+  },
+  {
+    "id": 25,
+    "event": "node.started",
+    "data": {
+      "run_id": "00000000-0000-4000-8000-000000000002",
+      "seq": 25,
+      "ts": "2026-11-12T09:00:25Z",
+      "node_id": "interviewer",
+      "attempt": 1,
+      "data": {
+        "input_summary": "SvelteKit Rendering and Frontend Performance (follow_up)",
+        "model": "z-ai/glm-5.3-flash"
+      }
+    }
+  },
+  {
+    "id": 26,
+    "event": "message.completed",
+    "data": {
+      "run_id": "00000000-0000-4000-8000-000000000002",
+      "seq": 26,
+      "ts": "2026-11-12T09:00:26Z",
+      "node_id": "interviewer",
+      "attempt": 1,
+      "data": {
+        "message": {
+          "content": "That was a broad question, so let's take it in smaller steps. In SvelteKit, what kind of work would you put in a `+page.ts` load function, and what would you keep in the component itself?",
+          "created_at": "0001-01-01T00:00:00Z",
+          "id": "00000000-0000-4000-8000-000000000006",
+          "kind": "follow_up",
+          "role": "assistant",
+          "session_id": "00000000-0000-4000-8000-000000000001",
+          "topic_id": "00000000-0000-4000-8000-000000000003"
+        }
+      }
+    }
+  },
+  {
+    "id": 27,
+    "event": "node.completed",
+    "data": {
+      "run_id": "00000000-0000-4000-8000-000000000002",
+      "seq": 27,
+      "ts": "2026-11-12T09:00:27Z",
+      "node_id": "interviewer",
+      "attempt": 1,
+      "data": {
+        "cost_usd": 0.0002282,
+        "duration_ms": 5182,
+        "output_summary": "That was a broad question, so let's take it in smaller steps. In SvelteKit, what",
+        "tokens_in": 708,
+        "tokens_out": 244
+      }
+    }
+  },
+  {
+    "id": 29,
+    "event": "message.completed",
+    "data": {
+      "run_id": "00000000-0000-4000-8000-000000000002",
+      "seq": 29,
+      "ts": "2026-11-12T09:00:29Z",
+      "node_id": "interviewer",
+      "attempt": 1,
+      "data": {
+        "message": {
+          "content": "No.",
+          "created_at": "2026-11-12T09:00:29Z",
+          "id": "00000000-0000-4000-8000-000000000007",
+          "kind": "answer",
+          "role": "applicant",
+          "session_id": "00000000-0000-4000-8000-000000000001",
+          "topic_id": "00000000-0000-4000-8000-000000000003"
+        }
+      }
+    }
+  },
+  {
+    "id": 31,
+    "event": "edge.traversed",
+    "data": {
+      "run_id": "00000000-0000-4000-8000-000000000002",
+      "seq": 31,
+      "ts": "2026-11-12T09:00:31Z",
+      "node_id": null,
+      "attempt": null,
+      "data": {
+        "from": "interviewer",
+        "label": "answer",
+        "to": "judge"
+      }
+    }
+  },
+  {
+    "id": 32,
+    "event": "node.started",
+    "data": {
+      "run_id": "00000000-0000-4000-8000-000000000002",
+      "seq": 32,
+      "ts": "2026-11-12T09:00:32Z",
+      "node_id": "judge",
+      "attempt": 1,
+      "data": {
+        "input_summary": "topic 1: SvelteKit Rendering and Frontend Performance",
+        "model": "deepseek/deepseek-v4.1-flash"
+      }
+    }
+  },
+  {
+    "id": 33,
+    "event": "node.completed",
+    "data": {
+      "run_id": "00000000-0000-4000-8000-000000000002",
+      "seq": 33,
+      "ts": "2026-11-12T09:00:33Z",
+      "node_id": "judge",
+      "attempt": 1,
+      "data": {
+        "cost_usd": 0.00020689500000000002,
+        "duration_ms": 2370,
+        "output_summary": "verdict=follow_up",
+        "tokens_in": 631,
+        "tokens_out": 357
+      }
+    }
+  },
+  {
+    "id": 34,
+    "event": "edge.traversed",
+    "data": {
+      "run_id": "00000000-0000-4000-8000-000000000002",
+      "seq": 34,
+      "ts": "2026-11-12T09:00:34Z",
+      "node_id": null,
+      "attempt": null,
+      "data": {
+        "from": "judge",
+        "label": "verdict",
+        "to": "guard"
+      }
+    }
+  },
+  {
+    "id": 35,
+    "event": "node.started",
+    "data": {
+      "run_id": "00000000-0000-4000-8000-000000000002",
+      "seq": 35,
+      "ts": "2026-11-12T09:00:35Z",
+      "node_id": "guard",
+      "attempt": 1,
+      "data": {
+        "input_summary": "verdict=follow_up",
+        "model": null
+      }
+    }
+  },
+  {
+    "id": 36,
+    "event": "node.completed",
+    "data": {
+      "run_id": "00000000-0000-4000-8000-000000000002",
+      "seq": 36,
+      "ts": "2026-11-12T09:00:36Z",
+      "node_id": "guard",
+      "attempt": 1,
+      "data": {
+        "cost_usd": 0,
+        "duration_ms": 0,
+        "output_summary": "follow_up",
+        "tokens_in": 0,
+        "tokens_out": 0
+      }
+    }
+  },
+  {
+    "id": 37,
+    "event": "edge.traversed",
+    "data": {
+      "run_id": "00000000-0000-4000-8000-000000000002",
+      "seq": 37,
+      "ts": "2026-11-12T09:00:37Z",
+      "node_id": null,
+      "attempt": null,
+      "data": {
+        "from": "guard",
+        "label": "follow_up",
+        "to": "interviewer"
+      }
+    }
+  },
+  {
+    "id": 38,
+    "event": "node.started",
+    "data": {
+      "run_id": "00000000-0000-4000-8000-000000000002",
+      "seq": 38,
+      "ts": "2026-11-12T09:00:38Z",
+      "node_id": "interviewer",
+      "attempt": 1,
+      "data": {
+        "input_summary": "SvelteKit Rendering and Frontend Performance (follow_up)",
+        "model": "z-ai/glm-5.3-flash"
+      }
+    }
+  },
+  {
+    "id": 39,
+    "event": "message.completed",
+    "data": {
+      "run_id": "00000000-0000-4000-8000-000000000002",
+      "seq": 39,
+      "ts": "2026-11-12T09:00:39Z",
+      "node_id": "interviewer",
+      "attempt": 1,
+      "data": {
+        "message": {
+          "content": "It seems SvelteKit may be very new to you, so let's start from what you know. In React or Vue, how would you approach building a large, filterable table — where would you fetch the data, and how would the filtering update what's shown on screen?",
+          "created_at": "0001-01-01T00:00:00Z",
+          "id": "00000000-0000-4000-8000-000000000008",
+          "kind": "follow_up",
+          "role": "assistant",
+          "session_id": "00000000-0000-4000-8000-000000000001",
+          "topic_id": "00000000-0000-4000-8000-000000000003"
+        }
+      }
+    }
+  },
+  {
+    "id": 40,
+    "event": "node.completed",
+    "data": {
+      "run_id": "00000000-0000-4000-8000-000000000002",
+      "seq": 40,
+      "ts": "2026-11-12T09:00:40Z",
+      "node_id": "interviewer",
+      "attempt": 1,
+      "data": {
+        "cost_usd": 0.0003269,
+        "duration_ms": 6574,
+        "output_summary": "It seems SvelteKit may be very new to you, so let's start from what you know. In",
+        "tokens_in": 636,
+        "tokens_out": 463
+      }
+    }
+  },
+  {
+    "id": 42,
+    "event": "message.completed",
+    "data": {
+      "run_id": "00000000-0000-4000-8000-000000000002",
+      "seq": 42,
+      "ts": "2026-11-12T09:00:42Z",
+      "node_id": "interviewer",
+      "attempt": 1,
+      "data": {
+        "message": {
+          "content": "It depends.",
+          "created_at": "2026-11-12T09:00:42Z",
+          "id": "00000000-0000-4000-8000-000000000009",
+          "kind": "answer",
+          "role": "applicant",
+          "session_id": "00000000-0000-4000-8000-000000000001",
+          "topic_id": "00000000-0000-4000-8000-000000000003"
+        }
+      }
+    }
+  },
+  {
+    "id": 44,
+    "event": "edge.traversed",
+    "data": {
+      "run_id": "00000000-0000-4000-8000-000000000002",
+      "seq": 44,
+      "ts": "2026-11-12T09:00:44Z",
+      "node_id": null,
+      "attempt": null,
+      "data": {
+        "from": "interviewer",
+        "label": "answer",
+        "to": "judge"
+      }
+    }
+  },
+  {
+    "id": 45,
+    "event": "node.started",
+    "data": {
+      "run_id": "00000000-0000-4000-8000-000000000002",
+      "seq": 45,
+      "ts": "2026-11-12T09:00:45Z",
+      "node_id": "judge",
+      "attempt": 1,
+      "data": {
+        "input_summary": "topic 1: SvelteKit Rendering and Frontend Performance",
+        "model": "deepseek/deepseek-v4.1-flash"
+      }
+    }
+  },
+  {
+    "id": 46,
+    "event": "node.completed",
+    "data": {
+      "run_id": "00000000-0000-4000-8000-000000000002",
+      "seq": 46,
+      "ts": "2026-11-12T09:00:46Z",
+      "node_id": "judge",
+      "attempt": 1,
+      "data": {
+        "cost_usd": 0.00012639,
+        "duration_ms": 3123,
+        "output_summary": "verdict=follow_up",
+        "tokens_in": 642,
+        "tokens_out": 195
+      }
+    }
+  },
+  {
+    "id": 47,
+    "event": "edge.traversed",
+    "data": {
+      "run_id": "00000000-0000-4000-8000-000000000002",
+      "seq": 47,
+      "ts": "2026-11-12T09:00:47Z",
+      "node_id": null,
+      "attempt": null,
+      "data": {
+        "from": "judge",
+        "label": "verdict",
+        "to": "guard"
+      }
+    }
+  },
+  {
+    "id": 48,
+    "event": "node.started",
+    "data": {
+      "run_id": "00000000-0000-4000-8000-000000000002",
+      "seq": 48,
+      "ts": "2026-11-12T09:00:48Z",
+      "node_id": "guard",
+      "attempt": 1,
+      "data": {
+        "input_summary": "verdict=follow_up",
+        "model": null
+      }
+    }
+  },
+  {
+    "id": 49,
+    "event": "node.completed",
+    "data": {
+      "run_id": "00000000-0000-4000-8000-000000000002",
+      "seq": 49,
+      "ts": "2026-11-12T09:00:49Z",
+      "node_id": "guard",
+      "attempt": 1,
+      "data": {
+        "cost_usd": 0,
+        "duration_ms": 0,
+        "output_summary": "next_topic",
+        "tokens_in": 0,
+        "tokens_out": 0
+      }
+    }
+  },
+  {
+    "id": 50,
+    "event": "topic.changed",
+    "data": {
+      "run_id": "00000000-0000-4000-8000-000000000002",
+      "seq": 50,
+      "ts": "2026-11-12T09:00:50Z",
+      "node_id": "guard",
+      "attempt": 1,
+      "data": {
+        "position": 2,
+        "status": "active",
+        "title": "State Management and Data Flow Trade-offs",
+        "topic_id": "00000000-0000-4000-8000-000000000010"
+      }
+    }
+  },
+  {
+    "id": 52,
+    "event": "edge.traversed",
+    "data": {
+      "run_id": "00000000-0000-4000-8000-000000000002",
+      "seq": 52,
+      "ts": "2026-11-12T09:00:52Z",
+      "node_id": null,
+      "attempt": null,
+      "data": {
+        "from": "guard",
+        "label": "next_topic",
+        "to": "interviewer"
+      }
+    }
+  },
+  {
+    "id": 53,
+    "event": "node.started",
+    "data": {
+      "run_id": "00000000-0000-4000-8000-000000000002",
+      "seq": 53,
+      "ts": "2026-11-12T09:00:53Z",
+      "node_id": "interviewer",
+      "attempt": 1,
+      "data": {
+        "input_summary": "State Management and Data Flow Trade-offs (question)",
+        "model": "z-ai/glm-5.3-flash"
+      }
+    }
+  },
+  {
+    "id": 54,
+    "event": "message.completed",
+    "data": {
+      "run_id": "00000000-0000-4000-8000-000000000002",
+      "seq": 54,
+      "ts": "2026-11-12T09:00:54Z",
+      "node_id": "interviewer",
+      "attempt": 1,
+      "data": {
+        "message": {
+          "content": "Your CV says you lifted shared state into a context at Gamma Works. Let's make that concrete: before that change, what was one specific symptom you were seeing — a bug, a stale screen, prop-drilling pain — and how did moving it into context fix that exact problem?",
+          "created_at": "0001-01-01T00:00:00Z",
+          "id": "00000000-0000-4000-8000-000000000011",
+          "kind": "question",
+          "role": "assistant",
+          "session_id": "00000000-0000-4000-8000-000000000001",
+          "topic_id": "00000000-0000-4000-8000-000000000010"
+        }
+      }
+    }
+  },
+  {
+    "id": 55,
+    "event": "node.completed",
+    "data": {
+      "run_id": "00000000-0000-4000-8000-000000000002",
+      "seq": 55,
+      "ts": "2026-11-12T09:00:55Z",
+      "node_id": "interviewer",
+      "attempt": 1,
+      "data": {
+        "cost_usd": 0.00024625,
+        "duration_ms": 23522,
+        "output_summary": "Your CV says you lifted shared state into a context at Gamma Works. Let's make t",
+        "tokens_in": 645,
+        "tokens_out": 299
+      }
+    }
+  },
+  {
+    "id": 57,
+    "event": "message.completed",
+    "data": {
+      "run_id": "00000000-0000-4000-8000-000000000002",
+      "seq": 57,
+      "ts": "2026-11-12T09:00:57Z",
+      "node_id": "interviewer",
+      "attempt": 1,
+      "data": {
+        "message": {
+          "content": "Maybe.",
+          "created_at": "2026-11-12T09:00:57Z",
+          "id": "00000000-0000-4000-8000-000000000012",
+          "kind": "answer",
+          "role": "applicant",
+          "session_id": "00000000-0000-4000-8000-000000000001",
+          "topic_id": "00000000-0000-4000-8000-000000000010"
+        }
+      }
+    }
+  },
+  {
+    "id": 59,
+    "event": "edge.traversed",
+    "data": {
+      "run_id": "00000000-0000-4000-8000-000000000002",
+      "seq": 59,
+      "ts": "2026-11-12T09:00:59Z",
+      "node_id": null,
+      "attempt": null,
+      "data": {
+        "from": "interviewer",
+        "label": "answer",
+        "to": "judge"
+      }
+    }
+  },
+  {
+    "id": 60,
+    "event": "node.started",
+    "data": {
+      "run_id": "00000000-0000-4000-8000-000000000002",
+      "seq": 60,
+      "ts": "2026-11-12T09:01:00Z",
+      "node_id": "judge",
+      "attempt": 1,
+      "data": {
+        "input_summary": "topic 2: State Management and Data Flow Trade-offs",
+        "model": "deepseek/deepseek-v4.1-flash"
+      }
+    }
+  },
+  {
+    "id": 61,
+    "event": "node.completed",
+    "data": {
+      "run_id": "00000000-0000-4000-8000-000000000002",
+      "seq": 61,
+      "ts": "2026-11-12T09:01:01Z",
+      "node_id": "judge",
+      "attempt": 1,
+      "data": {
+        "cost_usd": 0.000265675,
+        "duration_ms": 2731,
+        "output_summary": "verdict=follow_up",
+        "tokens_in": 615,
+        "tokens_out": 476
+      }
+    }
+  },
+  {
+    "id": 62,
+    "event": "edge.traversed",
+    "data": {
+      "run_id": "00000000-0000-4000-8000-000000000002",
+      "seq": 62,
+      "ts": "2026-11-12T09:01:02Z",
+      "node_id": null,
+      "attempt": null,
+      "data": {
+        "from": "judge",
+        "label": "verdict",
+        "to": "guard"
+      }
+    }
+  },
+  {
+    "id": 63,
+    "event": "node.started",
+    "data": {
+      "run_id": "00000000-0000-4000-8000-000000000002",
+      "seq": 63,
+      "ts": "2026-11-12T09:01:03Z",
+      "node_id": "guard",
+      "attempt": 1,
+      "data": {
+        "input_summary": "verdict=follow_up",
+        "model": null
+      }
+    }
+  },
+  {
+    "id": 64,
+    "event": "node.completed",
+    "data": {
+      "run_id": "00000000-0000-4000-8000-000000000002",
+      "seq": 64,
+      "ts": "2026-11-12T09:01:04Z",
+      "node_id": "guard",
+      "attempt": 1,
+      "data": {
+        "cost_usd": 0,
+        "duration_ms": 0,
+        "output_summary": "follow_up",
+        "tokens_in": 0,
+        "tokens_out": 0
+      }
+    }
+  },
+  {
+    "id": 65,
+    "event": "edge.traversed",
+    "data": {
+      "run_id": "00000000-0000-4000-8000-000000000002",
+      "seq": 65,
+      "ts": "2026-11-12T09:01:05Z",
+      "node_id": null,
+      "attempt": null,
+      "data": {
+        "from": "guard",
+        "label": "follow_up",
+        "to": "interviewer"
+      }
+    }
+  },
+  {
+    "id": 66,
+    "event": "node.started",
+    "data": {
+      "run_id": "00000000-0000-4000-8000-000000000002",
+      "seq": 66,
+      "ts": "2026-11-12T09:01:06Z",
+      "node_id": "interviewer",
+      "attempt": 1,
+      "data": {
+        "input_summary": "State Management and Data Flow Trade-offs (follow_up)",
+        "model": "z-ai/glm-5.3-flash"
+      }
+    }
+  },
+  {
+    "id": 67,
+    "event": "message.completed",
+    "data": {
+      "run_id": "00000000-0000-4000-8000-000000000002",
+      "seq": 67,
+      "ts": "2026-11-12T09:01:07Z",
+      "node_id": "interviewer",
+      "attempt": 1,
+      "data": {
+        "message": {
+          "content": "Let's make this as simple as possible. That context you set up at Gamma Works — what did it actually hold? For example, was it something like the current user, a theme, or shared UI state? Even one sentence naming what lived in that context would help me understand your work there.",
+          "created_at": "0001-01-01T00:00:00Z",
+          "id": "00000000-0000-4000-8000-000000000013",
+          "kind": "follow_up",
+          "role": "assistant",
+          "session_id": "00000000-0000-4000-8000-000000000001",
+          "topic_id": "00000000-0000-4000-8000-000000000010"
+        }
+      }
+    }
+  },
+  {
+    "id": 68,
+    "event": "node.completed",
+    "data": {
+      "run_id": "00000000-0000-4000-8000-000000000002",
+      "seq": 68,
+      "ts": "2026-11-12T09:01:08Z",
+      "node_id": "interviewer",
+      "attempt": 1,
+      "data": {
+        "cost_usd": 0.00028225,
+        "duration_ms": 3889,
+        "output_summary": "Let's make this as simple as possible. That context you set up at Gamma Works ��",
+        "tokens_in": 875,
+        "tokens_out": 302
+      }
+    }
+  },
+  {
+    "id": 70,
+    "event": "message.completed",
+    "data": {
+      "run_id": "00000000-0000-4000-8000-000000000002",
+      "seq": 70,
+      "ts": "2026-11-12T09:01:10Z",
+      "node_id": "interviewer",
+      "attempt": 1,
+      "data": {
+        "message": {
+          "content": "I forgot.",
+          "created_at": "2026-11-12T09:01:10Z",
+          "id": "00000000-0000-4000-8000-000000000014",
+          "kind": "answer",
+          "role": "applicant",
+          "session_id": "00000000-0000-4000-8000-000000000001",
+          "topic_id": "00000000-0000-4000-8000-000000000010"
+        }
+      }
+    }
+  },
+  {
+    "id": 72,
+    "event": "edge.traversed",
+    "data": {
+      "run_id": "00000000-0000-4000-8000-000000000002",
+      "seq": 72,
+      "ts": "2026-11-12T09:01:12Z",
+      "node_id": null,
+      "attempt": null,
+      "data": {
+        "from": "interviewer",
+        "label": "answer",
+        "to": "judge"
+      }
+    }
+  },
+  {
+    "id": 73,
+    "event": "node.started",
+    "data": {
+      "run_id": "00000000-0000-4000-8000-000000000002",
+      "seq": 73,
+      "ts": "2026-11-12T09:01:13Z",
+      "node_id": "judge",
+      "attempt": 1,
+      "data": {
+        "input_summary": "topic 2: State Management and Data Flow Trade-offs",
+        "model": "deepseek/deepseek-v4.1-flash"
+      }
+    }
+  },
+  {
+    "id": 74,
+    "event": "node.completed",
+    "data": {
+      "run_id": "00000000-0000-4000-8000-000000000002",
+      "seq": 74,
+      "ts": "2026-11-12T09:01:14Z",
+      "node_id": "judge",
+      "attempt": 1,
+      "data": {
+        "cost_usd": 0.000148355,
+        "duration_ms": 1809,
+        "output_summary": "verdict=follow_up",
+        "tokens_in": 619,
+        "tokens_out": 241
+      }
+    }
+  },
+  {
+    "id": 75,
+    "event": "edge.traversed",
+    "data": {
+      "run_id": "00000000-0000-4000-8000-000000000002",
+      "seq": 75,
+      "ts": "2026-11-12T09:01:15Z",
+      "node_id": null,
+      "attempt": null,
+      "data": {
+        "from": "judge",
+        "label": "verdict",
+        "to": "guard"
+      }
+    }
+  },
+  {
+    "id": 76,
+    "event": "node.started",
+    "data": {
+      "run_id": "00000000-0000-4000-8000-000000000002",
+      "seq": 76,
+      "ts": "2026-11-12T09:01:16Z",
+      "node_id": "guard",
+      "attempt": 1,
+      "data": {
+        "input_summary": "verdict=follow_up",
+        "model": null
+      }
+    }
+  },
+  {
+    "id": 77,
+    "event": "node.completed",
+    "data": {
+      "run_id": "00000000-0000-4000-8000-000000000002",
+      "seq": 77,
+      "ts": "2026-11-12T09:01:17Z",
+      "node_id": "guard",
+      "attempt": 1,
+      "data": {
+        "cost_usd": 0,
+        "duration_ms": 0,
+        "output_summary": "follow_up",
+        "tokens_in": 0,
+        "tokens_out": 0
+      }
+    }
+  },
+  {
+    "id": 78,
+    "event": "edge.traversed",
+    "data": {
+      "run_id": "00000000-0000-4000-8000-000000000002",
+      "seq": 78,
+      "ts": "2026-11-12T09:01:18Z",
+      "node_id": null,
+      "attempt": null,
+      "data": {
+        "from": "guard",
+        "label": "follow_up",
+        "to": "interviewer"
+      }
+    }
+  },
+  {
+    "id": 79,
+    "event": "node.started",
+    "data": {
+      "run_id": "00000000-0000-4000-8000-000000000002",
+      "seq": 79,
+      "ts": "2026-11-12T09:01:19Z",
+      "node_id": "interviewer",
+      "attempt": 1,
+      "data": {
+        "input_summary": "State Management and Data Flow Trade-offs (follow_up)",
+        "model": "z-ai/glm-5.3-flash"
+      }
+    }
+  },
+  {
+    "id": 80,
+    "event": "message.completed",
+    "data": {
+      "run_id": "00000000-0000-4000-8000-000000000002",
+      "seq": 80,
+      "ts": "2026-11-12T09:01:20Z",
+      "node_id": "interviewer",
+      "attempt": 1,
+      "data": {
+        "message": {
+          "content": "Let's step away from Gamma Works for a moment. In React or Vue, there are a few common ways to share state: passing props down, using context or a store, or adding a library like Redux or Pinia. Pick just one of those and tell me — when would it be the right choice for a team, and when would it start causing you trouble?",
+          "created_at": "0001-01-01T00:00:00Z",
+          "id": "00000000-0000-4000-8000-000000000015",
+          "kind": "follow_up",
+          "role": "assistant",
+          "session_id": "00000000-0000-4000-8000-000000000001",
+          "topic_id": "00000000-0000-4000-8000-000000000010"
+        }
+      }
+    }
+  },
+  {
+    "id": 81,
+    "event": "node.completed",
+    "data": {
+      "run_id": "00000000-0000-4000-8000-000000000002",
+      "seq": 81,
+      "ts": "2026-11-12T09:01:21Z",
+      "node_id": "interviewer",
+      "attempt": 1,
+      "data": {
+        "cost_usd": 0.00070035,
+        "duration_ms": 8428,
+        "output_summary": "Let's step away from Gamma Works for a moment. In React or Vue, there are a few ",
+        "tokens_in": 1019,
+        "tokens_out": 1095
+      }
+    }
+  },
+  {
+    "id": 83,
+    "event": "message.completed",
+    "data": {
+      "run_id": "00000000-0000-4000-8000-000000000002",
+      "seq": 83,
+      "ts": "2026-11-12T09:01:23Z",
+      "node_id": "interviewer",
+      "attempt": 1,
+      "data": {
+        "message": {
+          "content": "Yes.",
+          "created_at": "2026-11-12T09:01:23Z",
+          "id": "00000000-0000-4000-8000-000000000016",
+          "kind": "answer",
+          "role": "applicant",
+          "session_id": "00000000-0000-4000-8000-000000000001",
+          "topic_id": "00000000-0000-4000-8000-000000000010"
+        }
+      }
+    }
+  },
+  {
+    "id": 85,
+    "event": "edge.traversed",
+    "data": {
+      "run_id": "00000000-0000-4000-8000-000000000002",
+      "seq": 85,
+      "ts": "2026-11-12T09:01:25Z",
+      "node_id": null,
+      "attempt": null,
+      "data": {
+        "from": "interviewer",
+        "label": "answer",
+        "to": "judge"
+      }
+    }
+  },
+  {
+    "id": 86,
+    "event": "node.started",
+    "data": {
+      "run_id": "00000000-0000-4000-8000-000000000002",
+      "seq": 86,
+      "ts": "2026-11-12T09:01:26Z",
+      "node_id": "judge",
+      "attempt": 1,
+      "data": {
+        "input_summary": "topic 2: State Management and Data Flow Trade-offs",
+        "model": "deepseek/deepseek-v4.1-flash"
+      }
+    }
+  },
+  {
+    "id": 87,
+    "event": "node.completed",
+    "data": {
+      "run_id": "00000000-0000-4000-8000-000000000002",
+      "seq": 87,
+      "ts": "2026-11-12T09:01:27Z",
+      "node_id": "judge",
+      "attempt": 1,
+      "data": {
+        "cost_usd": 0.000121495,
+        "duration_ms": 2618,
+        "output_summary": "verdict=follow_up",
+        "tokens_in": 511,
+        "tokens_out": 197
+      }
+    }
+  },
+  {
+    "id": 88,
+    "event": "edge.traversed",
+    "data": {
+      "run_id": "00000000-0000-4000-8000-000000000002",
+      "seq": 88,
+      "ts": "2026-11-12T09:01:28Z",
+      "node_id": null,
+      "attempt": null,
+      "data": {
+        "from": "judge",
+        "label": "verdict",
+        "to": "guard"
+      }
+    }
+  },
+  {
+    "id": 89,
+    "event": "node.started",
+    "data": {
+      "run_id": "00000000-0000-4000-8000-000000000002",
+      "seq": 89,
+      "ts": "2026-11-12T09:01:29Z",
+      "node_id": "guard",
+      "attempt": 1,
+      "data": {
+        "input_summary": "verdict=follow_up",
+        "model": null
+      }
+    }
+  },
+  {
+    "id": 90,
+    "event": "node.completed",
+    "data": {
+      "run_id": "00000000-0000-4000-8000-000000000002",
+      "seq": 90,
+      "ts": "2026-11-12T09:01:30Z",
+      "node_id": "guard",
+      "attempt": 1,
+      "data": {
+        "cost_usd": 0,
+        "duration_ms": 0,
+        "output_summary": "next_topic",
+        "tokens_in": 0,
+        "tokens_out": 0
+      }
+    }
+  },
+  {
+    "id": 91,
+    "event": "topic.changed",
+    "data": {
+      "run_id": "00000000-0000-4000-8000-000000000002",
+      "seq": 91,
+      "ts": "2026-11-12T09:01:31Z",
+      "node_id": "guard",
+      "attempt": 1,
+      "data": {
+        "position": 3,
+        "status": "active",
+        "title": "Component Boundaries and API Contracts",
+        "topic_id": "00000000-0000-4000-8000-000000000017"
+      }
+    }
+  },
+  {
+    "id": 93,
+    "event": "edge.traversed",
+    "data": {
+      "run_id": "00000000-0000-4000-8000-000000000002",
+      "seq": 93,
+      "ts": "2026-11-12T09:01:33Z",
+      "node_id": null,
+      "attempt": null,
+      "data": {
+        "from": "guard",
+        "label": "next_topic",
+        "to": "interviewer"
+      }
+    }
+  },
+  {
+    "id": 94,
+    "event": "node.started",
+    "data": {
+      "run_id": "00000000-0000-4000-8000-000000000002",
+      "seq": 94,
+      "ts": "2026-11-12T09:01:34Z",
+      "node_id": "interviewer",
+      "attempt": 1,
+      "data": {
+        "input_summary": "Component Boundaries and API Contracts (question)",
+        "model": "z-ai/glm-5.3-flash"
+      }
+    }
+  },
+  {
+    "id": 95,
+    "event": "message.completed",
+    "data": {
+      "run_id": "00000000-0000-4000-8000-000000000002",
+      "seq": 95,
+      "ts": "2026-11-12T09:01:35Z",
+      "node_id": "interviewer",
+      "attempt": 1,
+      "data": {
+        "message": {
+          "content": "Let's try one very concrete thing. Picture any page you've built — a profile, a dashboard, a settings screen, anything at all. If you split it into components, what would the top two or three components be, and what props would each one receive? Even a rough sketch in a sentence or two would work.",
+          "created_at": "0001-01-01T00:00:00Z",
+          "id": "00000000-0000-4000-8000-000000000018",
+          "kind": "question",
+          "role": "assistant",
+          "session_id": "00000000-0000-4000-8000-000000000001",
+          "topic_id": "00000000-0000-4000-8000-000000000017"
+        }
+      }
+    }
+  },
+  {
+    "id": 96,
+    "event": "node.completed",
+    "data": {
+      "run_id": "00000000-0000-4000-8000-000000000002",
+      "seq": 96,
+      "ts": "2026-11-12T09:01:36Z",
+      "node_id": "interviewer",
+      "attempt": 1,
+      "data": {
+        "cost_usd": 0.00036875,
+        "duration_ms": 4807,
+        "output_summary": "Let's try one very concrete thing. Picture any page you've built — a profile, ",
+        "tokens_in": 975,
+        "tokens_out": 445
+      }
+    }
+  },
+  {
+    "id": 98,
+    "event": "message.completed",
+    "data": {
+      "run_id": "00000000-0000-4000-8000-000000000002",
+      "seq": 98,
+      "ts": "2026-11-12T09:01:38Z",
+      "node_id": "interviewer",
+      "attempt": 1,
+      "data": {
+        "message": {
+          "content": "No.",
+          "created_at": "2026-11-12T09:01:38Z",
+          "id": "00000000-0000-4000-8000-000000000019",
+          "kind": "answer",
+          "role": "applicant",
+          "session_id": "00000000-0000-4000-8000-000000000001",
+          "topic_id": "00000000-0000-4000-8000-000000000017"
+        }
+      }
+    }
+  },
+  {
+    "id": 100,
+    "event": "edge.traversed",
+    "data": {
+      "run_id": "00000000-0000-4000-8000-000000000002",
+      "seq": 100,
+      "ts": "2026-11-12T09:01:40Z",
+      "node_id": null,
+      "attempt": null,
+      "data": {
+        "from": "interviewer",
+        "label": "answer",
+        "to": "judge"
+      }
+    }
+  },
+  {
+    "id": 101,
+    "event": "node.started",
+    "data": {
+      "run_id": "00000000-0000-4000-8000-000000000002",
+      "seq": 101,
+      "ts": "2026-11-12T09:01:41Z",
+      "node_id": "judge",
+      "attempt": 1,
+      "data": {
+        "input_summary": "topic 3: Component Boundaries and API Contracts",
+        "model": "deepseek/deepseek-v4.1-flash"
+      }
+    }
+  },
+  {
+    "id": 102,
+    "event": "node.completed",
+    "data": {
+      "run_id": "00000000-0000-4000-8000-000000000002",
+      "seq": 102,
+      "ts": "2026-11-12T09:01:42Z",
+      "node_id": "judge",
+      "attempt": 1,
+      "data": {
+        "cost_usd": 0.00016336,
+        "duration_ms": 2963,
+        "output_summary": "verdict=follow_up",
+        "tokens_in": 608,
+        "tokens_out": 272
+      }
+    }
+  },
+  {
+    "id": 103,
+    "event": "edge.traversed",
+    "data": {
+      "run_id": "00000000-0000-4000-8000-000000000002",
+      "seq": 103,
+      "ts": "2026-11-12T09:01:43Z",
+      "node_id": null,
+      "attempt": null,
+      "data": {
+        "from": "judge",
+        "label": "verdict",
+        "to": "guard"
+      }
+    }
+  },
+  {
+    "id": 104,
+    "event": "node.started",
+    "data": {
+      "run_id": "00000000-0000-4000-8000-000000000002",
+      "seq": 104,
+      "ts": "2026-11-12T09:01:44Z",
+      "node_id": "guard",
+      "attempt": 1,
+      "data": {
+        "input_summary": "verdict=follow_up",
+        "model": null
+      }
+    }
+  },
+  {
+    "id": 105,
+    "event": "node.completed",
+    "data": {
+      "run_id": "00000000-0000-4000-8000-000000000002",
+      "seq": 105,
+      "ts": "2026-11-12T09:01:45Z",
+      "node_id": "guard",
+      "attempt": 1,
+      "data": {
+        "cost_usd": 0,
+        "duration_ms": 0,
+        "output_summary": "follow_up",
+        "tokens_in": 0,
+        "tokens_out": 0
+      }
+    }
+  },
+  {
+    "id": 106,
+    "event": "edge.traversed",
+    "data": {
+      "run_id": "00000000-0000-4000-8000-000000000002",
+      "seq": 106,
+      "ts": "2026-11-12T09:01:46Z",
+      "node_id": null,
+      "attempt": null,
+      "data": {
+        "from": "guard",
+        "label": "follow_up",
+        "to": "interviewer"
+      }
+    }
+  },
+  {
+    "id": 107,
+    "event": "node.started",
+    "data": {
+      "run_id": "00000000-0000-4000-8000-000000000002",
+      "seq": 107,
+      "ts": "2026-11-12T09:01:47Z",
+      "node_id": "interviewer",
+      "attempt": 1,
+      "data": {
+        "input_summary": "Component Boundaries and API Contracts (follow_up)",
+        "model": "z-ai/glm-5.3-flash"
+      }
+    }
+  },
+  {
+    "id": 108,
+    "event": "message.completed",
+    "data": {
+      "run_id": "00000000-0000-4000-8000-000000000002",
+      "seq": 108,
+      "ts": "2026-11-12T09:01:48Z",
+      "node_id": "interviewer",
+      "attempt": 1,
+      "data": {
+        "message": {
+          "content": "Let's try the API side of this topic instead. When frontend and backend need to agree on what data an endpoint returns, teams do it in different ways — a quick chat, a written spec, shared TypeScript types, or a sample JSON response. Which of those have you actually done before, and what did that agreement look like in practice?",
+          "created_at": "0001-01-01T00:00:00Z",
+          "id": "00000000-0000-4000-8000-000000000020",
+          "kind": "follow_up",
+          "role": "assistant",
+          "session_id": "00000000-0000-4000-8000-000000000001",
+          "topic_id": "00000000-0000-4000-8000-000000000017"
+        }
+      }
+    }
+  },
+  {
+    "id": 109,
+    "event": "node.completed",
+    "data": {
+      "run_id": "00000000-0000-4000-8000-000000000002",
+      "seq": 109,
+      "ts": "2026-11-12T09:01:49Z",
+      "node_id": "interviewer",
+      "attempt": 1,
+      "data": {
+        "cost_usd": 0.00057485,
+        "duration_ms": 8226,
+        "output_summary": "Let's try the API side of this topic instead. When frontend and backend need to ",
+        "tokens_in": 1249,
+        "tokens_out": 775
+      }
+    }
+  },
+  {
+    "id": 111,
+    "event": "message.completed",
+    "data": {
+      "run_id": "00000000-0000-4000-8000-000000000002",
+      "seq": 111,
+      "ts": "2026-11-12T09:01:51Z",
+      "node_id": "interviewer",
+      "attempt": 1,
+      "data": {
+        "message": {
+          "content": "It depends.",
+          "created_at": "2026-11-12T09:01:51Z",
+          "id": "00000000-0000-4000-8000-000000000021",
+          "kind": "answer",
+          "role": "applicant",
+          "session_id": "00000000-0000-4000-8000-000000000001",
+          "topic_id": "00000000-0000-4000-8000-000000000017"
+        }
+      }
+    }
+  },
+  {
+    "id": 113,
+    "event": "edge.traversed",
+    "data": {
+      "run_id": "00000000-0000-4000-8000-000000000002",
+      "seq": 113,
+      "ts": "2026-11-12T09:01:53Z",
+      "node_id": null,
+      "attempt": null,
+      "data": {
+        "from": "interviewer",
+        "label": "answer",
+        "to": "judge"
+      }
+    }
+  },
+  {
+    "id": 114,
+    "event": "node.started",
+    "data": {
+      "run_id": "00000000-0000-4000-8000-000000000002",
+      "seq": 114,
+      "ts": "2026-11-12T09:01:54Z",
+      "node_id": "judge",
+      "attempt": 1,
+      "data": {
+        "input_summary": "topic 3: Component Boundaries and API Contracts",
+        "model": "deepseek/deepseek-v4.1-flash"
+      }
+    }
+  },
+  {
+    "id": 115,
+    "event": "node.completed",
+    "data": {
+      "run_id": "00000000-0000-4000-8000-000000000002",
+      "seq": 115,
+      "ts": "2026-11-12T09:01:55Z",
+      "node_id": "judge",
+      "attempt": 1,
+      "data": {
+        "cost_usd": 0.000136595,
+        "duration_ms": 2527,
+        "output_summary": "verdict=follow_up",
+        "tokens_in": 491,
+        "tokens_out": 229
+      }
+    }
+  },
+  {
+    "id": 116,
+    "event": "edge.traversed",
+    "data": {
+      "run_id": "00000000-0000-4000-8000-000000000002",
+      "seq": 116,
+      "ts": "2026-11-12T09:01:56Z",
+      "node_id": null,
+      "attempt": null,
+      "data": {
+        "from": "judge",
+        "label": "verdict",
+        "to": "guard"
+      }
+    }
+  },
+  {
+    "id": 117,
+    "event": "node.started",
+    "data": {
+      "run_id": "00000000-0000-4000-8000-000000000002",
+      "seq": 117,
+      "ts": "2026-11-12T09:01:57Z",
+      "node_id": "guard",
+      "attempt": 1,
+      "data": {
+        "input_summary": "verdict=follow_up",
+        "model": null
+      }
+    }
+  },
+  {
+    "id": 118,
+    "event": "node.completed",
+    "data": {
+      "run_id": "00000000-0000-4000-8000-000000000002",
+      "seq": 118,
+      "ts": "2026-11-12T09:01:58Z",
+      "node_id": "guard",
+      "attempt": 1,
+      "data": {
+        "cost_usd": 0,
+        "duration_ms": 0,
+        "output_summary": "follow_up",
+        "tokens_in": 0,
+        "tokens_out": 0
+      }
+    }
+  },
+  {
+    "id": 119,
+    "event": "edge.traversed",
+    "data": {
+      "run_id": "00000000-0000-4000-8000-000000000002",
+      "seq": 119,
+      "ts": "2026-11-12T09:01:59Z",
+      "node_id": null,
+      "attempt": null,
+      "data": {
+        "from": "guard",
+        "label": "follow_up",
+        "to": "interviewer"
+      }
+    }
+  },
+  {
+    "id": 120,
+    "event": "node.started",
+    "data": {
+      "run_id": "00000000-0000-4000-8000-000000000002",
+      "seq": 120,
+      "ts": "2026-11-12T09:02:00Z",
+      "node_id": "interviewer",
+      "attempt": 1,
+      "data": {
+        "input_summary": "Component Boundaries and API Contracts (follow_up)",
+        "model": "z-ai/glm-5.3-flash"
+      }
+    }
+  },
+  {
+    "id": 121,
+    "event": "message.completed",
+    "data": {
+      "run_id": "00000000-0000-4000-8000-000000000002",
+      "seq": 121,
+      "ts": "2026-11-12T09:02:01Z",
+      "node_id": "interviewer",
+      "attempt": 1,
+      "data": {
+        "message": {
+          "content": "Let's make this a simple yes-or-no first: have you ever agreed with a backend engineer on what data an endpoint returns — yes or no? If yes, give me just one detail from that agreement: a field name, an endpoint, or whether it was settled in a chat, a written spec, or shared types. If no, that's a valid answer too — just say so.",
+          "created_at": "0001-01-01T00:00:00Z",
+          "id": "00000000-0000-4000-8000-000000000022",
+          "kind": "follow_up",
+          "role": "assistant",
+          "session_id": "00000000-0000-4000-8000-000000000001",
+          "topic_id": "00000000-0000-4000-8000-000000000017"
+        }
+      }
+    }
+  },
+  {
+    "id": 122,
+    "event": "node.completed",
+    "data": {
+      "run_id": "00000000-0000-4000-8000-000000000002",
+      "seq": 122,
+      "ts": "2026-11-12T09:02:02Z",
+      "node_id": "interviewer",
+      "attempt": 1,
+      "data": {
+        "cost_usd": 0.0005032999999999999,
+        "duration_ms": 14711,
+        "output_summary": "Let's make this a simple yes-or-no first: have you ever agreed with a backend en",
+        "tokens_in": 1402,
+        "tokens_out": 586
+      }
+    }
+  },
+  {
+    "id": 124,
+    "event": "message.completed",
+    "data": {
+      "run_id": "00000000-0000-4000-8000-000000000002",
+      "seq": 124,
+      "ts": "2026-11-12T09:02:04Z",
+      "node_id": "interviewer",
+      "attempt": 1,
+      "data": {
+        "message": {
+          "content": "Maybe.",
+          "created_at": "2026-11-12T09:02:04Z",
+          "id": "00000000-0000-4000-8000-000000000023",
+          "kind": "answer",
+          "role": "applicant",
+          "session_id": "00000000-0000-4000-8000-000000000001",
+          "topic_id": "00000000-0000-4000-8000-000000000017"
+        }
+      }
+    }
+  },
+  {
+    "id": 126,
+    "event": "edge.traversed",
+    "data": {
+      "run_id": "00000000-0000-4000-8000-000000000002",
+      "seq": 126,
+      "ts": "2026-11-12T09:02:06Z",
+      "node_id": null,
+      "attempt": null,
+      "data": {
+        "from": "interviewer",
+        "label": "answer",
+        "to": "judge"
+      }
+    }
+  },
+  {
+    "id": 127,
+    "event": "node.started",
+    "data": {
+      "run_id": "00000000-0000-4000-8000-000000000002",
+      "seq": 127,
+      "ts": "2026-11-12T09:02:07Z",
+      "node_id": "judge",
+      "attempt": 1,
+      "data": {
+        "input_summary": "topic 3: Component Boundaries and API Contracts",
+        "model": "deepseek/deepseek-v4.1-flash"
+      }
+    }
+  },
+  {
+    "id": 128,
+    "event": "node.completed",
+    "data": {
+      "run_id": "00000000-0000-4000-8000-000000000002",
+      "seq": 128,
+      "ts": "2026-11-12T09:02:08Z",
+      "node_id": "judge",
+      "attempt": 1,
+      "data": {
+        "cost_usd": 0.00014549000000000002,
+        "duration_ms": 4012,
+        "output_summary": "verdict=follow_up",
+        "tokens_in": 622,
+        "tokens_out": 235
+      }
+    }
+  },
+  {
+    "id": 129,
+    "event": "edge.traversed",
+    "data": {
+      "run_id": "00000000-0000-4000-8000-000000000002",
+      "seq": 129,
+      "ts": "2026-11-12T09:02:09Z",
+      "node_id": null,
+      "attempt": null,
+      "data": {
+        "from": "judge",
+        "label": "verdict",
+        "to": "guard"
+      }
+    }
+  },
+  {
+    "id": 130,
+    "event": "node.started",
+    "data": {
+      "run_id": "00000000-0000-4000-8000-000000000002",
+      "seq": 130,
+      "ts": "2026-11-12T09:02:10Z",
+      "node_id": "guard",
+      "attempt": 1,
+      "data": {
+        "input_summary": "verdict=follow_up",
+        "model": null
+      }
+    }
+  },
+  {
+    "id": 131,
+    "event": "node.completed",
+    "data": {
+      "run_id": "00000000-0000-4000-8000-000000000002",
+      "seq": 131,
+      "ts": "2026-11-12T09:02:11Z",
+      "node_id": "guard",
+      "attempt": 1,
+      "data": {
+        "cost_usd": 0,
+        "duration_ms": 0,
+        "output_summary": "next_topic",
+        "tokens_in": 0,
+        "tokens_out": 0
+      }
+    }
+  },
+  {
+    "id": 132,
+    "event": "topic.changed",
+    "data": {
+      "run_id": "00000000-0000-4000-8000-000000000002",
+      "seq": 132,
+      "ts": "2026-11-12T09:02:12Z",
+      "node_id": "guard",
+      "attempt": 1,
+      "data": {
+        "position": 4,
+        "status": "active",
+        "title": "Testing, Accessibility, and Quality",
+        "topic_id": "00000000-0000-4000-8000-000000000024"
+      }
+    }
+  },
+  {
+    "id": 134,
+    "event": "edge.traversed",
+    "data": {
+      "run_id": "00000000-0000-4000-8000-000000000002",
+      "seq": 134,
+      "ts": "2026-11-12T09:02:14Z",
+      "node_id": null,
+      "attempt": null,
+      "data": {
+        "from": "guard",
+        "label": "next_topic",
+        "to": "interviewer"
+      }
+    }
+  },
+  {
+    "id": 135,
+    "event": "node.started",
+    "data": {
+      "run_id": "00000000-0000-4000-8000-000000000002",
+      "seq": 135,
+      "ts": "2026-11-12T09:02:15Z",
+      "node_id": "interviewer",
+      "attempt": 1,
+      "data": {
+        "input_summary": "Testing, Accessibility, and Quality (question)",
+        "model": "z-ai/glm-5.3-flash"
+      }
+    }
+  },
+  {
+    "id": 136,
+    "event": "message.completed",
+    "data": {
+      "run_id": "00000000-0000-4000-8000-000000000002",
+      "seq": 136,
+      "ts": "2026-11-12T09:02:16Z",
+      "node_id": "interviewer",
+      "attempt": 1,
+      "data": {
+        "message": {
+          "content": "Let's move to a new area: testing and accessibility. Your CV mentions you fixed issues found in a manual accessibility audit. Think of just one fix you made — it could be anything, like adding alt text to images, labeling a form field, or fixing keyboard focus. What was that one fix, and what did you change to make it? Even a single sentence is fine.",
+          "created_at": "0001-01-01T00:00:00Z",
+          "id": "00000000-0000-4000-8000-000000000025",
+          "kind": "question",
+          "role": "assistant",
+          "session_id": "00000000-0000-4000-8000-000000000001",
+          "topic_id": "00000000-0000-4000-8000-000000000024"
+        }
+      }
+    }
+  },
+  {
+    "id": 137,
+    "event": "node.completed",
+    "data": {
+      "run_id": "00000000-0000-4000-8000-000000000002",
+      "seq": 137,
+      "ts": "2026-11-12T09:02:17Z",
+      "node_id": "interviewer",
+      "attempt": 1,
+      "data": {
+        "cost_usd": 0.00037385,
+        "duration_ms": 5766,
+        "output_summary": "Let's move to a new area: testing and accessibility. Your CV mentions you fixed ",
+        "tokens_in": 1359,
+        "tokens_out": 340
+      }
+    }
+  },
+  {
+    "id": 139,
+    "event": "message.completed",
+    "data": {
+      "run_id": "00000000-0000-4000-8000-000000000002",
+      "seq": 139,
+      "ts": "2026-11-12T09:02:19Z",
+      "node_id": "interviewer",
+      "attempt": 1,
+      "data": {
+        "message": {
+          "content": "I forgot.",
+          "created_at": "2026-11-12T09:02:19Z",
+          "id": "00000000-0000-4000-8000-000000000026",
+          "kind": "answer",
+          "role": "applicant",
+          "session_id": "00000000-0000-4000-8000-000000000001",
+          "topic_id": "00000000-0000-4000-8000-000000000024"
+        }
+      }
+    }
+  },
+  {
+    "id": 141,
+    "event": "edge.traversed",
+    "data": {
+      "run_id": "00000000-0000-4000-8000-000000000002",
+      "seq": 141,
+      "ts": "2026-11-12T09:02:21Z",
+      "node_id": null,
+      "attempt": null,
+      "data": {
+        "from": "interviewer",
+        "label": "answer",
+        "to": "judge"
+      }
+    }
+  },
+  {
+    "id": 142,
+    "event": "node.started",
+    "data": {
+      "run_id": "00000000-0000-4000-8000-000000000002",
+      "seq": 142,
+      "ts": "2026-11-12T09:02:22Z",
+      "node_id": "judge",
+      "attempt": 1,
+      "data": {
+        "input_summary": "topic 4: Testing, Accessibility, and Quality",
+        "model": "deepseek/deepseek-v4.1-flash"
+      }
+    }
+  },
+  {
+    "id": 143,
+    "event": "node.completed",
+    "data": {
+      "run_id": "00000000-0000-4000-8000-000000000002",
+      "seq": 143,
+      "ts": "2026-11-12T09:02:23Z",
+      "node_id": "judge",
+      "attempt": 1,
+      "data": {
+        "cost_usd": 0.00018212,
+        "duration_ms": 2841,
+        "output_summary": "verdict=follow_up",
+        "tokens_in": 636,
+        "tokens_out": 307
+      }
+    }
+  },
+  {
+    "id": 144,
+    "event": "edge.traversed",
+    "data": {
+      "run_id": "00000000-0000-4000-8000-000000000002",
+      "seq": 144,
+      "ts": "2026-11-12T09:02:24Z",
+      "node_id": null,
+      "attempt": null,
+      "data": {
+        "from": "judge",
+        "label": "verdict",
+        "to": "guard"
+      }
+    }
+  },
+  {
+    "id": 145,
+    "event": "node.started",
+    "data": {
+      "run_id": "00000000-0000-4000-8000-000000000002",
+      "seq": 145,
+      "ts": "2026-11-12T09:02:25Z",
+      "node_id": "guard",
+      "attempt": 1,
+      "data": {
+        "input_summary": "verdict=follow_up",
+        "model": null
+      }
+    }
+  },
+  {
+    "id": 146,
+    "event": "node.completed",
+    "data": {
+      "run_id": "00000000-0000-4000-8000-000000000002",
+      "seq": 146,
+      "ts": "2026-11-12T09:02:26Z",
+      "node_id": "guard",
+      "attempt": 1,
+      "data": {
+        "cost_usd": 0,
+        "duration_ms": 0,
+        "output_summary": "follow_up",
+        "tokens_in": 0,
+        "tokens_out": 0
+      }
+    }
+  },
+  {
+    "id": 147,
+    "event": "edge.traversed",
+    "data": {
+      "run_id": "00000000-0000-4000-8000-000000000002",
+      "seq": 147,
+      "ts": "2026-11-12T09:02:27Z",
+      "node_id": null,
+      "attempt": null,
+      "data": {
+        "from": "guard",
+        "label": "follow_up",
+        "to": "interviewer"
+      }
+    }
+  },
+  {
+    "id": 148,
+    "event": "node.started",
+    "data": {
+      "run_id": "00000000-0000-4000-8000-000000000002",
+      "seq": 148,
+      "ts": "2026-11-12T09:02:28Z",
+      "node_id": "interviewer",
+      "attempt": 1,
+      "data": {
+        "input_summary": "Testing, Accessibility, and Quality (follow_up)",
+        "model": "z-ai/glm-5.3-flash"
+      }
+    }
+  },
+  {
+    "id": 149,
+    "event": "message.completed",
+    "data": {
+      "run_id": "00000000-0000-4000-8000-000000000002",
+      "seq": 149,
+      "ts": "2026-11-12T09:02:29Z",
+      "node_id": "interviewer",
+      "attempt": 1,
+      "data": {
+        "message": {
+          "content": "Let's try the testing side of this topic instead. Have you ever written an automated test for code you worked on — a unit test, an integration test, any kind at all? A simple yes or no is fine. If yes, tell me one thing that test checked. If no, just say no — that's a valid answer, and we can talk about how you'd approach testing instead.",
+          "created_at": "0001-01-01T00:00:00Z",
+          "id": "00000000-0000-4000-8000-000000000027",
+          "kind": "follow_up",
+          "role": "assistant",
+          "session_id": "00000000-0000-4000-8000-000000000001",
+          "topic_id": "00000000-0000-4000-8000-000000000024"
+        }
+      }
+    }
+  },
+  {
+    "id": 150,
+    "event": "node.completed",
+    "data": {
+      "run_id": "00000000-0000-4000-8000-000000000002",
+      "seq": 150,
+      "ts": "2026-11-12T09:02:30Z",
+      "node_id": "interviewer",
+      "attempt": 1,
+      "data": {
+        "cost_usd": 0.00063175,
+        "duration_ms": 6760,
+        "output_summary": "Let's try the testing side of this topic instead. Have you ever written an autom",
+        "tokens_in": 1705,
+        "tokens_out": 752
+      }
+    }
+  },
+  {
+    "id": 152,
+    "event": "message.completed",
+    "data": {
+      "run_id": "00000000-0000-4000-8000-000000000002",
+      "seq": 152,
+      "ts": "2026-11-12T09:02:32Z",
+      "node_id": "interviewer",
+      "attempt": 1,
+      "data": {
+        "message": {
+          "content": "Yes.",
+          "created_at": "2026-11-12T09:02:32Z",
+          "id": "00000000-0000-4000-8000-000000000028",
+          "kind": "answer",
+          "role": "applicant",
+          "session_id": "00000000-0000-4000-8000-000000000001",
+          "topic_id": "00000000-0000-4000-8000-000000000024"
+        }
+      }
+    }
+  },
+  {
+    "id": 154,
+    "event": "edge.traversed",
+    "data": {
+      "run_id": "00000000-0000-4000-8000-000000000002",
+      "seq": 154,
+      "ts": "2026-11-12T09:02:34Z",
+      "node_id": null,
+      "attempt": null,
+      "data": {
+        "from": "interviewer",
+        "label": "answer",
+        "to": "judge"
+      }
+    }
+  },
+  {
+    "id": 155,
+    "event": "node.started",
+    "data": {
+      "run_id": "00000000-0000-4000-8000-000000000002",
+      "seq": 155,
+      "ts": "2026-11-12T09:02:35Z",
+      "node_id": "judge",
+      "attempt": 1,
+      "data": {
+        "input_summary": "topic 4: Testing, Accessibility, and Quality",
+        "model": "deepseek/deepseek-v4.1-flash"
+      }
+    }
+  },
+  {
+    "id": 156,
+    "event": "node.completed",
+    "data": {
+      "run_id": "00000000-0000-4000-8000-000000000002",
+      "seq": 156,
+      "ts": "2026-11-12T09:02:36Z",
+      "node_id": "judge",
+      "attempt": 1,
+      "data": {
+        "cost_usd": 0.00011922,
+        "duration_ms": 1854,
+        "output_summary": "verdict=follow_up",
+        "tokens_in": 516,
+        "tokens_out": 192
+      }
+    }
+  },
+  {
+    "id": 157,
+    "event": "edge.traversed",
+    "data": {
+      "run_id": "00000000-0000-4000-8000-000000000002",
+      "seq": 157,
+      "ts": "2026-11-12T09:02:37Z",
+      "node_id": null,
+      "attempt": null,
+      "data": {
+        "from": "judge",
+        "label": "verdict",
+        "to": "guard"
+      }
+    }
+  },
+  {
+    "id": 158,
+    "event": "node.started",
+    "data": {
+      "run_id": "00000000-0000-4000-8000-000000000002",
+      "seq": 158,
+      "ts": "2026-11-12T09:02:38Z",
+      "node_id": "guard",
+      "attempt": 1,
+      "data": {
+        "input_summary": "verdict=follow_up",
+        "model": null
+      }
+    }
+  },
+  {
+    "id": 159,
+    "event": "node.completed",
+    "data": {
+      "run_id": "00000000-0000-4000-8000-000000000002",
+      "seq": 159,
+      "ts": "2026-11-12T09:02:39Z",
+      "node_id": "guard",
+      "attempt": 1,
+      "data": {
+        "cost_usd": 0,
+        "duration_ms": 0,
+        "output_summary": "follow_up",
+        "tokens_in": 0,
+        "tokens_out": 0
+      }
+    }
+  },
+  {
+    "id": 160,
+    "event": "edge.traversed",
+    "data": {
+      "run_id": "00000000-0000-4000-8000-000000000002",
+      "seq": 160,
+      "ts": "2026-11-12T09:02:40Z",
+      "node_id": null,
+      "attempt": null,
+      "data": {
+        "from": "guard",
+        "label": "follow_up",
+        "to": "interviewer"
+      }
+    }
+  },
+  {
+    "id": 161,
+    "event": "node.started",
+    "data": {
+      "run_id": "00000000-0000-4000-8000-000000000002",
+      "seq": 161,
+      "ts": "2026-11-12T09:02:41Z",
+      "node_id": "interviewer",
+      "attempt": 1,
+      "data": {
+        "input_summary": "Testing, Accessibility, and Quality (follow_up)",
+        "model": "z-ai/glm-5.3-flash"
+      }
+    }
+  },
+  {
+    "id": 162,
+    "event": "message.completed",
+    "data": {
+      "run_id": "00000000-0000-4000-8000-000000000002",
+      "seq": 162,
+      "ts": "2026-11-12T09:02:42Z",
+      "node_id": "interviewer",
+      "attempt": 1,
+      "data": {
+        "message": {
+          "content": "Thank you. Now, tell me one concrete thing that test checked — for example, what behavior or input it verified. Even a single sentence like \"it checked the form shows an error when the email is empty\" would give me something to work with. And if you can, mention whether it was a unit test or an integration test.",
+          "created_at": "0001-01-01T00:00:00Z",
+          "id": "00000000-0000-4000-8000-000000000029",
+          "kind": "follow_up",
+          "role": "assistant",
+          "session_id": "00000000-0000-4000-8000-000000000001",
+          "topic_id": "00000000-0000-4000-8000-000000000024"
+        }
+      }
+    }
+  },
+  {
+    "id": 163,
+    "event": "node.completed",
+    "data": {
+      "run_id": "00000000-0000-4000-8000-000000000002",
+      "seq": 163,
+      "ts": "2026-11-12T09:02:43Z",
+      "node_id": "interviewer",
+      "attempt": 1,
+      "data": {
+        "cost_usd": 0.0003115,
+        "duration_ms": 3974,
+        "output_summary": "Thank you. Now, tell me one concrete thing that test checked — for example, wh",
+        "tokens_in": 1760,
+        "tokens_out": 95
+      }
+    }
+  },
+  {
+    "id": 165,
+    "event": "message.completed",
+    "data": {
+      "run_id": "00000000-0000-4000-8000-000000000002",
+      "seq": 165,
+      "ts": "2026-11-12T09:02:45Z",
+      "node_id": "interviewer",
+      "attempt": 1,
+      "data": {
+        "message": {
+          "content": "No.",
+          "created_at": "2026-11-12T09:02:45Z",
+          "id": "00000000-0000-4000-8000-000000000030",
+          "kind": "answer",
+          "role": "applicant",
+          "session_id": "00000000-0000-4000-8000-000000000001",
+          "topic_id": "00000000-0000-4000-8000-000000000024"
+        }
+      }
+    }
+  },
+  {
+    "id": 167,
+    "event": "edge.traversed",
+    "data": {
+      "run_id": "00000000-0000-4000-8000-000000000002",
+      "seq": 167,
+      "ts": "2026-11-12T09:02:47Z",
+      "node_id": null,
+      "attempt": null,
+      "data": {
+        "from": "interviewer",
+        "label": "answer",
+        "to": "judge"
+      }
+    }
+  },
+  {
+    "id": 168,
+    "event": "node.started",
+    "data": {
+      "run_id": "00000000-0000-4000-8000-000000000002",
+      "seq": 168,
+      "ts": "2026-11-12T09:02:48Z",
+      "node_id": "judge",
+      "attempt": 1,
+      "data": {
+        "input_summary": "topic 4: Testing, Accessibility, and Quality",
+        "model": "deepseek/deepseek-v4.1-flash"
+      }
+    }
+  },
+  {
+    "id": 169,
+    "event": "node.completed",
+    "data": {
+      "run_id": "00000000-0000-4000-8000-000000000002",
+      "seq": 169,
+      "ts": "2026-11-12T09:02:49Z",
+      "node_id": "judge",
+      "attempt": 1,
+      "data": {
+        "cost_usd": 0.000152135,
+        "duration_ms": 3077,
+        "output_summary": "verdict=follow_up",
+        "tokens_in": 503,
+        "tokens_out": 259
+      }
+    }
+  },
+  {
+    "id": 170,
+    "event": "edge.traversed",
+    "data": {
+      "run_id": "00000000-0000-4000-8000-000000000002",
+      "seq": 170,
+      "ts": "2026-11-12T09:02:50Z",
+      "node_id": null,
+      "attempt": null,
+      "data": {
+        "from": "judge",
+        "label": "verdict",
+        "to": "guard"
+      }
+    }
+  },
+  {
+    "id": 171,
+    "event": "node.started",
+    "data": {
+      "run_id": "00000000-0000-4000-8000-000000000002",
+      "seq": 171,
+      "ts": "2026-11-12T09:02:51Z",
+      "node_id": "guard",
+      "attempt": 1,
+      "data": {
+        "input_summary": "verdict=follow_up",
+        "model": null
+      }
+    }
+  },
+  {
+    "id": 172,
+    "event": "node.completed",
+    "data": {
+      "run_id": "00000000-0000-4000-8000-000000000002",
+      "seq": 172,
+      "ts": "2026-11-12T09:02:52Z",
+      "node_id": "guard",
+      "attempt": 1,
+      "data": {
+        "cost_usd": 0,
+        "duration_ms": 0,
+        "output_summary": "next_topic",
+        "tokens_in": 0,
+        "tokens_out": 0
+      }
+    }
+  },
+  {
+    "id": 173,
+    "event": "topic.changed",
+    "data": {
+      "run_id": "00000000-0000-4000-8000-000000000002",
+      "seq": 173,
+      "ts": "2026-11-12T09:02:53Z",
+      "node_id": "guard",
+      "attempt": 1,
+      "data": {
+        "position": 5,
+        "status": "active",
+        "title": "Communication and Collaboration",
+        "topic_id": "00000000-0000-4000-8000-000000000031"
+      }
+    }
+  },
+  {
+    "id": 175,
+    "event": "edge.traversed",
+    "data": {
+      "run_id": "00000000-0000-4000-8000-000000000002",
+      "seq": 175,
+      "ts": "2026-11-12T09:02:55Z",
+      "node_id": null,
+      "attempt": null,
+      "data": {
+        "from": "guard",
+        "label": "next_topic",
+        "to": "interviewer"
+      }
+    }
+  },
+  {
+    "id": 176,
+    "event": "node.started",
+    "data": {
+      "run_id": "00000000-0000-4000-8000-000000000002",
+      "seq": 176,
+      "ts": "2026-11-12T09:02:56Z",
+      "node_id": "interviewer",
+      "attempt": 1,
+      "data": {
+        "input_summary": "Communication and Collaboration (question)",
+        "model": "z-ai/glm-5.3-flash"
+      }
+    }
+  },
+  {
+    "id": 177,
+    "event": "message.completed",
+    "data": {
+      "run_id": "00000000-0000-4000-8000-000000000002",
+      "seq": 177,
+      "ts": "2026-11-12T09:02:57Z",
+      "node_id": "interviewer",
+      "attempt": 1,
+      "data": {
+        "message": {
+          "content": "Let's finish with the collaboration side. Think of one time you explained a technical decision — why you built or chose something — to someone who wasn't a frontend developer, like a product manager, designer, or backend engineer. What did you actually say to them, in your own words? Even one rough sentence works.",
+          "created_at": "0001-01-01T00:00:00Z",
+          "id": "00000000-0000-4000-8000-000000000032",
+          "kind": "question",
+          "role": "assistant",
+          "session_id": "00000000-0000-4000-8000-000000000001",
+          "topic_id": "00000000-0000-4000-8000-000000000031"
+        }
+      }
+    }
+  },
+  {
+    "id": 178,
+    "event": "node.completed",
+    "data": {
+      "run_id": "00000000-0000-4000-8000-000000000002",
+      "seq": 178,
+      "ts": "2026-11-12T09:02:58Z",
+      "node_id": "interviewer",
+      "attempt": 1,
+      "data": {
+        "cost_usd": 0.0011727,
+        "duration_ms": 26179,
+        "output_summary": "Let's finish with the collaboration side. Think of one time you explained a tech",
+        "tokens_in": 1728,
+        "tokens_out": 1827
+      }
+    }
+  },
+  {
+    "id": 180,
+    "event": "message.completed",
+    "data": {
+      "run_id": "00000000-0000-4000-8000-000000000002",
+      "seq": 180,
+      "ts": "2026-11-12T09:03:00Z",
+      "node_id": "interviewer",
+      "attempt": 1,
+      "data": {
+        "message": {
+          "content": "It depends.",
+          "created_at": "2026-11-12T09:03:00Z",
+          "id": "00000000-0000-4000-8000-000000000033",
+          "kind": "answer",
+          "role": "applicant",
+          "session_id": "00000000-0000-4000-8000-000000000001",
+          "topic_id": "00000000-0000-4000-8000-000000000031"
+        }
+      }
+    }
+  },
+  {
+    "id": 182,
+    "event": "edge.traversed",
+    "data": {
+      "run_id": "00000000-0000-4000-8000-000000000002",
+      "seq": 182,
+      "ts": "2026-11-12T09:03:02Z",
+      "node_id": null,
+      "attempt": null,
+      "data": {
+        "from": "interviewer",
+        "label": "answer",
+        "to": "judge"
+      }
+    }
+  },
+  {
+    "id": 183,
+    "event": "node.started",
+    "data": {
+      "run_id": "00000000-0000-4000-8000-000000000002",
+      "seq": 183,
+      "ts": "2026-11-12T09:03:03Z",
+      "node_id": "judge",
+      "attempt": 1,
+      "data": {
+        "input_summary": "topic 5: Communication and Collaboration",
+        "model": "deepseek/deepseek-v4.1-flash"
+      }
+    }
+  },
+  {
+    "id": 184,
+    "event": "node.completed",
+    "data": {
+      "run_id": "00000000-0000-4000-8000-000000000002",
+      "seq": 184,
+      "ts": "2026-11-12T09:03:04Z",
+      "node_id": "judge",
+      "attempt": 1,
+      "data": {
+        "cost_usd": 0.000124005,
+        "duration_ms": 2574,
+        "output_summary": "verdict=follow_up",
+        "tokens_in": 489,
+        "tokens_out": 204
+      }
+    }
+  },
+  {
+    "id": 185,
+    "event": "edge.traversed",
+    "data": {
+      "run_id": "00000000-0000-4000-8000-000000000002",
+      "seq": 185,
+      "ts": "2026-11-12T09:03:05Z",
+      "node_id": null,
+      "attempt": null,
+      "data": {
+        "from": "judge",
+        "label": "verdict",
+        "to": "guard"
+      }
+    }
+  },
+  {
+    "id": 186,
+    "event": "node.started",
+    "data": {
+      "run_id": "00000000-0000-4000-8000-000000000002",
+      "seq": 186,
+      "ts": "2026-11-12T09:03:06Z",
+      "node_id": "guard",
+      "attempt": 1,
+      "data": {
+        "input_summary": "verdict=follow_up",
+        "model": null
+      }
+    }
+  },
+  {
+    "id": 187,
+    "event": "node.completed",
+    "data": {
+      "run_id": "00000000-0000-4000-8000-000000000002",
+      "seq": 187,
+      "ts": "2026-11-12T09:03:07Z",
+      "node_id": "guard",
+      "attempt": 1,
+      "data": {
+        "cost_usd": 0,
+        "duration_ms": 0,
+        "output_summary": "follow_up",
+        "tokens_in": 0,
+        "tokens_out": 0
+      }
+    }
+  },
+  {
+    "id": 188,
+    "event": "edge.traversed",
+    "data": {
+      "run_id": "00000000-0000-4000-8000-000000000002",
+      "seq": 188,
+      "ts": "2026-11-12T09:03:08Z",
+      "node_id": null,
+      "attempt": null,
+      "data": {
+        "from": "guard",
+        "label": "follow_up",
+        "to": "interviewer"
+      }
+    }
+  },
+  {
+    "id": 189,
+    "event": "node.started",
+    "data": {
+      "run_id": "00000000-0000-4000-8000-000000000002",
+      "seq": 189,
+      "ts": "2026-11-12T09:03:09Z",
+      "node_id": "interviewer",
+      "attempt": 1,
+      "data": {
+        "input_summary": "Communication and Collaboration (follow_up)",
+        "model": "z-ai/glm-5.3-flash"
+      }
+    }
+  },
+  {
+    "id": 190,
+    "event": "message.completed",
+    "data": {
+      "run_id": "00000000-0000-4000-8000-000000000002",
+      "seq": 190,
+      "ts": "2026-11-12T09:03:10Z",
+      "node_id": "interviewer",
+      "attempt": 1,
+      "data": {
+        "message": {
+          "content": "Let's make it hypothetical, so nothing needs to be remembered. Suppose a product manager tells you: \"This filter feels slow, but ship it anyway.\" You disagree. What would you say to them — one or two sentences — to explain your concern? And if they pushed back with \"no, ship it,\" what would you do next? Even a rough answer in your own words works.",
+          "created_at": "0001-01-01T00:00:00Z",
+          "id": "00000000-0000-4000-8000-000000000034",
+          "kind": "follow_up",
+          "role": "assistant",
+          "session_id": "00000000-0000-4000-8000-000000000001",
+          "topic_id": "00000000-0000-4000-8000-000000000031"
+        }
+      }
+    }
+  },
+  {
+    "id": 191,
+    "event": "node.completed",
+    "data": {
+      "run_id": "00000000-0000-4000-8000-000000000002",
+      "seq": 191,
+      "ts": "2026-11-12T09:03:11Z",
+      "node_id": "interviewer",
+      "attempt": 1,
+      "data": {
+        "cost_usd": 0.0006495,
+        "duration_ms": 6246,
+        "output_summary": "Let's make it hypothetical, so nothing needs to be remembered. Suppose a product",
+        "tokens_in": 2010,
+        "tokens_out": 696
+      }
+    }
+  },
+  {
+    "id": 193,
+    "event": "message.completed",
+    "data": {
+      "run_id": "00000000-0000-4000-8000-000000000002",
+      "seq": 193,
+      "ts": "2026-11-12T09:03:13Z",
+      "node_id": "interviewer",
+      "attempt": 1,
+      "data": {
+        "message": {
+          "content": "Maybe.",
+          "created_at": "2026-11-12T09:03:13Z",
+          "id": "00000000-0000-4000-8000-000000000035",
+          "kind": "answer",
+          "role": "applicant",
+          "session_id": "00000000-0000-4000-8000-000000000001",
+          "topic_id": "00000000-0000-4000-8000-000000000031"
+        }
+      }
+    }
+  },
+  {
+    "id": 195,
+    "event": "edge.traversed",
+    "data": {
+      "run_id": "00000000-0000-4000-8000-000000000002",
+      "seq": 195,
+      "ts": "2026-11-12T09:03:15Z",
+      "node_id": null,
+      "attempt": null,
+      "data": {
+        "from": "interviewer",
+        "label": "answer",
+        "to": "judge"
+      }
+    }
+  },
+  {
+    "id": 196,
+    "event": "node.started",
+    "data": {
+      "run_id": "00000000-0000-4000-8000-000000000002",
+      "seq": 196,
+      "ts": "2026-11-12T09:03:16Z",
+      "node_id": "judge",
+      "attempt": 1,
+      "data": {
+        "input_summary": "topic 5: Communication and Collaboration",
+        "model": "deepseek/deepseek-v4.1-flash"
+      }
+    }
+  },
+  {
+    "id": 197,
+    "event": "node.completed",
+    "data": {
+      "run_id": "00000000-0000-4000-8000-000000000002",
+      "seq": 197,
+      "ts": "2026-11-12T09:03:17Z",
+      "node_id": "judge",
+      "attempt": 1,
+      "data": {
+        "cost_usd": 0.00010223,
+        "duration_ms": 1635,
+        "output_summary": "verdict=follow_up",
+        "tokens_in": 594,
+        "tokens_out": 151
+      }
+    }
+  },
+  {
+    "id": 198,
+    "event": "edge.traversed",
+    "data": {
+      "run_id": "00000000-0000-4000-8000-000000000002",
+      "seq": 198,
+      "ts": "2026-11-12T09:03:18Z",
+      "node_id": null,
+      "attempt": null,
+      "data": {
+        "from": "judge",
+        "label": "verdict",
+        "to": "guard"
+      }
+    }
+  },
+  {
+    "id": 199,
+    "event": "node.started",
+    "data": {
+      "run_id": "00000000-0000-4000-8000-000000000002",
+      "seq": 199,
+      "ts": "2026-11-12T09:03:19Z",
+      "node_id": "guard",
+      "attempt": 1,
+      "data": {
+        "input_summary": "verdict=follow_up",
+        "model": null
+      }
+    }
+  },
+  {
+    "id": 200,
+    "event": "node.completed",
+    "data": {
+      "run_id": "00000000-0000-4000-8000-000000000002",
+      "seq": 200,
+      "ts": "2026-11-12T09:03:20Z",
+      "node_id": "guard",
+      "attempt": 1,
+      "data": {
+        "cost_usd": 0,
+        "duration_ms": 0,
+        "output_summary": "follow_up",
+        "tokens_in": 0,
+        "tokens_out": 0
+      }
+    }
+  },
+  {
+    "id": 201,
+    "event": "edge.traversed",
+    "data": {
+      "run_id": "00000000-0000-4000-8000-000000000002",
+      "seq": 201,
+      "ts": "2026-11-12T09:03:21Z",
+      "node_id": null,
+      "attempt": null,
+      "data": {
+        "from": "guard",
+        "label": "follow_up",
+        "to": "interviewer"
+      }
+    }
+  },
+  {
+    "id": 202,
+    "event": "node.started",
+    "data": {
+      "run_id": "00000000-0000-4000-8000-000000000002",
+      "seq": 202,
+      "ts": "2026-11-12T09:03:22Z",
+      "node_id": "interviewer",
+      "attempt": 1,
+      "data": {
+        "input_summary": "Communication and Collaboration (follow_up)",
+        "model": "z-ai/glm-5.3-flash"
+      }
+    }
+  },
+  {
+    "id": 203,
+    "event": "node.failed",
+    "data": {
+      "run_id": "00000000-0000-4000-8000-000000000002",
+      "seq": 203,
+      "ts": "2026-11-12T09:03:23Z",
+      "node_id": "interviewer",
+      "attempt": 1,
+      "data": {
+        "error": "timeout",
+        "will_retry": true
+      }
+    }
+  },
+  {
+    "id": 204,
+    "event": "node.started",
+    "data": {
+      "run_id": "00000000-0000-4000-8000-000000000002",
+      "seq": 204,
+      "ts": "2026-11-12T09:03:24Z",
+      "node_id": "interviewer",
+      "attempt": 2,
+      "data": {
+        "input_summary": "Communication and Collaboration (follow_up)",
+        "model": "z-ai/glm-5.3-flash"
+      }
+    }
+  },
+  {
+    "id": 205,
+    "event": "message.completed",
+    "data": {
+      "run_id": "00000000-0000-4000-8000-000000000002",
+      "seq": 205,
+      "ts": "2026-11-12T09:03:25Z",
+      "node_id": "interviewer",
+      "attempt": 2,
+      "data": {
+        "message": {
+          "content": "Let's try the simplest possible version. A product manager says a slow filter should ship anyway. You can only pick one of these three responses: (a) explain the slowdown with numbers, (b) ship it and fix it later, or (c) escalate to a tech lead. Which one would you pick — a, b, or c? Just the letter, and one short sentence on why.",
+          "created_at": "0001-01-01T00:00:00Z",
+          "id": "00000000-0000-4000-8000-000000000036",
+          "kind": "follow_up",
+          "role": "assistant",
+          "session_id": "00000000-0000-4000-8000-000000000001",
+          "topic_id": "00000000-0000-4000-8000-000000000031"
+        }
+      }
+    }
+  },
+  {
+    "id": 206,
+    "event": "node.completed",
+    "data": {
+      "run_id": "00000000-0000-4000-8000-000000000002",
+      "seq": 206,
+      "ts": "2026-11-12T09:03:26Z",
+      "node_id": "interviewer",
+      "attempt": 2,
+      "data": {
+        "cost_usd": 0.00038764999999999996,
+        "duration_ms": 2556,
+        "output_summary": "Let's try the simplest possible version. A product manager says a slow filter sh",
+        "tokens_in": 2141,
+        "tokens_out": 133
+      }
+    }
+  },
+  {
+    "id": 208,
+    "event": "message.completed",
+    "data": {
+      "run_id": "00000000-0000-4000-8000-000000000002",
+      "seq": 208,
+      "ts": "2026-11-12T09:03:28Z",
+      "node_id": "interviewer",
+      "attempt": 1,
+      "data": {
+        "message": {
+          "content": "I forgot.",
+          "created_at": "2026-11-12T09:03:28Z",
+          "id": "00000000-0000-4000-8000-000000000037",
+          "kind": "answer",
+          "role": "applicant",
+          "session_id": "00000000-0000-4000-8000-000000000001",
+          "topic_id": "00000000-0000-4000-8000-000000000031"
+        }
+      }
+    }
+  },
+  {
+    "id": 210,
+    "event": "edge.traversed",
+    "data": {
+      "run_id": "00000000-0000-4000-8000-000000000002",
+      "seq": 210,
+      "ts": "2026-11-12T09:03:30Z",
+      "node_id": null,
+      "attempt": null,
+      "data": {
+        "from": "interviewer",
+        "label": "answer",
+        "to": "judge"
+      }
+    }
+  },
+  {
+    "id": 211,
+    "event": "node.started",
+    "data": {
+      "run_id": "00000000-0000-4000-8000-000000000002",
+      "seq": 211,
+      "ts": "2026-11-12T09:03:31Z",
+      "node_id": "judge",
+      "attempt": 1,
+      "data": {
+        "input_summary": "topic 5: Communication and Collaboration",
+        "model": "deepseek/deepseek-v4.1-flash"
+      }
+    }
+  },
+  {
+    "id": 212,
+    "event": "node.completed",
+    "data": {
+      "run_id": "00000000-0000-4000-8000-000000000002",
+      "seq": 212,
+      "ts": "2026-11-12T09:03:32Z",
+      "node_id": "judge",
+      "attempt": 1,
+      "data": {
+        "cost_usd": 0.00013127,
+        "duration_ms": 2183,
+        "output_summary": "verdict=follow_up",
+        "tokens_in": 506,
+        "tokens_out": 217
+      }
+    }
+  },
+  {
+    "id": 213,
+    "event": "edge.traversed",
+    "data": {
+      "run_id": "00000000-0000-4000-8000-000000000002",
+      "seq": 213,
+      "ts": "2026-11-12T09:03:33Z",
+      "node_id": null,
+      "attempt": null,
+      "data": {
+        "from": "judge",
+        "label": "verdict",
+        "to": "guard"
+      }
+    }
+  },
+  {
+    "id": 214,
+    "event": "node.started",
+    "data": {
+      "run_id": "00000000-0000-4000-8000-000000000002",
+      "seq": 214,
+      "ts": "2026-11-12T09:03:34Z",
+      "node_id": "guard",
+      "attempt": 1,
+      "data": {
+        "input_summary": "verdict=follow_up",
+        "model": null
+      }
+    }
+  },
+  {
+    "id": 215,
+    "event": "node.completed",
+    "data": {
+      "run_id": "00000000-0000-4000-8000-000000000002",
+      "seq": 215,
+      "ts": "2026-11-12T09:03:35Z",
+      "node_id": "guard",
+      "attempt": 1,
+      "data": {
+        "cost_usd": 0,
+        "duration_ms": 0,
+        "output_summary": "finish",
+        "tokens_in": 0,
+        "tokens_out": 0
+      }
+    }
+  },
+  {
+    "id": 216,
+    "event": "edge.traversed",
+    "data": {
+      "run_id": "00000000-0000-4000-8000-000000000002",
+      "seq": 216,
+      "ts": "2026-11-12T09:03:36Z",
+      "node_id": null,
+      "attempt": null,
+      "data": {
+        "from": "guard",
+        "label": "finish",
+        "to": "scorer"
+      }
+    }
+  },
+  {
+    "id": 218,
+    "event": "node.started",
+    "data": {
+      "run_id": "00000000-0000-4000-8000-000000000002",
+      "seq": 218,
+      "ts": "2026-11-12T09:03:38Z",
+      "node_id": "scorer",
+      "attempt": 1,
+      "data": {
+        "input_summary": "rubric and transcript",
+        "model": "deepseek/deepseek-v4.1-flash"
+      }
+    }
+  },
+  {
+    "id": 219,
+    "event": "node.completed",
+    "data": {
+      "run_id": "00000000-0000-4000-8000-000000000002",
+      "seq": 219,
+      "ts": "2026-11-12T09:03:39Z",
+      "node_id": "scorer",
+      "attempt": 1,
+      "data": {
+        "cost_usd": 0.00063539,
+        "duration_ms": 8331,
+        "output_summary": "{\"scores\":[{\"evidence\":[{\"message_id\":\"m3\",\"quote\":\"It depends.\"}],\"rationale\":\"",
+        "tokens_in": 3142,
+        "tokens_out": 988
+      }
+    }
+  },
+  {
+    "id": 220,
+    "event": "edge.traversed",
+    "data": {
+      "run_id": "00000000-0000-4000-8000-000000000002",
+      "seq": 220,
+      "ts": "2026-11-12T09:03:40Z",
+      "node_id": null,
+      "attempt": null,
+      "data": {
+        "from": "scorer",
+        "label": "scored",
+        "to": "evidence_check"
+      }
+    }
+  },
+  {
+    "id": 221,
+    "event": "node.started",
+    "data": {
+      "run_id": "00000000-0000-4000-8000-000000000002",
+      "seq": 221,
+      "ts": "2026-11-12T09:03:41Z",
+      "node_id": "evidence_check",
+      "attempt": 1,
+      "data": {
+        "input_summary": "scorer output",
+        "model": null
+      }
+    }
+  },
+  {
+    "id": 222,
+    "event": "node.completed",
+    "data": {
+      "run_id": "00000000-0000-4000-8000-000000000002",
+      "seq": 222,
+      "ts": "2026-11-12T09:03:42Z",
+      "node_id": "evidence_check",
+      "attempt": 1,
+      "data": {
+        "cost_usd": 0,
+        "duration_ms": 0,
+        "output_summary": "invalid",
+        "tokens_in": 0,
+        "tokens_out": 0
+      }
+    }
+  },
+  {
+    "id": 223,
+    "event": "check.failed",
+    "data": {
+      "run_id": "00000000-0000-4000-8000-000000000002",
+      "seq": 223,
+      "ts": "2026-11-12T09:03:43Z",
+      "node_id": "evidence_check",
+      "attempt": 1,
+      "data": {
+        "check": "evidence_quotes",
+        "errors": [
+          {
+            "quote": "It depends.",
+            "reason": "quote_not_found",
+            "rubric_key": "frontend_depth"
+          },
+          {
+            "quote": "It depends.",
+            "reason": "quote_not_found",
+            "rubric_key": "system_design"
+          },
+          {
+            "quote": "I forgot.",
+            "reason": "quote_not_found",
+            "rubric_key": "testing_quality"
+          },
+          {
+            "quote": "I forgot.",
+            "reason": "quote_not_found",
+            "rubric_key": "communication"
+          }
+        ]
+      }
+    }
+  },
+  {
+    "id": 224,
+    "event": "loop.retry",
+    "data": {
+      "run_id": "00000000-0000-4000-8000-000000000002",
+      "seq": 224,
+      "ts": "2026-11-12T09:03:44Z",
+      "node_id": "scorer",
+      "attempt": 2,
+      "data": {
+        "attempt": 2,
+        "feedback": "frontend_depth: quote must be 3-300 characters and at least 3 words (quote: \"It depends.\"); system_design: quote must be 3-300 characters and at least 3 words (quote: \"It depends.\"); testing_quality: quote must be 3-300 characters and at least 3 words (quote: \"I forgot.\"); communication: quote must be 3-300 characters and at least 3 words (quote: \"I forgot.\")",
+        "max_attempts": 3,
+        "reason": "quote_not_found"
+      }
+    }
+  },
+  {
+    "id": 225,
+    "event": "edge.traversed",
+    "data": {
+      "run_id": "00000000-0000-4000-8000-000000000002",
+      "seq": 225,
+      "ts": "2026-11-12T09:03:45Z",
+      "node_id": null,
+      "attempt": null,
+      "data": {
+        "from": "evidence_check",
+        "label": "retry",
+        "to": "scorer"
+      }
+    }
+  },
+  {
+    "id": 226,
+    "event": "node.started",
+    "data": {
+      "run_id": "00000000-0000-4000-8000-000000000002",
+      "seq": 226,
+      "ts": "2026-11-12T09:03:46Z",
+      "node_id": "scorer",
+      "attempt": 2,
+      "data": {
+        "input_summary": "rubric and transcript",
+        "model": "deepseek/deepseek-v4.1-flash"
+      }
+    }
+  },
+  {
+    "id": 227,
+    "event": "node.completed",
+    "data": {
+      "run_id": "00000000-0000-4000-8000-000000000002",
+      "seq": 227,
+      "ts": "2026-11-12T09:03:47Z",
+      "node_id": "scorer",
+      "attempt": 2,
+      "data": {
+        "cost_usd": 0.000763365,
+        "duration_ms": 4217,
+        "output_summary": "{\"scores\":[{\"evidence\":[{\"message_id\":\"m3\",\"quote\":\"It depends.\"}],\"rationale\":\"",
+        "tokens_in": 3097,
+        "tokens_out": 1248
+      }
+    }
+  },
+  {
+    "id": 228,
+    "event": "edge.traversed",
+    "data": {
+      "run_id": "00000000-0000-4000-8000-000000000002",
+      "seq": 228,
+      "ts": "2026-11-12T09:03:48Z",
+      "node_id": null,
+      "attempt": null,
+      "data": {
+        "from": "scorer",
+        "label": "scored",
+        "to": "evidence_check"
+      }
+    }
+  },
+  {
+    "id": 229,
+    "event": "node.started",
+    "data": {
+      "run_id": "00000000-0000-4000-8000-000000000002",
+      "seq": 229,
+      "ts": "2026-11-12T09:03:49Z",
+      "node_id": "evidence_check",
+      "attempt": 2,
+      "data": {
+        "input_summary": "scorer output",
+        "model": null
+      }
+    }
+  },
+  {
+    "id": 230,
+    "event": "node.completed",
+    "data": {
+      "run_id": "00000000-0000-4000-8000-000000000002",
+      "seq": 230,
+      "ts": "2026-11-12T09:03:50Z",
+      "node_id": "evidence_check",
+      "attempt": 2,
+      "data": {
+        "cost_usd": 0,
+        "duration_ms": 0,
+        "output_summary": "invalid",
+        "tokens_in": 0,
+        "tokens_out": 0
+      }
+    }
+  },
+  {
+    "id": 231,
+    "event": "check.failed",
+    "data": {
+      "run_id": "00000000-0000-4000-8000-000000000002",
+      "seq": 231,
+      "ts": "2026-11-12T09:03:51Z",
+      "node_id": "evidence_check",
+      "attempt": 2,
+      "data": {
+        "check": "evidence_quotes",
+        "errors": [
+          {
+            "quote": "It depends.",
+            "reason": "quote_not_found",
+            "rubric_key": "frontend_depth"
+          },
+          {
+            "quote": "It depends.",
+            "reason": "quote_not_found",
+            "rubric_key": "system_design"
+          },
+          {
+            "quote": "I forgot.",
+            "reason": "quote_not_found",
+            "rubric_key": "testing_quality"
+          },
+          {
+            "quote": "I forgot.",
+            "reason": "quote_not_found",
+            "rubric_key": "communication"
+          }
+        ]
+      }
+    }
+  },
+  {
+    "id": 232,
+    "event": "loop.retry",
+    "data": {
+      "run_id": "00000000-0000-4000-8000-000000000002",
+      "seq": 232,
+      "ts": "2026-11-12T09:03:52Z",
+      "node_id": "scorer",
+      "attempt": 3,
+      "data": {
+        "attempt": 3,
+        "feedback": "frontend_depth: quote must be 3-300 characters and at least 3 words (quote: \"It depends.\"); system_design: quote must be 3-300 characters and at least 3 words (quote: \"It depends.\"); testing_quality: quote must be 3-300 characters and at least 3 words (quote: \"I forgot.\"); communication: quote must be 3-300 characters and at least 3 words (quote: \"I forgot.\")",
+        "max_attempts": 3,
+        "reason": "quote_not_found"
+      }
+    }
+  },
+  {
+    "id": 233,
+    "event": "edge.traversed",
+    "data": {
+      "run_id": "00000000-0000-4000-8000-000000000002",
+      "seq": 233,
+      "ts": "2026-11-12T09:03:53Z",
+      "node_id": null,
+      "attempt": null,
+      "data": {
+        "from": "evidence_check",
+        "label": "retry",
+        "to": "scorer"
+      }
+    }
+  },
+  {
+    "id": 234,
+    "event": "node.started",
+    "data": {
+      "run_id": "00000000-0000-4000-8000-000000000002",
+      "seq": 234,
+      "ts": "2026-11-12T09:03:54Z",
+      "node_id": "scorer",
+      "attempt": 3,
+      "data": {
+        "input_summary": "rubric and transcript",
+        "model": "deepseek/deepseek-v4.1-flash"
+      }
+    }
+  },
+  {
+    "id": 235,
+    "event": "node.completed",
+    "data": {
+      "run_id": "00000000-0000-4000-8000-000000000002",
+      "seq": 235,
+      "ts": "2026-11-12T09:03:55Z",
+      "node_id": "scorer",
+      "attempt": 3,
+      "data": {
+        "cost_usd": 0.000940365,
+        "duration_ms": 9677,
+        "output_summary": "{\"scores\":[{\"evidence\":[{\"message_id\":\"m3\",\"quote\":\"It depends.\"}],\"rationale\":\"",
+        "tokens_in": 3097,
+        "tokens_out": 1602
+      }
+    }
+  },
+  {
+    "id": 236,
+    "event": "edge.traversed",
+    "data": {
+      "run_id": "00000000-0000-4000-8000-000000000002",
+      "seq": 236,
+      "ts": "2026-11-12T09:03:56Z",
+      "node_id": null,
+      "attempt": null,
+      "data": {
+        "from": "scorer",
+        "label": "scored",
+        "to": "evidence_check"
+      }
+    }
+  },
+  {
+    "id": 237,
+    "event": "node.started",
+    "data": {
+      "run_id": "00000000-0000-4000-8000-000000000002",
+      "seq": 237,
+      "ts": "2026-11-12T09:03:57Z",
+      "node_id": "evidence_check",
+      "attempt": 3,
+      "data": {
+        "input_summary": "scorer output",
+        "model": null
+      }
+    }
+  },
+  {
+    "id": 238,
+    "event": "node.completed",
+    "data": {
+      "run_id": "00000000-0000-4000-8000-000000000002",
+      "seq": 238,
+      "ts": "2026-11-12T09:03:58Z",
+      "node_id": "evidence_check",
+      "attempt": 3,
+      "data": {
+        "cost_usd": 0,
+        "duration_ms": 0,
+        "output_summary": "invalid",
+        "tokens_in": 0,
+        "tokens_out": 0
+      }
+    }
+  },
+  {
+    "id": 239,
+    "event": "check.failed",
+    "data": {
+      "run_id": "00000000-0000-4000-8000-000000000002",
+      "seq": 239,
+      "ts": "2026-11-12T09:03:59Z",
+      "node_id": "evidence_check",
+      "attempt": 3,
+      "data": {
+        "check": "evidence_quotes",
+        "errors": [
+          {
+            "quote": "It depends.",
+            "reason": "quote_not_found",
+            "rubric_key": "frontend_depth"
+          },
+          {
+            "quote": "It depends.",
+            "reason": "quote_not_found",
+            "rubric_key": "system_design"
+          },
+          {
+            "quote": "I forgot.",
+            "reason": "quote_not_found",
+            "rubric_key": "testing_quality"
+          },
+          {
+            "quote": "I forgot.",
+            "reason": "quote_not_found",
+            "rubric_key": "communication"
+          }
+        ]
+      }
+    }
+  },
+  {
+    "id": 240,
+    "event": "edge.traversed",
+    "data": {
+      "run_id": "00000000-0000-4000-8000-000000000002",
+      "seq": 240,
+      "ts": "2026-11-12T09:04:00Z",
+      "node_id": null,
+      "attempt": null,
+      "data": {
+        "from": "evidence_check",
+        "label": "scored",
+        "to": "recruiter_gate"
+      }
+    }
+  },
+  {
+    "id": 241,
+    "event": "run.completed",
+    "data": {
+      "run_id": "00000000-0000-4000-8000-000000000002",
+      "seq": 241,
+      "ts": "2026-11-12T09:04:01Z",
+      "node_id": null,
+      "attempt": null,
+      "data": {
+        "cost_usd": 0.012421100000000001,
+        "finish_reason": "question_limit",
+        "needs_manual_count": 4,
+        "status": "succeeded",
+        "total_tokens_in": 37192,
+        "total_tokens_out": 17599
+      }
+    }
+  }
+]

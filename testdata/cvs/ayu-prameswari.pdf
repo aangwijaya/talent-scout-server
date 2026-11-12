@@ -1,0 +1,55 @@
+%PDF-1.4
+1 0 obj
+<< /Type /Catalog /Pages 2 0 R >>
+endobj
+2 0 obj
+<< /Type /Pages /Kids [4 0 R] /Count 1 >>
+endobj
+3 0 obj
+<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>
+endobj
+4 0 obj
+<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 3 0 R >> >> /Contents 5 0 R >>
+endobj
+5 0 obj
+<< /Length 1117 >>
+stream
+BT /F1 11 Tf 72 740 Td 15 TL
+(AYU PRAMESWARI) Tj T*
+(Senior Frontend Engineer) Tj T*
+(ayu.prameswari@example.com | Jakarta \(fictional profile\)) Tj T*
+() Tj T*
+(SUMMARY) Tj T*
+(Frontend engineer with 8 years building accessible, fast web apps.) Tj T*
+(Deep experience in SvelteKit, TypeScript, React, and state management.) Tj T*
+() Tj T*
+(EXPERIENCE) Tj T*
+(Lead Frontend Engineer, Acme Studio \(fictional\), 2021-2026) Tj T*
+(- Rebuilt a dashboard in SvelteKit; cut first load from 4.2s to 1.1s.) Tj T*
+(- Moved shared state into small stores and measured render counts before) Tj T*
+(  and after each change.) Tj T*
+(- Set up Playwright and Vitest suites; accessibility checks in CI.) Tj T*
+(- Explained architecture trade-offs in design reviews and mentored 4 engineers.) Tj T*
+() Tj T*
+(Frontend Engineer, Beta Labs \(fictional\), 2018-2021) Tj T*
+(- Built a React component library used by six product teams.) Tj T*
+(- Designed API contracts with backend engineers and documented error states.) Tj T*
+() Tj T*
+(SKILLS) Tj T*
+(SvelteKit, React, TypeScript, state management, performance, testing, a11y) Tj T*
+ET
+endstream
+endobj
+xref
+0 6
+0000000000 65535 f 
+0000000009 00000 n 
+0000000058 00000 n 
+0000000115 00000 n 
+0000000185 00000 n 
+0000000311 00000 n 
+trailer
+<< /Size 6 /Root 1 0 R >>
+startxref
+1480
+%%EOF

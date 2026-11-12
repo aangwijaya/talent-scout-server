@@ -23,6 +23,14 @@ Rules:
 
 ## Entries
 
+### 2026-11-13 — #14 Reasoning tokens eat `max_tokens`; live prompt tuning and cost
+- **Context:** Running the fake and live (OpenRouter) end-to-end flow from `internal/e2e` with the seed job and three made-up CVs, then tuning the planner/interviewer/judge/scorer prompts.
+- **Problem:** The first live runs failed loudly on `finish_reason: "length"`: planner ended at exactly 800/800 completion tokens, judge at 200/200, and the interviewer at 500 and later 2000 tokens with no visible text (the reasoning trace consumed the whole budget). A happy-path session cost `$0.010162` (34,984 in / 12,566 out), double the `~$0.005` estimate in `docs/TECH-STACK.md` §8.
+- **Cause:** `deepseek/deepseek-v4.1-flash` and `z-ai/glm-5.3-flash` emit reasoning tokens that count toward `completion_tokens`, so the caps tuned for visible JSON/text were far too low. The judge prompt was also strict enough that a substantive answer could still end at the 15-question limit.
+- **Lesson:** Size `max_tokens` for reasoning plus output, not output alone: after the fix the observed completion counts were planner 683–1623, judge 164–742, scorer 723–1788, and interviewer 50–1827. Keep planner ≥3000, judge ≥1200 and scorer ≥4000, and set `reasoning: { effort: low }` on the streaming interviewer (it cut interviewer completion to 48–450 on the tuned runs). Recheck cost with real token counts — realistic live sessions here were `$0.006772`, `$0.008021` and `$0.012421`, so §8's `~$0.005` is low but the same order of magnitude. Tuning that worked: planner must cover every rubric key; judge treats a concrete, scoreable account as sufficient and only asks for missing parts; scorer must copy a contiguous verbatim phrase of at least 3 words and never paraphrase.
+- **Follow-up:** `internal/e2e` fake/live harness, `internal/e2e/fixture_test.go` (replays the recorded `loop.retry` fixture), live-only `TestLiveEndToEnd` and `TestLiveEvidenceRetryFixture`
+- **Repeated?:** first time
+
 ### 2026-11-12 — #60 Run SSE must not re-read status after the replay
 - **Context:** Hardening the graph-run stream found while verifying server#13.
 - **Problem:** The handler re-read the run status after replaying, but the runner emits `run.completed`/`run.failed` before `finishRun` persists the status, so the re-read could see `succeeded` and close the stream before live delivered the terminal event. Stream tests still passed when close-after-terminal was removed because they only checked for any error after the 3 s client timeout.

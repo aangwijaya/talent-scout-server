@@ -16,13 +16,18 @@ import (
 )
 
 type GraphRuns struct {
-	store         store.Store
-	bus           *graph.Bus
-	writeDeadline time.Duration
+	store             store.Store
+	bus               *graph.Bus
+	writeDeadline     time.Duration
+	heartbeatInterval time.Duration
 }
 
 func NewGraphRuns(st store.Store) *GraphRuns {
-	return &GraphRuns{store: st, writeDeadline: sse.DefaultWriteDeadline}
+	return &GraphRuns{
+		store:             st,
+		writeDeadline:     sse.DefaultWriteDeadline,
+		heartbeatInterval: sse.HeartbeatInterval,
+	}
 }
 
 // SetBus attaches the live event bus used by the run stream.
@@ -37,7 +42,12 @@ func (h *GraphRuns) Get(w http.ResponseWriter, r *http.Request) {
 		apierror.Write(w, http.StatusServiceUnavailable, apierror.CodeDBUnavailable, "database is unavailable", nil)
 		return
 	}
-	run, err := h.store.GetGraphRun(r.Context(), chi.URLParam(r, "runId"))
+	runID := chi.URLParam(r, "runId")
+	if !uuidPattern.MatchString(runID) {
+		apierror.Write(w, http.StatusNotFound, apierror.CodeNotFound, "graph run not found", nil)
+		return
+	}
+	run, err := h.store.GetGraphRun(r.Context(), runID)
 	if err != nil {
 		h.writeRunLookupError(w, err)
 		return
@@ -60,6 +70,10 @@ func (h *GraphRuns) Events(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	runID := chi.URLParam(r, "runId")
+	if !uuidPattern.MatchString(runID) {
+		apierror.Write(w, http.StatusNotFound, apierror.CodeNotFound, "graph run not found", nil)
+		return
+	}
 	run, err := h.store.GetGraphRun(r.Context(), runID)
 	if err != nil {
 		h.writeRunLookupError(w, err)
@@ -100,14 +114,8 @@ func (h *GraphRuns) Events(w http.ResponseWriter, r *http.Request) {
 	if run.Status != domain.GraphRunStatusRunning {
 		return
 	}
-	// A run can finish between the status read and the replay above; if so its
-	// terminal event is in the replay (or in live), so re-reading just closes a
-	// stream whose events were already fully replayed.
-	if fresh, err := h.store.GetGraphRun(r.Context(), runID); err == nil && fresh.Status != domain.GraphRunStatusRunning {
-		return
-	}
 
-	heartbeat := time.NewTicker(sse.HeartbeatInterval)
+	heartbeat := time.NewTicker(h.heartbeatInterval)
 	defer heartbeat.Stop()
 	for {
 		select {

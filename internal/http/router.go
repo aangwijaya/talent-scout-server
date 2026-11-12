@@ -79,6 +79,8 @@ func NewRouter(cfg config.Config, deps Deps) http.Handler {
 		r.Method(http.MethodGet, "/sessions/{token}/events", http.HandlerFunc(sessions.Events))
 
 		graphRuns := handlers.NewGraphRuns(deps.Store)
+		graphRuns.SetBus(bus)
+		r.With(requireRecruiter).Method(http.MethodGet, "/graph-runs/{runId}", http.HandlerFunc(graphRuns.Get))
 		r.With(middleware.SSEToken(tokens)).Method(http.MethodGet, "/graph-runs/{runId}/events", http.HandlerFunc(graphRuns.Events))
 	})
 

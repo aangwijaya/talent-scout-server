@@ -50,6 +50,27 @@ func TestWriteEventOmitsIDForDelta(t *testing.T) {
 	}
 }
 
+func TestRunEventFilter(t *testing.T) {
+	tests := map[string]bool{
+		graph.EventRunStarted:       true,
+		graph.EventNodeStarted:      true,
+		graph.EventNodeSkipped:      true,
+		graph.EventEdgeTraversed:    true,
+		graph.EventTopicChanged:     true,
+		graph.EventMessageCompleted: true,
+		graph.EventRunCompleted:     true,
+		graph.EventSessionUpdated:   false,
+		graph.EventSessionEnded:     false,
+		graph.EventError:            false,
+		graph.EventMessageDelta:     false,
+	}
+	for eventType, want := range tests {
+		if got := IsRunEvent(eventType); got != want {
+			t.Errorf("IsRunEvent(%q) = %v, want %v", eventType, got, want)
+		}
+	}
+}
+
 func TestSessionEventFilter(t *testing.T) {
 	tests := map[string]bool{
 		graph.EventSessionUpdated:   true,

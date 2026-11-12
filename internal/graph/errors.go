@@ -34,8 +34,8 @@ func nodeFailedCode(err error) string {
 	return nodeFailedLLMError
 }
 
-// logNodeFailed keeps the raw error in the server log, with the node and
+// logNodeFailed keeps the raw error in the server log, with the run, node and
 // attempt, while the event carries only its code.
-func logNodeFailed(nodeID string, attempt int, err error) {
-	slog.Default().Error("llm node failed", "node_id", nodeID, "attempt", attempt, "error", err)
+func (r *Runner) logNodeFailed(nodeID string, attempt int, err error) {
+	slog.Default().Error("llm node failed", "run_id", r.runID, "node_id", nodeID, "attempt", attempt, "error", err)
 }

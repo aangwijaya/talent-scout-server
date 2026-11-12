@@ -157,7 +157,7 @@ func (r *Runner) streamInterviewer(ctx context.Context, attempt int, messages []
 	start := time.Now()
 	req.OnRetry = func(failedAttempt int, err error) {
 		failed := attempt + failedAttempt - 1
-		logNodeFailed("interviewer", failed, err)
+		r.logNodeFailed("interviewer", failed, err)
 		_ = r.emitNodeFailed(ctx, "interviewer", failed, &model, nodeFailedCode(err), true)
 		currentAttempt = failed + 1
 		start = time.Now()
@@ -189,14 +189,14 @@ func (r *Runner) streamInterviewer(ctx context.Context, attempt int, messages []
 
 	resp, err := r.llm.Stream(ctx, req, onDelta)
 	if err != nil && !errors.Is(err, errWordLimit) && !errors.Is(err, llm.ErrTruncated) {
-		logNodeFailed("interviewer", currentAttempt, err)
+		r.logNodeFailed("interviewer", currentAttempt, err)
 		_ = r.emitNodeFailed(ctx, "interviewer", currentAttempt, &model, nodeFailedCode(err), false)
 		return streamResult{Attempt: currentAttempt, Model: model, StartedAt: start}, err
 	}
 
 	text := limiter.Text()
 	if strings.TrimSpace(text) == "" {
-		logNodeFailed("interviewer", currentAttempt, errEmptyReply)
+		r.logNodeFailed("interviewer", currentAttempt, errEmptyReply)
 		_ = r.emitNodeFailed(ctx, "interviewer", currentAttempt, &model, nodeFailedCode(errEmptyReply), false)
 		return streamResult{Attempt: currentAttempt, Model: model, StartedAt: start}, errEmptyReply
 	}

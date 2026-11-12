@@ -34,7 +34,7 @@ func TestLoginReturnsValidToken(t *testing.T) {
 	})
 
 	rec := httptest.NewRecorder()
-	handlers.NewAuth(cfg, manager).Login(rec, loginRequest(`{"password":"correct horse"}`))
+	handlers.NewAuth(cfg, manager, nil).Login(rec, loginRequest(`{"password":"correct horse"}`))
 
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d, want 200 (body: %s)", rec.Code, rec.Body.String())
@@ -75,7 +75,7 @@ func TestLoginRejectsWrongPassword(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			rec := httptest.NewRecorder()
-			handlers.NewAuth(cfg, manager).Login(rec, loginRequest(tc.body))
+			handlers.NewAuth(cfg, manager, nil).Login(rec, loginRequest(tc.body))
 
 			if rec.Code != http.StatusUnauthorized {
 				t.Fatalf("status = %d, want 401 (body: %s)", rec.Code, rec.Body.String())
@@ -101,7 +101,7 @@ func TestLoginRejectsWhenPasswordNotConfigured(t *testing.T) {
 	manager := auth.New(cfg.AuthTokenSecret)
 
 	rec := httptest.NewRecorder()
-	handlers.NewAuth(cfg, manager).Login(rec, loginRequest(`{"password":""}`))
+	handlers.NewAuth(cfg, manager, nil).Login(rec, loginRequest(`{"password":""}`))
 
 	if rec.Code != http.StatusUnauthorized {
 		t.Fatalf("status = %d, want 401", rec.Code)

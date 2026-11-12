@@ -49,8 +49,9 @@ func NewRouter(cfg config.Config, deps Deps) http.Handler {
 	r.Route("/api/v1", func(r chi.Router) {
 		r.Method(http.MethodGet, "/health", handlers.NewHealth(cfg, deps.DB))
 
-		login := handlers.NewAuth(cfg, tokens)
+		login := handlers.NewAuth(cfg, tokens, deps.Store)
 		r.Method(http.MethodPost, "/auth/login", http.HandlerFunc(login.Login))
+		r.With(requireRecruiter).Method(http.MethodPost, "/auth/sse-token", http.HandlerFunc(login.SSEToken))
 
 		jobs := handlers.NewJobs(cfg, deps.Store)
 		r.With(requireRecruiter).Method(http.MethodGet, "/jobs", http.HandlerFunc(jobs.List))
@@ -76,6 +77,9 @@ func NewRouter(cfg config.Config, deps Deps) http.Handler {
 		r.Method(http.MethodPost, "/sessions/{token}/messages", http.HandlerFunc(sessions.SendMessage))
 		r.Method(http.MethodPost, "/sessions/{token}/retry", http.HandlerFunc(sessions.Retry))
 		r.Method(http.MethodGet, "/sessions/{token}/events", http.HandlerFunc(sessions.Events))
+
+		graphRuns := handlers.NewGraphRuns(deps.Store)
+		r.With(middleware.SSEToken(tokens)).Method(http.MethodGet, "/graph-runs/{runId}/events", http.HandlerFunc(graphRuns.Events))
 	})
 
 	return r

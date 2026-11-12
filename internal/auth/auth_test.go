@@ -45,6 +45,110 @@ func TestIssueAndVerifyAccessToken(t *testing.T) {
 	}
 }
 
+func TestIssueAndVerifySSEToken(t *testing.T) {
+	now := time.Date(2026, 11, 10, 8, 0, 0, 0, time.UTC)
+	manager := auth.NewWithClock(validSecret, func() time.Time { return now })
+
+	token, expiresAt, err := manager.IssueSSEToken("run-1")
+	if err != nil {
+		t.Fatalf("IssueSSEToken: %v", err)
+	}
+	if token == "" {
+		t.Fatal("token is empty")
+	}
+	if want := now.Add(auth.SSETokenTTL); !expiresAt.Equal(want) {
+		t.Errorf("expiresAt = %v, want %v", expiresAt, want)
+	}
+
+	claims, err := manager.VerifySSEToken(token, "run-1")
+	if err != nil {
+		t.Fatalf("VerifySSEToken: %v", err)
+	}
+	if claims.Audience != auth.AudienceSSE {
+		t.Errorf("audience = %q, want %q", claims.Audience, auth.AudienceSSE)
+	}
+	if claims.RunID != "run-1" {
+		t.Errorf("run id = %q, want run-1", claims.RunID)
+	}
+	if !claims.ExpiresAt.Equal(expiresAt) {
+		t.Errorf("claims expiry = %v, want %v", claims.ExpiresAt, expiresAt)
+	}
+}
+
+func TestVerifySSETokenRejectsExpired(t *testing.T) {
+	now := time.Date(2026, 11, 10, 8, 0, 0, 0, time.UTC)
+	manager := auth.NewWithClock(validSecret, func() time.Time { return now })
+
+	token, expiresAt, err := manager.IssueSSEToken("run-1")
+	if err != nil {
+		t.Fatalf("IssueSSEToken: %v", err)
+	}
+
+	now = expiresAt
+	if _, err := manager.VerifySSEToken(token, "run-1"); !errors.Is(err, auth.ErrExpiredToken) {
+		t.Fatalf("VerifySSEToken error = %v, want ErrExpiredToken", err)
+	}
+}
+
+func TestVerifySSETokenRejectsOtherAudience(t *testing.T) {
+	manager := auth.NewWithClock(validSecret, time.Now)
+
+	access, _, err := manager.IssueAccessToken()
+	if err != nil {
+		t.Fatalf("IssueAccessToken: %v", err)
+	}
+	if _, err := manager.VerifySSEToken(access, "run-1"); !errors.Is(err, auth.ErrInvalidToken) {
+		t.Fatalf("VerifySSEToken(aud=recruiter) error = %v, want ErrInvalidToken", err)
+	}
+}
+
+func TestVerifySSETokenRejectsOtherRunID(t *testing.T) {
+	manager := auth.NewWithClock(validSecret, time.Now)
+
+	token, _, err := manager.IssueSSEToken("run-1")
+	if err != nil {
+		t.Fatalf("IssueSSEToken: %v", err)
+	}
+	if _, err := manager.VerifySSEToken(token, "run-2"); !errors.Is(err, auth.ErrInvalidToken) {
+		t.Fatalf("VerifySSEToken(run-2) error = %v, want ErrInvalidToken", err)
+	}
+}
+
+func TestTokenExpiryIsTruncatedToWholeSeconds(t *testing.T) {
+	now := time.Date(2026, 11, 10, 8, 0, 0, 789000000, time.UTC)
+	manager := auth.NewWithClock(validSecret, func() time.Time { return now })
+
+	access, accessExpiresAt, err := manager.IssueAccessToken()
+	if err != nil {
+		t.Fatalf("IssueAccessToken: %v", err)
+	}
+	accessClaims, err := manager.VerifyAccessToken(access)
+	if err != nil {
+		t.Fatalf("VerifyAccessToken: %v", err)
+	}
+	if accessExpiresAt.Nanosecond() != 0 {
+		t.Errorf("access expiresAt = %v, want whole seconds", accessExpiresAt)
+	}
+	if !accessExpiresAt.Equal(accessClaims.ExpiresAt) {
+		t.Errorf("access expiresAt = %v, verified claim = %v", accessExpiresAt, accessClaims.ExpiresAt)
+	}
+
+	sse, sseExpiresAt, err := manager.IssueSSEToken("run-1")
+	if err != nil {
+		t.Fatalf("IssueSSEToken: %v", err)
+	}
+	sseClaims, err := manager.VerifySSEToken(sse, "run-1")
+	if err != nil {
+		t.Fatalf("VerifySSEToken: %v", err)
+	}
+	if sseExpiresAt.Nanosecond() != 0 {
+		t.Errorf("sse expiresAt = %v, want whole seconds", sseExpiresAt)
+	}
+	if !sseExpiresAt.Equal(sseClaims.ExpiresAt) {
+		t.Errorf("sse expiresAt = %v, verified claim = %v", sseExpiresAt, sseClaims.ExpiresAt)
+	}
+}
+
 func TestVerifyAccessTokenRejectsExpired(t *testing.T) {
 	now := time.Date(2026, 11, 10, 8, 0, 0, 0, time.UTC)
 	manager := auth.NewWithClock(validSecret, func() time.Time { return now })
@@ -111,10 +215,16 @@ func TestWeakSecretRefusesTokens(t *testing.T) {
 			if _, _, err := manager.IssueAccessToken(); !errors.Is(err, auth.ErrWeakSecret) {
 				t.Fatalf("IssueAccessToken error = %v, want ErrWeakSecret", err)
 			}
+			if _, _, err := manager.IssueSSEToken("run-1"); !errors.Is(err, auth.ErrWeakSecret) {
+				t.Fatalf("IssueSSEToken error = %v, want ErrWeakSecret", err)
+			}
 
 			forged := forgeAccessToken(t, secret, time.Now().Add(time.Hour))
 			if _, err := manager.VerifyAccessToken(forged); !errors.Is(err, auth.ErrInvalidToken) {
 				t.Fatalf("VerifyAccessToken error = %v, want ErrInvalidToken for a token signed with a weak key", err)
+			}
+			if _, err := manager.VerifySSEToken(forged, "run-1"); !errors.Is(err, auth.ErrInvalidToken) {
+				t.Fatalf("VerifySSEToken error = %v, want ErrInvalidToken for a token signed with a weak key", err)
 			}
 		})
 	}

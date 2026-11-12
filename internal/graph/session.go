@@ -446,7 +446,7 @@ func (m *SessionManager) handlePlannerError(ctx context.Context, sess domain.Ses
 		st.waitingRetry = true
 		st.busy = false
 		st.retry = func(retryCtx context.Context) {
-			_ = st.runner.EmitLoopRetry(retryCtx, "planner", nextAttempt, maxAttempts, "llm_unavailable", err.Error())
+			_ = st.runner.EmitLoopRetry(retryCtx, "planner", nextAttempt, maxAttempts, "llm_unavailable", "")
 			_ = st.runner.EmitEdge(retryCtx, "planner", "planner", "retry")
 			plan, attempt, nextProgress, planErr := m.runPlanner(retryCtx, sess, st, progress)
 			if planErr != nil {
@@ -530,7 +530,7 @@ func (m *SessionManager) handleInterviewerError(ctx context.Context, sess domain
 		st.waitingRetry = true
 		st.busy = false
 		st.retry = func(retryCtx context.Context) {
-			_ = st.runner.EmitLoopRetry(retryCtx, "interviewer", nextAttempt, maxAttempts, "llm_unavailable", err.Error())
+			_ = st.runner.EmitLoopRetry(retryCtx, "interviewer", nextAttempt, maxAttempts, "llm_unavailable", "")
 			_ = st.runner.EmitEdge(retryCtx, "interviewer", "interviewer", "retry")
 			st.executed["interviewer"] = true
 			transcript, loadErr := m.store.ListMessagesBySession(retryCtx, sess.ID, false)

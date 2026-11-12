@@ -90,7 +90,8 @@ func (r *Runner) runLLMNodeWithSummary(ctx context.Context, nodeID string, attem
 		// failedAttempt is local to this LLM call (1 on the first transport
 		// retry); offset it by the loop attempt so numbering is continuous.
 		failed := attempt + failedAttempt - 1
-		_ = r.emitNodeFailed(ctx, nodeID, failed, &model, err.Error(), true)
+		logNodeFailed(nodeID, failed, err)
+		_ = r.emitNodeFailed(ctx, nodeID, failed, &model, nodeFailedCode(err), true)
 		currentAttempt = failed + 1
 		start = time.Now()
 		_ = r.emitNodeStarted(ctx, nodeID, currentAttempt, &model, inputSummary)
@@ -107,7 +108,8 @@ func (r *Runner) runLLMNodeWithSummary(ctx context.Context, nodeID string, attem
 		resp, err = r.llm.Chat(ctx, req)
 	}
 	if err != nil {
-		if emitErr := r.emitNodeFailed(ctx, nodeID, currentAttempt, &model, err.Error(), false); emitErr != nil {
+		logNodeFailed(nodeID, currentAttempt, err)
+		if emitErr := r.emitNodeFailed(ctx, nodeID, currentAttempt, &model, nodeFailedCode(err), false); emitErr != nil {
 			return llm.Response{}, currentAttempt, emitErr
 		}
 		return llm.Response{}, currentAttempt, err

@@ -446,6 +446,9 @@ func (m *Memory) ResendInvite(_ context.Context, revokeSessionID *string, sessio
 	if !ok {
 		return ErrNotFound
 	}
+	if revokeSessionID == nil && app.Status != domain.ApplicationStatusFailed {
+		return ErrConflict
+	}
 	if revokeSessionID != nil {
 		old := m.sessions[*revokeSessionID]
 		old.Status = domain.SessionStatusRevoked

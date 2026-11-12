@@ -375,6 +375,9 @@ func (p *Postgres) FinishSession(ctx context.Context, id string, reason domain.F
 // ResendInvite revokes the current invited session (when revokeSessionID is
 // set), inserts a new invited session, and returns the application to invited
 // in one transaction, so a failure cannot leave the applicant without a token.
+// Without a session to revoke it is the failed-application path: the
+// application must still be failed, so of two concurrent resends only one
+// mints an invite and the other gets ErrConflict.
 func (p *Postgres) ResendInvite(ctx context.Context, revokeSessionID *string, session domain.Session) error {
 	defaultSessionStatus(&session)
 	if session.CreatedAt.IsZero() {
@@ -387,6 +390,15 @@ func (p *Postgres) ResendInvite(ctx context.Context, revokeSessionID *string, se
 	}
 	defer tx.Rollback(ctx)
 
+	if revokeSessionID == nil {
+		var status domain.ApplicationStatus
+		if err := tx.QueryRow(ctx, `SELECT status FROM applications WHERE id = $1 FOR UPDATE`, session.ApplicationID).Scan(&status); err != nil {
+			return mapError(err)
+		}
+		if status != domain.ApplicationStatusFailed {
+			return ErrConflict
+		}
+	}
 	if revokeSessionID != nil {
 		tag, err := tx.Exec(ctx, `
 			UPDATE sessions SET status = $2

@@ -204,3 +204,47 @@ func TestMemoryResendInviteConflictDoesNotInsert(t *testing.T) {
 		t.Fatalf("old session status = %q, want active", gotOld.Status)
 	}
 }
+
+// A resend without a session to revoke is the failed-application path. Once
+// the application has left failed (a concurrent resend got there first), a
+// second one must conflict instead of minting another live invite.
+func TestMemoryResendInviteForFailedApplicationOnlyOnce(t *testing.T) {
+	ctx := context.Background()
+	s := store.NewMemory()
+	app := domain.Application{
+		ID:     domain.NewID(),
+		JobID:  domain.NewID(),
+		Name:   "Budi",
+		Email:  "budi@example.com",
+		Status: domain.ApplicationStatusFailed,
+	}
+	old := domain.Session{
+		ID:            domain.NewID(),
+		ApplicationID: app.ID,
+		TokenHash:     "old-hash",
+		Status:        domain.SessionStatusCompleted,
+		ExpiresAt:     time.Now().Add(time.Hour).UTC(),
+	}
+	if err := s.CreateApplicationWithSession(ctx, app, old); err != nil {
+		t.Fatalf("CreateApplicationWithSession: %v", err)
+	}
+	newInvite := func(hash string) domain.Session {
+		return domain.Session{
+			ID:            domain.NewID(),
+			ApplicationID: app.ID,
+			TokenHash:     hash,
+			Status:        domain.SessionStatusInvited,
+			ExpiresAt:     time.Now().Add(2 * time.Hour).UTC(),
+		}
+	}
+	if err := s.ResendInvite(ctx, nil, newInvite("first-hash")); err != nil {
+		t.Fatalf("first ResendInvite: %v", err)
+	}
+	second := newInvite("second-hash")
+	if err := s.ResendInvite(ctx, nil, second); !errors.Is(err, store.ErrConflict) {
+		t.Fatalf("second ResendInvite = %v, want ErrConflict", err)
+	}
+	if _, err := s.GetSession(ctx, second.ID); !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("second session was stored (GetSession err = %v)", err)
+	}
+}

@@ -687,3 +687,40 @@ func TestResendInviteInvalidState(t *testing.T) {
 		}
 	}
 }
+
+// docs/API.md: an `expired` current session is 409 invalid_state, even though
+// its stored status is still `invited`.
+func TestResendInviteExpiredInvitation(t *testing.T) {
+	f := newApplicationsFixture(t, "log")
+
+	app := f.seedApplication(t, "expired@example.com", domain.ApplicationStatusInvited)
+	_, hash, err := session.NewToken()
+	if err != nil {
+		t.Fatalf("new token: %v", err)
+	}
+	expired := domain.Session{
+		ID:            domain.NewID(),
+		ApplicationID: app.ID,
+		TokenHash:     hash,
+		Status:        domain.SessionStatusInvited,
+		ExpiresAt:     time.Now().Add(-time.Minute).UTC(),
+	}
+	if err := f.store.CreateSession(context.Background(), expired); err != nil {
+		t.Fatalf("seed session: %v", err)
+	}
+
+	rec := f.do(t, http.MethodPost, "/api/v1/applications/"+app.ID+"/resend-invite", "", true)
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("status = %d, want 409 (body: %s)", rec.Code, rec.Body.String())
+	}
+	if code := decodeErrorCode(t, rec); code != "invalid_state" {
+		t.Errorf("code = %q, want invalid_state", code)
+	}
+	latest, err := f.store.GetLatestSessionByApplication(context.Background(), app.ID)
+	if err != nil {
+		t.Fatalf("GetLatestSessionByApplication: %v", err)
+	}
+	if latest.ID != expired.ID || latest.Status != domain.SessionStatusInvited {
+		t.Errorf("latest session = %s/%s, want the untouched expired invite %s", latest.ID, latest.Status, expired.ID)
+	}
+}

@@ -174,7 +174,7 @@ func (m *SessionManager) SubmitAnswer(ctx context.Context, sess domain.Session, 
 			Role:      domain.MessageRoleApplicant,
 			Kind:      domain.MessageKindAnswer,
 			Content:   content,
-			CreatedAt: time.Now().UTC(),
+			CreatedAt: time.Now().UTC().Truncate(time.Microsecond),
 		})
 	}
 	if err != nil {
@@ -493,7 +493,7 @@ func (m *SessionManager) runInterviewer(ctx context.Context, sess domain.Session
 		Role:      domain.MessageRoleAssistant,
 		Kind:      kind,
 		Content:   res.Text,
-		CreatedAt: time.Now().UTC(),
+		CreatedAt: time.Now().UTC().Truncate(time.Microsecond),
 	}
 	if err := m.store.CreateMessage(ctx, message); err != nil {
 		m.failRun(ctx, sess, st, "create_message_failed")
@@ -555,7 +555,7 @@ func (m *SessionManager) handleInterviewerError(ctx context.Context, sess domain
 				Role:      domain.MessageRoleAssistant,
 				Kind:      kind,
 				Content:   res.Text,
-				CreatedAt: time.Now().UTC(),
+				CreatedAt: time.Now().UTC().Truncate(time.Microsecond),
 			}
 			if storeErr := m.store.CreateMessage(retryCtx, message); storeErr != nil {
 				m.failRun(retryCtx, sess, st, "create_message_failed")

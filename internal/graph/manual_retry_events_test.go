@@ -153,7 +153,44 @@ func TestManualRetryInterviewerSequence(t *testing.T) {
 		{typ: EventMessageCompleted, node: "interviewer", attempt: 3},
 		{typ: EventNodeCompleted, node: "interviewer", attempt: 3},
 	}
-	assertManualRetrySequence(t, manualRetryRunEvents(t, st, sess.ID), "interviewer", want)
+	events := manualRetryRunEvents(t, st, sess.ID)
+	assertManualRetrySequence(t, events, "interviewer", want)
+
+	// The message from the manual retry carries the same non-zero created_at
+	// that was stored (EVENTS.md: message.completed = { "message": Message }).
+	stored, err := st.ListMessagesBySession(context.Background(), sess.ID, false)
+	if err != nil {
+		t.Fatalf("ListMessagesBySession: %v", err)
+	}
+	var checked bool
+	for _, e := range events {
+		if e.Type != EventMessageCompleted {
+			continue
+		}
+		var payload MessageCompleted
+		if err := json.Unmarshal(e.Payload, &payload); err != nil {
+			t.Fatalf("unmarshal message.completed: %v", err)
+		}
+		if payload.Message.CreatedAt.IsZero() {
+			t.Fatalf("manual-retry message.completed has a zero created_at")
+		}
+		// Postgres timestamptz keeps microseconds; a finer emitted value would
+		// differ from the one read back later.
+		if payload.Message.CreatedAt.Nanosecond()%1000 != 0 {
+			t.Errorf("created_at %v has sub-microsecond precision", payload.Message.CreatedAt)
+		}
+		for _, m := range stored {
+			if m.ID == payload.Message.ID {
+				checked = true
+				if !m.CreatedAt.Equal(payload.Message.CreatedAt) {
+					t.Errorf("emitted created_at %v != stored %v", payload.Message.CreatedAt, m.CreatedAt)
+				}
+			}
+		}
+	}
+	if !checked {
+		t.Fatal("no stored message matched the manual-retry message.completed")
+	}
 }
 
 // TestManualRetryPlannerSequence matches the §6.4 planner sequence and the

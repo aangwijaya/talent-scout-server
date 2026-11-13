@@ -1,0 +1,53 @@
+%PDF-1.4
+1 0 obj
+<< /Type /Catalog /Pages 2 0 R >>
+endobj
+2 0 obj
+<< /Type /Pages /Kids [4 0 R] /Count 1 >>
+endobj
+3 0 obj
+<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>
+endobj
+4 0 obj
+<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 3 0 R >> >> /Contents 5 0 R >>
+endobj
+5 0 obj
+<< /Length 1015 >>
+stream
+BT /F1 11 Tf 72 740 Td 15 TL
+(CITRA LESTARI) Tj T*
+(Software Engineer, Frontend and Platform) Tj T*
+(citra.lestari@example.com | Surabaya \(fictional profile\)) Tj T*
+() Tj T*
+(SUMMARY) Tj T*
+(Engineer with 6 years across frontend and platform work.) Tj T*
+(Strong on system design, rendering performance, and quality practices.) Tj T*
+() Tj T*
+(EXPERIENCE) Tj T*
+(Senior Software Engineer, Epsilon Cloud \(fictional\), 2020-2026) Tj T*
+(- Designed component boundaries and data flow for a multi-tenant console.) Tj T*
+(- Profiled rendering hot paths and reduced interaction latency by 45%.) Tj T*
+(- Wrote integration tests and kept flaky tests below 1 percent.) Tj T*
+(- Led incident reviews and explained trade-offs to product and support.) Tj T*
+() Tj T*
+(Software Engineer, Zeta Systems \(fictional\), 2018-2020) Tj T*
+(- Built API clients and contract tests shared by web and mobile teams.) Tj T*
+() Tj T*
+(SKILLS) Tj T*
+(TypeScript, Svelte, React, system design, testing, performance, communication) Tj T*
+ET
+endstream
+endobj
+xref
+0 6
+0000000000 65535 f 
+0000000009 00000 n 
+0000000058 00000 n 
+0000000115 00000 n 
+0000000185 00000 n 
+0000000311 00000 n 
+trailer
+<< /Size 6 /Root 1 0 R >>
+startxref
+1378
+%%EOF

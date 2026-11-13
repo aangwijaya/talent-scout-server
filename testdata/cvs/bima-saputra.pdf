@@ -1,0 +1,54 @@
+%PDF-1.4
+1 0 obj
+<< /Type /Catalog /Pages 2 0 R >>
+endobj
+2 0 obj
+<< /Type /Pages /Kids [4 0 R] /Count 1 >>
+endobj
+3 0 obj
+<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>
+endobj
+4 0 obj
+<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 3 0 R >> >> /Contents 5 0 R >>
+endobj
+5 0 obj
+<< /Length 990 >>
+stream
+BT /F1 11 Tf 72 740 Td 15 TL
+(BIMA SAPUTRA) Tj T*
+(Frontend Developer) Tj T*
+(bima.saputra@example.com | Bandung \(fictional profile\)) Tj T*
+() Tj T*
+(SUMMARY) Tj T*
+(Product-focused frontend developer with 4 years of experience.) Tj T*
+(Comfortable in React and Vue, learning SvelteKit and design systems.) Tj T*
+() Tj T*
+(EXPERIENCE) Tj T*
+(Frontend Developer, Gamma Works \(fictional\), 2022-2026) Tj T*
+(- Built responsive forms and tables in React with TypeScript.) Tj T*
+(- Split a large page into components and lifted shared state into a context.) Tj T*
+(- Wrote unit tests for form validation and fixed accessibility issues found) Tj T*
+(  in a manual audit.) Tj T*
+(- Presented sprint demos and documented component APIs for teammates.) Tj T*
+() Tj T*
+(Junior Developer, Delta Soft \(fictional\), 2021-2022) Tj T*
+(- Maintained an internal admin app and improved loading states.) Tj T*
+() Tj T*
+(SKILLS) Tj T*
+(React, Vue, TypeScript, CSS, testing basics, communication) Tj T*
+ET
+endstream
+endobj
+xref
+0 6
+0000000000 65535 f 
+0000000009 00000 n 
+0000000058 00000 n 
+0000000115 00000 n 
+0000000185 00000 n 
+0000000311 00000 n 
+trailer
+<< /Size 6 /Root 1 0 R >>
+startxref
+1352
+%%EOF

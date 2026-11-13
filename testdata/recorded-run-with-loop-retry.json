@@ -256,7 +256,7 @@
       "data": {
         "message": {
           "content": "Your CV mentions React and Vue, and that you're learning SvelteKit. Walk me through how you'd build a large, filterable table in SvelteKit: what would live in a load function versus the component, how reactivity flows through the page, and where you'd look first if it felt slow on a mid-range laptop?",
-          "created_at": "0001-01-01T00:00:00Z",
+          "created_at": "2026-11-12T09:00:13Z",
           "id": "00000000-0000-4000-8000-000000000004",
           "kind": "opening",
           "role": "assistant",
@@ -447,7 +447,7 @@
       "data": {
         "message": {
           "content": "That was a broad question, so let's take it in smaller steps. In SvelteKit, what kind of work would you put in a `+page.ts` load function, and what would you keep in the component itself?",
-          "created_at": "0001-01-01T00:00:00Z",
+          "created_at": "2026-11-12T09:00:26Z",
           "id": "00000000-0000-4000-8000-000000000006",
           "kind": "follow_up",
           "role": "assistant",
@@ -638,7 +638,7 @@
       "data": {
         "message": {
           "content": "It seems SvelteKit may be very new to you, so let's start from what you know. In React or Vue, how would you approach building a large, filterable table — where would you fetch the data, and how would the filtering update what's shown on screen?",
-          "created_at": "0001-01-01T00:00:00Z",
+          "created_at": "2026-11-12T09:00:39Z",
           "id": "00000000-0000-4000-8000-000000000008",
           "kind": "follow_up",
           "role": "assistant",
@@ -846,7 +846,7 @@
       "data": {
         "message": {
           "content": "Your CV says you lifted shared state into a context at Gamma Works. Let's make that concrete: before that change, what was one specific symptom you were seeing — a bug, a stale screen, prop-drilling pain — and how did moving it into context fix that exact problem?",
-          "created_at": "0001-01-01T00:00:00Z",
+          "created_at": "2026-11-12T09:00:54Z",
           "id": "00000000-0000-4000-8000-000000000011",
           "kind": "question",
           "role": "assistant",
@@ -1037,7 +1037,7 @@
       "data": {
         "message": {
           "content": "Let's make this as simple as possible. That context you set up at Gamma Works — what did it actually hold? For example, was it something like the current user, a theme, or shared UI state? Even one sentence naming what lived in that context would help me understand your work there.",
-          "created_at": "0001-01-01T00:00:00Z",
+          "created_at": "2026-11-12T09:01:07Z",
           "id": "00000000-0000-4000-8000-000000000013",
           "kind": "follow_up",
           "role": "assistant",
@@ -1059,7 +1059,7 @@
       "data": {
         "cost_usd": 0.00028225,
         "duration_ms": 3889,
-        "output_summary": "Let's make this as simple as possible. That context you set up at Gamma Works ��",
+        "output_summary": "Let's make this as simple as possible. That context you set up at Gamma Works ",
         "tokens_in": 875,
         "tokens_out": 302
       }
@@ -1228,7 +1228,7 @@
       "data": {
         "message": {
           "content": "Let's step away from Gamma Works for a moment. In React or Vue, there are a few common ways to share state: passing props down, using context or a store, or adding a library like Redux or Pinia. Pick just one of those and tell me — when would it be the right choice for a team, and when would it start causing you trouble?",
-          "created_at": "0001-01-01T00:00:00Z",
+          "created_at": "2026-11-12T09:01:20Z",
           "id": "00000000-0000-4000-8000-000000000015",
           "kind": "follow_up",
           "role": "assistant",
@@ -1436,7 +1436,7 @@
       "data": {
         "message": {
           "content": "Let's try one very concrete thing. Picture any page you've built — a profile, a dashboard, a settings screen, anything at all. If you split it into components, what would the top two or three components be, and what props would each one receive? Even a rough sketch in a sentence or two would work.",
-          "created_at": "0001-01-01T00:00:00Z",
+          "created_at": "2026-11-12T09:01:35Z",
           "id": "00000000-0000-4000-8000-000000000018",
           "kind": "question",
           "role": "assistant",
@@ -1627,7 +1627,7 @@
       "data": {
         "message": {
           "content": "Let's try the API side of this topic instead. When frontend and backend need to agree on what data an endpoint returns, teams do it in different ways — a quick chat, a written spec, shared TypeScript types, or a sample JSON response. Which of those have you actually done before, and what did that agreement look like in practice?",
-          "created_at": "0001-01-01T00:00:00Z",
+          "created_at": "2026-11-12T09:01:48Z",
           "id": "00000000-0000-4000-8000-000000000020",
           "kind": "follow_up",
           "role": "assistant",
@@ -1818,7 +1818,7 @@
       "data": {
         "message": {
           "content": "Let's make this a simple yes-or-no first: have you ever agreed with a backend engineer on what data an endpoint returns — yes or no? If yes, give me just one detail from that agreement: a field name, an endpoint, or whether it was settled in a chat, a written spec, or shared types. If no, that's a valid answer too — just say so.",
-          "created_at": "0001-01-01T00:00:00Z",
+          "created_at": "2026-11-12T09:02:01Z",
           "id": "00000000-0000-4000-8000-000000000022",
           "kind": "follow_up",
           "role": "assistant",
@@ -2026,7 +2026,7 @@
       "data": {
         "message": {
           "content": "Let's move to a new area: testing and accessibility. Your CV mentions you fixed issues found in a manual accessibility audit. Think of just one fix you made — it could be anything, like adding alt text to images, labeling a form field, or fixing keyboard focus. What was that one fix, and what did you change to make it? Even a single sentence is fine.",
-          "created_at": "0001-01-01T00:00:00Z",
+          "created_at": "2026-11-12T09:02:16Z",
           "id": "00000000-0000-4000-8000-000000000025",
           "kind": "question",
           "role": "assistant",
@@ -2217,7 +2217,7 @@
       "data": {
         "message": {
           "content": "Let's try the testing side of this topic instead. Have you ever written an automated test for code you worked on — a unit test, an integration test, any kind at all? A simple yes or no is fine. If yes, tell me one thing that test checked. If no, just say no — that's a valid answer, and we can talk about how you'd approach testing instead.",
-          "created_at": "0001-01-01T00:00:00Z",
+          "created_at": "2026-11-12T09:02:29Z",
           "id": "00000000-0000-4000-8000-000000000027",
           "kind": "follow_up",
           "role": "assistant",
@@ -2408,7 +2408,7 @@
       "data": {
         "message": {
           "content": "Thank you. Now, tell me one concrete thing that test checked — for example, what behavior or input it verified. Even a single sentence like \"it checked the form shows an error when the email is empty\" would give me something to work with. And if you can, mention whether it was a unit test or an integration test.",
-          "created_at": "0001-01-01T00:00:00Z",
+          "created_at": "2026-11-12T09:02:42Z",
           "id": "00000000-0000-4000-8000-000000000029",
           "kind": "follow_up",
           "role": "assistant",
@@ -2616,7 +2616,7 @@
       "data": {
         "message": {
           "content": "Let's finish with the collaboration side. Think of one time you explained a technical decision — why you built or chose something — to someone who wasn't a frontend developer, like a product manager, designer, or backend engineer. What did you actually say to them, in your own words? Even one rough sentence works.",
-          "created_at": "0001-01-01T00:00:00Z",
+          "created_at": "2026-11-12T09:02:57Z",
           "id": "00000000-0000-4000-8000-000000000032",
           "kind": "question",
           "role": "assistant",
@@ -2807,7 +2807,7 @@
       "data": {
         "message": {
           "content": "Let's make it hypothetical, so nothing needs to be remembered. Suppose a product manager tells you: \"This filter feels slow, but ship it anyway.\" You disagree. What would you say to them — one or two sentences — to explain your concern? And if they pushed back with \"no, ship it,\" what would you do next? Even a rough answer in your own words works.",
-          "created_at": "0001-01-01T00:00:00Z",
+          "created_at": "2026-11-12T09:03:10Z",
           "id": "00000000-0000-4000-8000-000000000034",
           "kind": "follow_up",
           "role": "assistant",
@@ -3028,7 +3028,7 @@
       "data": {
         "message": {
           "content": "Let's try the simplest possible version. A product manager says a slow filter should ship anyway. You can only pick one of these three responses: (a) explain the slowdown with numbers, (b) ship it and fix it later, or (c) escalate to a tech lead. Which one would you pick — a, b, or c? Just the letter, and one short sentence on why.",
-          "created_at": "0001-01-01T00:00:00Z",
+          "created_at": "2026-11-12T09:03:25Z",
           "id": "00000000-0000-4000-8000-000000000036",
           "kind": "follow_up",
           "role": "assistant",

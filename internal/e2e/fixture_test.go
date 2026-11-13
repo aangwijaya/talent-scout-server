@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -67,6 +68,13 @@ func TestRecordedLoopRetryFixture(t *testing.T) {
 		if len(event.Data.Data) == 0 || string(event.Data.Data) == "null" {
 			t.Fatalf("event[%d] %s has no data payload", i, event.Event)
 		}
+		var decoded any
+		if err := json.Unmarshal(event.Data.Data, &decoded); err != nil {
+			t.Fatalf("event[%d] data payload: %v", i, err)
+		}
+		if containsReplacementRune(decoded) {
+			t.Errorf("event[%d] %s payload contains U+FFFD", i, event.Event)
+		}
 
 		switch event.Event {
 		case graph.EventLoopRetry:
@@ -82,6 +90,37 @@ func TestRecordedLoopRetryFixture(t *testing.T) {
 			case "quote_not_found", "invalid_plan", "llm_unavailable":
 			default:
 				t.Errorf("loop.retry reason = %q, want a contract reason", payload.Reason)
+			}
+			if payload.Reason == "quote_not_found" {
+				if event.Data.NodeID == nil || *event.Data.NodeID != "scorer" {
+					t.Errorf("event[%d] quote_not_found loop.retry node_id = %v, want scorer", i, event.Data.NodeID)
+				}
+				if payload.MaxAttempts != 3 {
+					t.Errorf("event[%d] quote_not_found max_attempts = %d, want 3", i, payload.MaxAttempts)
+				}
+				if strings.TrimSpace(payload.Feedback) == "" {
+					t.Errorf("event[%d] quote_not_found loop.retry has empty feedback", i)
+				}
+			}
+		case graph.EventMessageCompleted:
+			var payload graph.MessageCompleted
+			if err := json.Unmarshal(event.Data.Data, &payload); err != nil {
+				t.Fatalf("event[%d] message.completed payload: %v", i, err)
+			}
+			if payload.Message.CreatedAt.IsZero() {
+				t.Errorf("event[%d] message.completed %s has a zero created_at", i, payload.Message.ID)
+			}
+		case graph.EventNodeFailed:
+			var payload graph.NodeFailed
+			if err := json.Unmarshal(event.Data.Data, &payload); err != nil {
+				t.Fatalf("event[%d] node.failed payload: %v", i, err)
+			}
+			if event.Data.NodeID != nil && llmNodeIDs[*event.Data.NodeID] {
+				switch payload.Error {
+				case "timeout", "llm_unavailable", "empty_reply", "llm_error":
+				default:
+					t.Errorf("event[%d] node.failed error on %s = %q, want a contract code", i, *event.Data.NodeID, payload.Error)
+				}
 			}
 		case graph.EventRunCompleted:
 			completed = true
@@ -103,4 +142,31 @@ func TestRecordedLoopRetryFixture(t *testing.T) {
 	if !completed {
 		t.Error("fixture contains no run.completed")
 	}
+}
+
+var llmNodeIDs = map[string]bool{
+	"planner":     true,
+	"interviewer": true,
+	"judge":       true,
+	"scorer":      true,
+}
+
+func containsReplacementRune(value any) bool {
+	switch typed := value.(type) {
+	case string:
+		return strings.ContainsRune(typed, '\uFFFD')
+	case []any:
+		for _, item := range typed {
+			if containsReplacementRune(item) {
+				return true
+			}
+		}
+	case map[string]any:
+		for _, item := range typed {
+			if containsReplacementRune(item) {
+				return true
+			}
+		}
+	}
+	return false
 }

@@ -22,8 +22,8 @@ import (
 )
 
 // TestLiveEndToEnd runs the full flow against OpenRouter with the seed job and
-// the sample CVs. It is skipped unless OPENROUTER_API_KEY is set (the test also
-// reads the repo .env without printing any value). Budget: one session per CV.
+// the sample CVs. It is skipped unless OPENROUTER_API_KEY is set. Budget: one
+// session per CV.
 func TestLiveEndToEnd(t *testing.T) {
 	apiKey, baseURL := liveCredentials(t)
 
@@ -147,39 +147,9 @@ func TestLiveEvidenceRetryFixture(t *testing.T) {
 
 func liveCredentials(t *testing.T) (key, baseURL string) {
 	t.Helper()
-	key = os.Getenv("OPENROUTER_API_KEY")
-	baseURL = os.Getenv("LLM_BASE_URL")
-	if key == "" {
-		raw, err := os.ReadFile(filepath.Join(repoRoot(), ".env"))
-		if err == nil {
-			for _, line := range strings.Split(string(raw), "\n") {
-				line = strings.TrimSpace(line)
-				if line == "" || strings.HasPrefix(line, "#") {
-					continue
-				}
-				name, value, ok := strings.Cut(line, "=")
-				if !ok {
-					continue
-				}
-				value = strings.Trim(strings.TrimSpace(value), `"'`)
-				switch strings.TrimSpace(name) {
-				case "OPENROUTER_API_KEY":
-					if key == "" {
-						key = value
-					}
-				case "LLM_BASE_URL":
-					if baseURL == "" {
-						baseURL = value
-					}
-				}
-			}
-		}
-	}
-	if key == "" {
+	key, baseURL, ok := liveCredentialsFrom(os.Getenv)
+	if !ok {
 		t.Skip("OPENROUTER_API_KEY is not set; live E2E is skipped")
-	}
-	if baseURL == "" {
-		baseURL = "https://openrouter.ai/api/v1"
 	}
 	return key, baseURL
 }

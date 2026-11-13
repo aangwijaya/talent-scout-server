@@ -1,6 +1,7 @@
 package e2e
 
 import (
+	"encoding/json"
 	"strings"
 	"testing"
 	"time"
@@ -63,5 +64,43 @@ func TestApplyToDecisionWithFakeModels(t *testing.T) {
 	}
 	if got := types[len(types)-1]; got != graph.EventRunCompleted {
 		t.Errorf("last run event = %q, want run.completed", got)
+	}
+}
+
+func TestMessageCompletedCarriesStoredCreatedAt(t *testing.T) {
+	h := NewHarness(t, HarnessOptions{})
+	result := h.Run(t, "testdata/cvs/ayu-prameswari.pdf", fakeAnswers, 10*time.Second)
+
+	stored := make(map[string]domain.Message, len(result.Messages))
+	for _, message := range result.Messages {
+		stored[message.ID] = message
+	}
+
+	seen := 0
+	for _, event := range result.Events {
+		if event.Type != graph.EventMessageCompleted {
+			continue
+		}
+		var payload graph.MessageCompleted
+		if err := json.Unmarshal(event.Payload, &payload); err != nil {
+			t.Fatalf("decode %s: %v", event.Type, err)
+		}
+		message := payload.Message
+		seen++
+		if message.CreatedAt.IsZero() {
+			t.Errorf("message.completed %s with role %q has a zero created_at", message.ID, message.Role)
+			continue
+		}
+		storedMessage, ok := stored[message.ID]
+		if !ok {
+			t.Errorf("message.completed %s is not in the store", message.ID)
+			continue
+		}
+		if !message.CreatedAt.Equal(storedMessage.CreatedAt) {
+			t.Errorf("message.completed %s created_at = %s, stored = %s", message.ID, message.CreatedAt, storedMessage.CreatedAt)
+		}
+	}
+	if seen == 0 {
+		t.Fatal("run emitted no message.completed events")
 	}
 }

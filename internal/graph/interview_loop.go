@@ -246,6 +246,7 @@ func (m *SessionManager) finishInterview(ctx context.Context, sess domain.Sessio
 	m.mu.Lock()
 	st.done = true
 	st.busy = false
+	st.awaiting = false
 	st.waitingRetry = false
 	st.retry = nil
 	m.mu.Unlock()

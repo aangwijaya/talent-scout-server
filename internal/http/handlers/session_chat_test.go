@@ -48,8 +48,14 @@ type chatFixture struct {
 
 func newChatFixture(t *testing.T, start bool) *chatFixture {
 	t.Helper()
+	return newChatFixtureWrapped(t, start, nil)
+}
+
+func newChatFixtureWrapped(t *testing.T, start bool, wrap func(store.Store) store.Store) *chatFixture {
+	t.Helper()
 	ctx := context.Background()
-	st := store.NewMemory()
+	base := store.NewMemory()
+	st := store.Store(base)
 	job := domain.Job{
 		ID:          "7c9e6679-0000-4000-8000-000000000201",
 		Title:       "Senior Frontend Engineer",
@@ -91,12 +97,16 @@ func newChatFixture(t *testing.T, start bool) *chatFixture {
 		}
 	}
 
+	if wrap != nil {
+		st = wrap(st)
+	}
+
 	cfg := config.Config{SessionMaxMinutes: 15, SessionMaxQuestions: 15}
 	bus := graph.NewBus(st)
 	manager := graph.NewSessionManager(cfg, st, bus, llm.NewFake(graph.FakeReplies), chatModels(), session.NewRegistry(), nil)
 	h := handlers.NewSessions(cfg, st)
 	h.SetChat(manager, bus)
-	return &chatFixture{store: st, handler: h, manager: manager, bus: bus, raw: raw, session: sess, job: job}
+	return &chatFixture{store: base, handler: h, manager: manager, bus: bus, raw: raw, session: sess, job: job}
 }
 
 func chatRequest(method, token, body string) *http.Request {

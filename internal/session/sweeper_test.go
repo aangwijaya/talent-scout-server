@@ -2,6 +2,7 @@ package session
 
 import (
 	"context"
+	"encoding/json"
 	"log/slog"
 	"testing"
 	"time"
@@ -28,6 +29,18 @@ func seedMessage(t *testing.T, st store.Store, message domain.Message) {
 	t.Helper()
 	if err := st.CreateMessage(context.Background(), message); err != nil {
 		t.Fatalf("seed message: %v", err)
+	}
+}
+
+func seedTopic(t *testing.T, st store.Store, sessionID string) {
+	t.Helper()
+	if err := st.CreateTopics(context.Background(), []domain.Topic{{
+		ID: "topic-" + sessionID, SessionID: sessionID, Position: 1,
+		Title: "State management", Goal: "Assess state experience",
+		RubricKeys: []string{"frontend_depth"}, SeedQuestion: "How?",
+		Status: domain.TopicStatusActive,
+	}}); err != nil {
+		t.Fatalf("seed topic: %v", err)
 	}
 }
 
@@ -92,6 +105,7 @@ func TestSweepAbandonsIdleActiveSessionWithNoRunner(t *testing.T) {
 		ExpiresAt:     time.Now().Add(24 * time.Hour),
 		StartedAt:     &started,
 	})
+	seedTopic(t, st, "s-stale")
 	recent := time.Now().Add(-5 * time.Minute)
 	seedSession(t, st, domain.Session{
 		ID:            "s-recent",
@@ -145,6 +159,7 @@ func TestSweepEndsSessionPastTimeLimit(t *testing.T) {
 		ExpiresAt:     time.Now().Add(24 * time.Hour),
 		StartedAt:     &started,
 	})
+	seedTopic(t, st, "s-limit")
 	run := domain.GraphRun{ID: "run-limit", SessionID: "s-limit", Status: domain.GraphRunStatusRunning}
 	if err := st.CreateGraphRun(context.Background(), run); err != nil {
 		t.Fatalf("CreateGraphRun: %v", err)
@@ -204,6 +219,7 @@ func TestSweepLeavesSessionMidStepAlone(t *testing.T) {
 		ExpiresAt:     time.Now().Add(24 * time.Hour),
 		StartedAt:     &started,
 	})
+	seedTopic(t, st, "s-midstep")
 	registry := NewRegistry()
 	registry.Add("s-midstep")
 
@@ -309,5 +325,71 @@ func TestSweepCountsOnlySessionsItChanged(t *testing.T) {
 	}
 	if expired != 0 || abandoned != 0 || timedOut != 0 {
 		t.Errorf("expired, abandoned, timedOut = %d, %d, %d, want 0, 0, 0 when another writer got there first", expired, abandoned, timedOut)
+	}
+}
+
+func TestSweepNoTopicsFailsSessionApplicationAndRun(t *testing.T) {
+	st := store.NewMemory()
+	seedApplication(t, st, domain.Application{ID: "a-no-topics", JobID: "j1", Name: "Budi", Email: "b@example.com", Status: domain.ApplicationStatusInSession})
+	started := time.Now().Add(-12 * time.Minute)
+	seedSession(t, st, domain.Session{
+		ID:            "s-no-topics",
+		ApplicationID: "a-no-topics",
+		TokenHash:     "hash-no-topics",
+		Status:        domain.SessionStatusActive,
+		ExpiresAt:     time.Now().Add(24 * time.Hour),
+		StartedAt:     &started,
+	})
+	run := domain.GraphRun{ID: "run-no-topics", SessionID: "s-no-topics", Status: domain.GraphRunStatusRunning}
+	if err := st.CreateGraphRun(context.Background(), run); err != nil {
+		t.Fatalf("CreateGraphRun: %v", err)
+	}
+
+	_, abandoned, timedOut, err := newSweeper(t, st, nil).SweepOnce(context.Background())
+	if err != nil {
+		t.Fatalf("SweepOnce: %v", err)
+	}
+	if abandoned != 1 || timedOut != 0 {
+		t.Errorf("abandoned=%d timedOut=%d, want 1/0", abandoned, timedOut)
+	}
+
+	got, _ := st.GetSession(context.Background(), "s-no-topics")
+	if got.Status != domain.SessionStatusCompleted || got.FinishReason == nil || *got.FinishReason != domain.FinishReasonFailed {
+		t.Errorf("session = %+v, want completed/failed: the plan never existed", got)
+	}
+	app, _ := st.GetApplication(context.Background(), "a-no-topics")
+	if app.Status != domain.ApplicationStatusFailed {
+		t.Errorf("application = %q, want failed so resend-invite works", app.Status)
+	}
+	gotRun, _ := st.GetGraphRun(context.Background(), run.ID)
+	if gotRun.Status != domain.GraphRunStatusFailed {
+		t.Errorf("run status = %q, want failed", gotRun.Status)
+	}
+
+	events, err := st.ListNodeEvents(context.Background(), run.ID, 0)
+	if err != nil {
+		t.Fatalf("ListNodeEvents: %v", err)
+	}
+	runFailedAt, endedAt := -1, -1
+	for i, event := range events {
+		switch event.Type {
+		case "run.failed":
+			runFailedAt = i
+		case "session.ended":
+			endedAt = i
+			var payload sessionEndedPayload
+			if err := json.Unmarshal(event.Payload, &payload); err != nil {
+				t.Fatalf("unmarshal session.ended: %v", err)
+			}
+			if payload.FinishReason != string(domain.FinishReasonFailed) {
+				t.Errorf("session.ended finish_reason = %q, want failed", payload.FinishReason)
+			}
+		}
+	}
+	if runFailedAt < 0 || endedAt < 0 {
+		t.Fatalf("run.failed=%d session.ended=%d, want both persisted without a live runner", runFailedAt, endedAt)
+	}
+	if runFailedAt > endedAt {
+		t.Errorf("run.failed at %d after session.ended at %d, want run.failed first", runFailedAt, endedAt)
 	}
 }

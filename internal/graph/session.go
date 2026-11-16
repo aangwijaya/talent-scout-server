@@ -24,6 +24,10 @@ var ErrSessionEnded = errors.New("session ended")
 
 var errPlanInvalid = errors.New("planner produced an invalid plan after retries")
 
+// noPlanRunFailure is the run.failed reason when the sweeper ends a session
+// before the planner produced any topics.
+const noPlanRunFailure = "planner_failed"
+
 // ctxMutex is a mutex whose Lock can be abandoned when a request context is
 // cancelled, so an applicant POST never blocks for a whole scoring run. TryLock
 // and Lock mirror sync.Mutex for the sweeper's non-blocking finish path.
@@ -780,8 +784,15 @@ func (m *SessionManager) finishExternally(sessionID string, reason domain.Finish
 	// reconnecting clients observe the finish immediately; scoring itself is
 	// still async (ARCHITECTURE §3 step 8) and never blocks the sweep loop.
 	if st.stepMu.TryLock() {
-		m.emitExternalFinish(st, runID, reason)
+		if reason == domain.FinishReasonFailed {
+			m.emitExternalFailure(st, runID)
+		} else {
+			m.emitExternalFinish(st, runID, reason)
+		}
 		st.stepMu.Unlock()
+		if reason == domain.FinishReasonFailed {
+			return true
+		}
 		go func() {
 			st.stepMu.Lock()
 			defer st.stepMu.Unlock()
@@ -792,10 +803,36 @@ func (m *SessionManager) finishExternally(sessionID string, reason domain.Finish
 	go func() {
 		st.stepMu.Lock()
 		defer st.stepMu.Unlock()
+		if reason == domain.FinishReasonFailed {
+			m.emitExternalFailure(st, runID)
+			return
+		}
 		m.emitExternalFinish(st, runID, reason)
 		m.scoreExternal(sessionID, st, reason)
 	}()
 	return true
+}
+
+// emitExternalFailure closes a run the sweeper ended before a plan existed.
+// There is no transcript to score, so it emits the §6.3 failure sequence
+// (unexecuted nodes skipped, run.failed) and session.ended, then stops.
+func (m *SessionManager) emitExternalFailure(st *liveSession, runID string) {
+	m.mu.Lock()
+	st.failed = true
+	st.busy = false
+	st.awaiting = false
+	st.waitingRetry = false
+	st.retry = nil
+	m.mu.Unlock()
+
+	for _, nodeID := range NodeIDs {
+		if nodeID == "recruiter_gate" || st.executed[nodeID] {
+			continue
+		}
+		_ = st.runner.EmitNodeSkipped(context.Background(), nodeID, "run_failed")
+	}
+	_ = st.runner.Fail(context.Background(), noPlanRunFailure)
+	_, _ = m.bus.Emit(context.Background(), runID, Event{Type: EventSessionEnded, Payload: SessionEnded{FinishReason: string(domain.FinishReasonFailed)}})
 }
 
 // emitExternalFinish emits the guard→scorer transition and session.ended. The

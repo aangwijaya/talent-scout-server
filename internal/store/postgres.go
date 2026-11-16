@@ -345,31 +345,56 @@ func (p *Postgres) ExpireSession(ctx context.Context, id string, now time.Time) 
 }
 
 // AbandonSession transitions an active session to completed with
-// finish_reason=abandoned, and reports whether the transition happened. A
+// finish_reason=abandoned and moves an in_session application to scoring in the
+// same transaction. It reports whether the session transition happened; a
 // session that is no longer active is skipped.
 func (p *Postgres) AbandonSession(ctx context.Context, id string, now time.Time) (bool, error) {
-	tag, err := p.pool.Exec(ctx, `
-		UPDATE sessions SET status = $2, finish_reason = $3, ended_at = $4
-		WHERE id = $1 AND status = $5`,
-		id, domain.SessionStatusCompleted, domain.FinishReasonAbandoned, now, domain.SessionStatusActive)
-	if err != nil {
-		return false, mapError(err)
-	}
-	return tag.RowsAffected() > 0, nil
+	return p.finishSession(ctx, id, domain.FinishReasonAbandoned, now)
 }
 
 // FinishSession transitions an active session to completed with the given
-// finish_reason, and reports whether the transition happened. A session that is
-// no longer active is skipped.
+// finish_reason and moves its application on in the same transaction: failed
+// for finish_reason=failed, scoring for every other reason. It reports whether
+// the session transition happened; a session that is no longer active is
+// skipped.
 func (p *Postgres) FinishSession(ctx context.Context, id string, reason domain.FinishReason, now time.Time) (bool, error) {
-	tag, err := p.pool.Exec(ctx, `
-		UPDATE sessions SET status = $2, finish_reason = $3, ended_at = $4
-		WHERE id = $1 AND status = $5`,
-		id, domain.SessionStatusCompleted, reason, now, domain.SessionStatusActive)
+	return p.finishSession(ctx, id, reason, now)
+}
+
+func (p *Postgres) finishSession(ctx context.Context, id string, reason domain.FinishReason, now time.Time) (bool, error) {
+	tx, err := p.pool.Begin(ctx)
 	if err != nil {
 		return false, mapError(err)
 	}
-	return tag.RowsAffected() > 0, nil
+	defer tx.Rollback(ctx)
+
+	var applicationID string
+	err = tx.QueryRow(ctx, `
+		UPDATE sessions SET status = $2, finish_reason = $3, ended_at = $4
+		WHERE id = $1 AND status = $5
+		RETURNING application_id`,
+		id, domain.SessionStatusCompleted, reason, now, domain.SessionStatusActive).Scan(&applicationID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return false, nil
+	}
+	if err != nil {
+		return false, mapError(err)
+	}
+
+	next := domain.ApplicationStatusScoring
+	if reason == domain.FinishReasonFailed {
+		next = domain.ApplicationStatusFailed
+	}
+	if _, err := tx.Exec(ctx, `
+		UPDATE applications SET status = $2
+		WHERE id = $1 AND status = $3`,
+		applicationID, next, domain.ApplicationStatusInSession); err != nil {
+		return false, mapError(err)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return false, mapError(err)
+	}
+	return true, nil
 }
 
 // ResendInvite revokes the current invited session (when revokeSessionID is
@@ -614,6 +639,24 @@ func (p *Postgres) GetGraphRunBySession(ctx context.Context, sessionID string) (
 		return domain.GraphRun{}, mapError(err)
 	}
 	return run, nil
+}
+
+func (p *Postgres) ListGraphRunsByStatus(ctx context.Context, status domain.GraphRunStatus) ([]domain.GraphRun, error) {
+	rows, err := p.pool.Query(ctx, `SELECT `+graphRunColumns+` FROM graph_runs WHERE status = $1 ORDER BY started_at, id`, status)
+	if err != nil {
+		return nil, mapError(err)
+	}
+	defer rows.Close()
+
+	runs := make([]domain.GraphRun, 0)
+	for rows.Next() {
+		run, err := scanGraphRun(rows)
+		if err != nil {
+			return nil, err
+		}
+		runs = append(runs, run)
+	}
+	return runs, mapError(rows.Err())
 }
 
 func (p *Postgres) UpdateGraphRun(ctx context.Context, run domain.GraphRun) error {

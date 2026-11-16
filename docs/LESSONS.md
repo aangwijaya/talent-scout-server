@@ -23,6 +23,14 @@ Rules:
 
 ## Entries
 
+### 2026-11-14 — #64 Accept an answer when message.completed is published, not when the turn ends
+- **Context:** Fixing the 409 `invalid_state` storm the client saw after the opening question: it unlocks the answer box on `message.completed(assistant)`, but the server kept `st.busy` set until the whole turn tail (`node.completed`, question count, `session.updated`) finished.
+- **Problem:** `POST /sessions/{token}/messages` checked only `st.busy`, which flips after `message.completed` is published, so a POST that follows the event could be rejected even though the contract says input is enabled again. Reordering the tail or clearing `busy` before the event makes `Wait`/the sweeper think the step is done and lets the applicant event interleave before `node.completed(interviewer)`.
+- **Cause:** One flag described two different things: "a graph step is using the runner" and "the applicant may answer". The turn tail still needs the runner after the reply is complete.
+- **Lesson:** Track `awaiting` separately from `busy`, set it before publishing `message.completed`, and serialize the applicant's stored answer and `message.completed(applicant)` on the same per-session `stepMu` as the preceding step, so the event is accepted immediately while `node.completed` and the next step keep the contract order and never use the runner concurrently. A gated test store that pauses `node.completed(interviewer)` reproduces the race deterministically.
+- **Follow-up:** tests in `internal/http/handlers/session_answer_ready_test.go` (opening and later turns)
+- **Repeated?:** first time
+
 ### 2026-11-13 — #14 Live tests read env only; a recorded fixture can bake in server bugs
 - **Context:** Round 2 of the live E2E work re-read the fixture that round 1 recorded and fixed the live-test credential lookup.
 - **Problem:** `liveCredentials` fell back to reading the repo `.env` when `OPENROUTER_API_KEY` was empty, so `-tags live` ran live instead of skipping. The fixture also carried two server bugs verbatim: every assistant `message.completed` had `created_at: 0001-01-01T00:00:00Z` (the store sets `CreatedAt` on a copy), and one `node.completed.output_summary` ended in U+FFFD because `summarize` cut at a byte offset inside a rune.

@@ -18,7 +18,48 @@ import (
 // graph state (AI still replying, or nothing waiting for a retry).
 var ErrInvalidState = errors.New("invalid state")
 
+// ErrSessionEnded means the session finished while a turn was waiting for the
+// previous step to release the runner. The handler maps it to 410, not 409.
+var ErrSessionEnded = errors.New("session ended")
+
 var errPlanInvalid = errors.New("planner produced an invalid plan after retries")
+
+// ctxMutex is a mutex whose Lock can be abandoned when a request context is
+// cancelled, so an applicant POST never blocks for a whole scoring run. TryLock
+// and Lock mirror sync.Mutex for the sweeper's non-blocking finish path.
+type ctxMutex struct {
+	ch chan struct{}
+}
+
+func newCtxMutex() *ctxMutex {
+	return &ctxMutex{ch: make(chan struct{}, 1)}
+}
+
+func (m *ctxMutex) Lock() {
+	m.ch <- struct{}{}
+}
+
+func (m *ctxMutex) Unlock() {
+	<-m.ch
+}
+
+func (m *ctxMutex) TryLock() bool {
+	select {
+	case m.ch <- struct{}{}:
+		return true
+	default:
+		return false
+	}
+}
+
+func (m *ctxMutex) LockContext(ctx context.Context) error {
+	select {
+	case m.ch <- struct{}{}:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
 
 // maxPlannerAttempts is the automatic plan_check retry budget (ARCHITECTURE
 // §3: initial attempt + 1 retry). Transport failures use the applicant retry
@@ -62,9 +103,14 @@ type liveSession struct {
 	// stepMu serializes every graph step with the external (sweeper) finish
 	// path. The runner is not concurrency safe, and st.executed is a plain map:
 	// scoring must never overlap judge/guard/interviewer work or another turn.
-	stepMu sync.Mutex
+	stepMu *ctxMutex
 
+	// busy marks a step in flight. awaiting marks that the assistant's
+	// message.completed has been (or is about to be) published, so an applicant
+	// POST that follows the event is accepted even while the turn's tail still
+	// runs; the answer then serializes with that tail on stepMu.
 	busy         bool
+	awaiting     bool
 	waitingRetry bool
 	done         bool
 	// externalFinish is set when the sweeper already ended the session; a
@@ -122,6 +168,7 @@ func (m *SessionManager) Start(ctx context.Context, sess domain.Session) error {
 		sessionID: sess.ID,
 		runID:     runID,
 		runner:    NewRunner(m.store, m.bus, m.llm, m.models, runID, sess.ID),
+		stepMu:    newCtxMutex(),
 		busy:      true,
 		executed:  make(map[string]bool),
 	}
@@ -154,49 +201,105 @@ func (m *SessionManager) runStep(st *liveSession, fn func()) {
 }
 
 // SubmitAnswer stores the applicant's answer and launches the next question.
+// An answer is accepted once the assistant's message.completed is published
+// (awaiting), even though that turn's tail (node.completed, question count,
+// session.updated) may still be running; the answer serializes with the tail on
+// stepMu, so the applicant event and the next step never touch the runner while
+// the previous step is still using it.
 func (m *SessionManager) SubmitAnswer(ctx context.Context, sess domain.Session, content string) (domain.Message, error) {
 	m.mu.Lock()
 	st, ok := m.states[sess.ID]
-	if !ok || st.busy || st.waitingRetry || st.done {
+	if !ok {
 		m.mu.Unlock()
 		return domain.Message{}, ErrInvalidState
 	}
-	st.busy = true
+	if st.done {
+		m.mu.Unlock()
+		return domain.Message{}, ErrSessionEnded
+	}
+	if !st.awaiting || st.waitingRetry {
+		m.mu.Unlock()
+		return domain.Message{}, ErrInvalidState
+	}
+	st.awaiting = false
 	m.mu.Unlock()
 	m.registry.Add(sess.ID)
 
-	topic, err := m.activeTopic(ctx, sess.ID)
-	if err == nil {
-		err = m.store.CreateMessage(ctx, domain.Message{
-			ID:        domain.NewID(),
-			SessionID: sess.ID,
-			TopicID:   topicID(topic),
-			Role:      domain.MessageRoleApplicant,
-			Kind:      domain.MessageKindAnswer,
-			Content:   content,
-			CreatedAt: time.Now().UTC().Truncate(time.Microsecond),
-		})
-	}
-	if err != nil {
-		m.idle(st)
+	if err := st.stepMu.LockContext(ctx); err != nil {
+		// The request gave up before the previous turn released the runner;
+		// leave the applicant able to submit again. Only drop the registry mark
+		// when no step is left to remove it, so an idle session stays sweepable.
+		m.mu.Lock()
+		done, inFlight := st.done, st.busy
+		if !done {
+			st.awaiting = true
+		}
+		m.mu.Unlock()
+		if done || !inFlight {
+			m.registry.Remove(sess.ID)
+		}
 		return domain.Message{}, err
+	}
+	m.mu.Lock()
+	if st.done {
+		m.mu.Unlock()
+		st.stepMu.Unlock()
+		m.registry.Remove(sess.ID)
+		return domain.Message{}, ErrSessionEnded
+	}
+	st.busy = true
+	m.mu.Unlock()
+	// The tail that published message.completed removes the registry mark when
+	// it goes idle. Claim it again here so the sweeper leaves this session alone
+	// for the whole continueAfterAnswer step.
+	m.registry.Add(sess.ID)
+
+	answer, topic, err := m.storeApplicantAnswer(ctx, sess, st, content)
+	if err != nil {
+		m.mu.Lock()
+		st.busy = false
+		st.awaiting = true
+		m.mu.Unlock()
+		st.stepMu.Unlock()
+		m.registry.Remove(sess.ID)
+		return domain.Message{}, err
+	}
+	st.stepMu.Unlock()
+
+	go m.runStep(st, func() { m.continueAfterAnswer(context.Background(), sess, st, topic) })
+	return answer, nil
+}
+
+// storeApplicantAnswer persists the answer and publishes its message.completed
+// while the caller holds stepMu.
+func (m *SessionManager) storeApplicantAnswer(ctx context.Context, sess domain.Session, st *liveSession, content string) (domain.Message, *domain.Topic, error) {
+	topic, err := m.activeTopic(ctx, sess.ID)
+	if err != nil {
+		return domain.Message{}, nil, err
+	}
+	if err := m.store.CreateMessage(ctx, domain.Message{
+		ID:        domain.NewID(),
+		SessionID: sess.ID,
+		TopicID:   topicID(topic),
+		Role:      domain.MessageRoleApplicant,
+		Kind:      domain.MessageKindAnswer,
+		Content:   content,
+		CreatedAt: time.Now().UTC().Truncate(time.Microsecond),
+	}); err != nil {
+		return domain.Message{}, nil, err
 	}
 
 	messages, err := m.store.ListMessagesBySession(ctx, sess.ID, false)
 	if err != nil {
-		m.idle(st)
-		return domain.Message{}, err
+		return domain.Message{}, nil, err
 	}
 	answer := messages[len(messages)-1]
 	if err := st.runner.EmitMessageCompleted(ctx, "interviewer", 1, answer); err != nil {
-		m.idle(st)
-		return domain.Message{}, err
+		return domain.Message{}, nil, err
 	}
 	fresh, _ := m.store.GetSession(ctx, sess.ID)
 	m.emitSessionUpdated(ctx, st, fresh, topic)
-
-	go m.runStep(st, func() { m.continueAfterAnswer(context.Background(), sess, st, topic) })
-	return answer, nil
+	return answer, topic, nil
 }
 
 // Retry re-runs the failed step when it emitted a retryable error. It returns
@@ -499,6 +602,7 @@ func (m *SessionManager) runInterviewer(ctx context.Context, sess domain.Session
 		m.failRun(ctx, sess, st, "create_message_failed")
 		return
 	}
+	m.markAwaiting(st)
 	if err := st.runner.EmitMessageCompleted(ctx, "interviewer", res.Attempt, message); err != nil {
 		m.failRun(ctx, sess, st, "message_event_failed")
 		return
@@ -561,6 +665,7 @@ func (m *SessionManager) handleInterviewerError(ctx context.Context, sess domain
 				m.failRun(retryCtx, sess, st, "create_message_failed")
 				return
 			}
+			m.markAwaiting(st)
 			if eventErr := st.runner.EmitMessageCompleted(retryCtx, "interviewer", res.Attempt, message); eventErr != nil {
 				m.failRun(retryCtx, sess, st, "message_event_failed")
 				return
@@ -625,6 +730,7 @@ func (m *SessionManager) failRun(ctx context.Context, sess domain.Session, st *l
 	m.mu.Lock()
 	st.done = true
 	st.busy = false
+	st.awaiting = false
 	st.waitingRetry = false
 	st.retry = nil
 	m.mu.Unlock()
@@ -661,6 +767,7 @@ func (m *SessionManager) finishExternally(sessionID string, reason domain.Finish
 	st.done = true
 	st.externalFinish = true
 	st.busy = false
+	st.awaiting = false
 	st.waitingRetry = false
 	st.retry = nil
 	runID := st.runID
@@ -736,6 +843,7 @@ func (m *SessionManager) abortExternalTurn(st *liveSession) {
 	m.registry.Remove(st.sessionID)
 	m.mu.Lock()
 	st.busy = false
+	st.awaiting = false
 	st.waitingRetry = false
 	st.retry = nil
 	m.mu.Unlock()
@@ -822,6 +930,17 @@ func (m *SessionManager) idle(st *liveSession) {
 	m.registry.Remove(st.sessionID)
 	m.mu.Lock()
 	st.busy = false
+	m.mu.Unlock()
+}
+
+// markAwaiting records that the assistant reply is complete before its
+// message.completed is published, so an applicant POST that follows the event
+// is accepted even while this turn's tail is still running.
+func (m *SessionManager) markAwaiting(st *liveSession) {
+	m.mu.Lock()
+	if !st.done {
+		st.awaiting = true
+	}
 	m.mu.Unlock()
 }
 

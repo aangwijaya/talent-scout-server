@@ -232,7 +232,14 @@ func TestSendMessageWhenSessionEndedWhileWaitingIsGone(t *testing.T) {
 // TestConcurrentAnswersAcceptExactlyOne proves the awaiting claim is atomic:
 // only the first POST after message.completed is accepted.
 func TestConcurrentAnswersAcceptExactlyOne(t *testing.T) {
-	f := newChatFixture(t, false)
+	// Pause the turn the accepted answer starts before it publishes a new
+	// message.completed; otherwise the second POST may legitimately see a
+	// fresh question and be accepted too.
+	var gate *gatedEventStore
+	f := newChatFixtureWrapped(t, false, func(base store.Store) store.Store {
+		gate = newGatedEventStore(base, graph.EventNodeStarted, "interviewer", 2)
+		return gate
+	})
 	rec := httptest.NewRecorder()
 	f.handler.Start(rec, chatRequest(http.MethodPost, f.raw, ""))
 	if rec.Code != http.StatusOK {
@@ -257,6 +264,7 @@ func TestConcurrentAnswersAcceptExactlyOne(t *testing.T) {
 		}(content)
 	}
 	wg.Wait()
+	close(gate.release)
 	close(codes)
 
 	counts := map[int]int{}

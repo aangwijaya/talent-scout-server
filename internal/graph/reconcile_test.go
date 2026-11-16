@@ -146,6 +146,67 @@ func TestReconcileClosesOrphanedRunNodesAndApplication(t *testing.T) {
 	}
 }
 
+func TestReconcileSkipsMachineNodesThatNeverExecuted(t *testing.T) {
+	st := store.NewMemory()
+	_, run := seedOrphan(t, st, true, "interviewer")
+
+	if _, err := ReconcileOrphanedRuns(context.Background(), st); err != nil {
+		t.Fatalf("ReconcileOrphanedRuns: %v", err)
+	}
+	events, err := st.ListNodeEvents(context.Background(), run.ID, 0)
+	if err != nil {
+		t.Fatalf("ListNodeEvents: %v", err)
+	}
+
+	skips := make(map[string]int)
+	var failedAt, firstSkippedAt, lastSkippedAt, runFailedAt = -1, -1, -1, -1
+	for i, event := range events {
+		switch event.Type {
+		case EventNodeFailed:
+			if event.NodeID != nil && *event.NodeID == "interviewer" {
+				failedAt = i
+			}
+		case EventNodeSkipped:
+			if event.NodeID == nil {
+				t.Errorf("node.skipped at %d has no node_id", i)
+				continue
+			}
+			var payload NodeSkipped
+			if err := json.Unmarshal(event.Payload, &payload); err != nil {
+				t.Fatalf("unmarshal node.skipped: %v", err)
+			}
+			if payload.Reason != "run_failed" {
+				t.Errorf("node.skipped(%s) reason = %q, want run_failed", *event.NodeID, payload.Reason)
+			}
+			if event.Attempt != nil {
+				t.Errorf("node.skipped(%s) attempt = %d, want null", *event.NodeID, *event.Attempt)
+			}
+			skips[*event.NodeID]++
+			if firstSkippedAt < 0 {
+				firstSkippedAt = i
+			}
+			lastSkippedAt = i
+		case EventRunFailed:
+			runFailedAt = i
+		}
+	}
+
+	for _, nodeID := range []string{"plan_check", "judge", "guard", "scorer", "evidence_check"} {
+		if skips[nodeID] != 1 {
+			t.Errorf("node.skipped(%s) = %d, want exactly 1 (never executed)", nodeID, skips[nodeID])
+		}
+	}
+	for _, nodeID := range []string{"planner", "interviewer", "recruiter_gate"} {
+		if skips[nodeID] != 0 {
+			t.Errorf("node.skipped(%s) = %d, want 0", nodeID, skips[nodeID])
+		}
+	}
+	if !(failedAt >= 0 && firstSkippedAt > failedAt && lastSkippedAt < runFailedAt) {
+		t.Errorf("order node.failed=%d first skipped=%d last skipped=%d run.failed=%d, want node.failed < node.skipped... < run.failed",
+			failedAt, firstSkippedAt, lastSkippedAt, runFailedAt)
+	}
+}
+
 func TestReconcileFinishesActiveSessionWithoutRun(t *testing.T) {
 	st := store.NewMemory()
 	sess, _ := seedOrphan(t, st, false)

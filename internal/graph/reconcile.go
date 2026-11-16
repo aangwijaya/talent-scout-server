@@ -43,7 +43,7 @@ func ReconcileOrphanedRuns(ctx context.Context, st store.Store) (ReconcileResult
 		}
 		handled[sess.ID] = struct{}{}
 
-		nodes, err := closeDanglingNodes(ctx, st, run.ID)
+		nodes, err := reconcileRunNodes(ctx, st, run.ID)
 		if err != nil {
 			return result, err
 		}
@@ -91,7 +91,7 @@ func ReconcileOrphanedRuns(ctx context.Context, st store.Store) (ReconcileResult
 		}
 		if run, runErr := st.GetGraphRunBySession(ctx, sess.ID); runErr == nil && run.Status == domain.GraphRunStatusRunning {
 			// A running run created between the two lists: close it the same way.
-			nodes, err := closeDanglingNodes(ctx, st, run.ID)
+			nodes, err := reconcileRunNodes(ctx, st, run.ID)
 			if err != nil {
 				return result, err
 			}
@@ -124,9 +124,11 @@ func ReconcileOrphanedRuns(ctx context.Context, st store.Store) (ReconcileResult
 	return result, nil
 }
 
-// closeDanglingNodes writes exactly one terminal node.failed for every attempt
-// that has a node.started but no node.completed/node.failed/node.skipped.
-func closeDanglingNodes(ctx context.Context, st store.Store, runID string) (int, error) {
+// reconcileRunNodes writes exactly one terminal node.failed for every attempt
+// that has a node.started but no node.completed/node.failed/node.skipped, then
+// node.skipped(run_failed) for every machine node that never ran, matching the
+// EVENTS.md §6.3 failure sequence.
+func reconcileRunNodes(ctx context.Context, st store.Store, runID string) (int, error) {
 	events, err := st.ListNodeEvents(ctx, runID, 0)
 	if err != nil {
 		return 0, err
@@ -138,10 +140,12 @@ func closeDanglingNodes(ctx context.Context, st store.Store, runID string) (int,
 	}
 	open := make(map[attemptKey]domain.NodeEvent)
 	order := make([]attemptKey, 0)
+	seen := make(map[string]struct{})
 	for _, event := range events {
 		if event.NodeID == nil {
 			continue
 		}
+		seen[*event.NodeID] = struct{}{}
 		attempt := 0
 		if event.Attempt != nil {
 			attempt = *event.Attempt
@@ -168,6 +172,18 @@ func closeDanglingNodes(ctx context.Context, st store.Store, runID string) (int,
 			return closed, err
 		}
 		closed++
+	}
+
+	for _, nodeID := range NodeIDs {
+		if nodeID == "recruiter_gate" {
+			continue
+		}
+		if _, ok := seen[nodeID]; ok {
+			continue
+		}
+		if err := appendNodeEvent(ctx, st, runID, domain.StrPtr(nodeID), nil, EventNodeSkipped, NodeSkipped{Reason: "run_failed"}); err != nil {
+			return closed, err
+		}
 	}
 	return closed, nil
 }

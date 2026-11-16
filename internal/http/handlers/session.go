@@ -249,6 +249,10 @@ func (h *Sessions) SendMessage(w http.ResponseWriter, r *http.Request) {
 			apierror.Write(w, http.StatusConflict, apierror.CodeInvalidState, "the assistant is still replying", nil)
 			return
 		}
+		if errors.Is(err, graph.ErrSessionEnded) {
+			h.writeSessionEnded(w, r.Context(), sess)
+			return
+		}
 		apierror.Write(w, http.StatusInternalServerError, apierror.CodeInternalError, "could not store the answer", nil)
 		return
 	}
@@ -351,6 +355,20 @@ func (h *Sessions) Events(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	}
+}
+
+// writeSessionEnded maps a session that finished while the answer was waiting
+// to the 410 code that matches its stored state.
+func (h *Sessions) writeSessionEnded(w http.ResponseWriter, ctx context.Context, sess domain.Session) {
+	status := sess.Status
+	if fresh, err := h.store.GetSession(ctx, sess.ID); err == nil {
+		status = fresh.Status
+	}
+	if status == domain.SessionStatusExpired {
+		apierror.Write(w, http.StatusGone, apierror.CodeSessionExpired, "session expired", nil)
+		return
+	}
+	apierror.Write(w, http.StatusGone, apierror.CodeSessionCompleted, "session completed", nil)
 }
 
 // requireActive enforces the POST message/retry preconditions only the runner

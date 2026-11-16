@@ -37,13 +37,14 @@ func chatModels() config.ModelsConfig {
 }
 
 type chatFixture struct {
-	store   *store.Memory
-	handler *handlers.Sessions
-	manager *graph.SessionManager
-	bus     *graph.Bus
-	raw     string
-	session domain.Session
-	job     domain.Job
+	store    *store.Memory
+	handler  *handlers.Sessions
+	manager  *graph.SessionManager
+	registry *session.Registry
+	bus      *graph.Bus
+	raw      string
+	session  domain.Session
+	job      domain.Job
 }
 
 func newChatFixture(t *testing.T, start bool) *chatFixture {
@@ -52,6 +53,11 @@ func newChatFixture(t *testing.T, start bool) *chatFixture {
 }
 
 func newChatFixtureWrapped(t *testing.T, start bool, wrap func(store.Store) store.Store) *chatFixture {
+	t.Helper()
+	return newChatFixtureWithLLM(t, start, wrap, llm.NewFake(graph.FakeReplies))
+}
+
+func newChatFixtureWithLLM(t *testing.T, start bool, wrap func(store.Store) store.Store, client llm.Client) *chatFixture {
 	t.Helper()
 	ctx := context.Background()
 	base := store.NewMemory()
@@ -103,10 +109,11 @@ func newChatFixtureWrapped(t *testing.T, start bool, wrap func(store.Store) stor
 
 	cfg := config.Config{SessionMaxMinutes: 15, SessionMaxQuestions: 15}
 	bus := graph.NewBus(st)
-	manager := graph.NewSessionManager(cfg, st, bus, llm.NewFake(graph.FakeReplies), chatModels(), session.NewRegistry(), nil)
+	registry := session.NewRegistry()
+	manager := graph.NewSessionManager(cfg, st, bus, client, chatModels(), registry, nil)
 	h := handlers.NewSessions(cfg, st)
 	h.SetChat(manager, bus)
-	return &chatFixture{store: base, handler: h, manager: manager, bus: bus, raw: raw, session: sess, job: job}
+	return &chatFixture{store: base, handler: h, manager: manager, registry: registry, bus: bus, raw: raw, session: sess, job: job}
 }
 
 func chatRequest(method, token, body string) *http.Request {

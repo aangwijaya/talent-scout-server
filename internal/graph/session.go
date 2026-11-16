@@ -18,7 +18,48 @@ import (
 // graph state (AI still replying, or nothing waiting for a retry).
 var ErrInvalidState = errors.New("invalid state")
 
+// ErrSessionEnded means the session finished while a turn was waiting for the
+// previous step to release the runner. The handler maps it to 410, not 409.
+var ErrSessionEnded = errors.New("session ended")
+
 var errPlanInvalid = errors.New("planner produced an invalid plan after retries")
+
+// ctxMutex is a mutex whose Lock can be abandoned when a request context is
+// cancelled, so an applicant POST never blocks for a whole scoring run. TryLock
+// and Lock mirror sync.Mutex for the sweeper's non-blocking finish path.
+type ctxMutex struct {
+	ch chan struct{}
+}
+
+func newCtxMutex() *ctxMutex {
+	return &ctxMutex{ch: make(chan struct{}, 1)}
+}
+
+func (m *ctxMutex) Lock() {
+	m.ch <- struct{}{}
+}
+
+func (m *ctxMutex) Unlock() {
+	<-m.ch
+}
+
+func (m *ctxMutex) TryLock() bool {
+	select {
+	case m.ch <- struct{}{}:
+		return true
+	default:
+		return false
+	}
+}
+
+func (m *ctxMutex) LockContext(ctx context.Context) error {
+	select {
+	case m.ch <- struct{}{}:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
 
 // maxPlannerAttempts is the automatic plan_check retry budget (ARCHITECTURE
 // §3: initial attempt + 1 retry). Transport failures use the applicant retry
@@ -62,7 +103,7 @@ type liveSession struct {
 	// stepMu serializes every graph step with the external (sweeper) finish
 	// path. The runner is not concurrency safe, and st.executed is a plain map:
 	// scoring must never overlap judge/guard/interviewer work or another turn.
-	stepMu sync.Mutex
+	stepMu *ctxMutex
 
 	// busy marks a step in flight. awaiting marks that the assistant's
 	// message.completed has been (or is about to be) published, so an applicant
@@ -127,6 +168,7 @@ func (m *SessionManager) Start(ctx context.Context, sess domain.Session) error {
 		sessionID: sess.ID,
 		runID:     runID,
 		runner:    NewRunner(m.store, m.bus, m.llm, m.models, runID, sess.ID),
+		stepMu:    newCtxMutex(),
 		busy:      true,
 		executed:  make(map[string]bool),
 	}
@@ -167,7 +209,15 @@ func (m *SessionManager) runStep(st *liveSession, fn func()) {
 func (m *SessionManager) SubmitAnswer(ctx context.Context, sess domain.Session, content string) (domain.Message, error) {
 	m.mu.Lock()
 	st, ok := m.states[sess.ID]
-	if !ok || !st.awaiting || st.waitingRetry || st.done {
+	if !ok {
+		m.mu.Unlock()
+		return domain.Message{}, ErrInvalidState
+	}
+	if st.done {
+		m.mu.Unlock()
+		return domain.Message{}, ErrSessionEnded
+	}
+	if !st.awaiting || st.waitingRetry {
 		m.mu.Unlock()
 		return domain.Message{}, ErrInvalidState
 	}
@@ -175,16 +225,34 @@ func (m *SessionManager) SubmitAnswer(ctx context.Context, sess domain.Session, 
 	m.mu.Unlock()
 	m.registry.Add(sess.ID)
 
-	st.stepMu.Lock()
+	if err := st.stepMu.LockContext(ctx); err != nil {
+		// The request gave up before the previous turn released the runner;
+		// leave the applicant able to submit again. Only drop the registry mark
+		// when no step is left to remove it, so an idle session stays sweepable.
+		m.mu.Lock()
+		done, inFlight := st.done, st.busy
+		if !done {
+			st.awaiting = true
+		}
+		m.mu.Unlock()
+		if done || !inFlight {
+			m.registry.Remove(sess.ID)
+		}
+		return domain.Message{}, err
+	}
 	m.mu.Lock()
 	if st.done {
 		m.mu.Unlock()
 		st.stepMu.Unlock()
 		m.registry.Remove(sess.ID)
-		return domain.Message{}, ErrInvalidState
+		return domain.Message{}, ErrSessionEnded
 	}
 	st.busy = true
 	m.mu.Unlock()
+	// The tail that published message.completed removes the registry mark when
+	// it goes idle. Claim it again here so the sweeper leaves this session alone
+	// for the whole continueAfterAnswer step.
+	m.registry.Add(sess.ID)
 
 	answer, topic, err := m.storeApplicantAnswer(ctx, sess, st, content)
 	if err != nil {

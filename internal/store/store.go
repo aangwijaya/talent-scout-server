@@ -93,6 +93,7 @@ type Store interface {
 	CreateGraphRun(ctx context.Context, run domain.GraphRun) error
 	GetGraphRun(ctx context.Context, id string) (domain.GraphRun, error)
 	GetGraphRunBySession(ctx context.Context, sessionID string) (domain.GraphRun, error)
+	ListGraphRunsByStatus(ctx context.Context, status domain.GraphRunStatus) ([]domain.GraphRun, error)
 	UpdateGraphRun(ctx context.Context, run domain.GraphRun) error
 
 	AppendNodeEvent(ctx context.Context, event domain.NodeEvent) (domain.NodeEvent, error)

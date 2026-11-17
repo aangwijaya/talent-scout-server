@@ -88,6 +88,11 @@ func (r *Runner) runLLMNodeWithSummary(ctx context.Context, nodeID string, attem
 	currentAttempt := attempt
 	start := time.Now()
 	req.OnRetry = func(failedAttempt int, err error) {
+		// A cancelled parent is shutting down, not retrying: emitting a retry
+		// pair would leave a node.started that no later attempt can close.
+		if ctx.Err() != nil {
+			return
+		}
 		// failedAttempt is local to this LLM call (1 on the first transport
 		// retry); offset it by the loop attempt so numbering is continuous.
 		failed := attempt + failedAttempt - 1
@@ -110,7 +115,12 @@ func (r *Runner) runLLMNodeWithSummary(ctx context.Context, nodeID string, attem
 	}
 	if err != nil {
 		r.logNodeFailed(nodeID, currentAttempt, err)
-		if emitErr := r.emitNodeFailed(ctx, nodeID, currentAttempt, &model, nodeFailedCode(err), false); emitErr != nil {
+		// The terminal event must survive a cancelled/deadline context, or the
+		// persisted node.started would have no terminal partner (§5).
+		emitCtx, cancel := terminalContext(ctx)
+		emitErr := r.emitNodeFailed(emitCtx, nodeID, currentAttempt, &model, nodeFailedCode(err), false)
+		cancel()
+		if emitErr != nil {
 			return llm.Response{}, currentAttempt, emitErr
 		}
 		return llm.Response{}, currentAttempt, err
@@ -132,7 +142,9 @@ func (r *Runner) RunCodeNode(ctx context.Context, nodeID string, attempt int, in
 	start := time.Now()
 	summary, err := fn()
 	if err != nil {
-		_ = r.emitNodeFailed(ctx, nodeID, attempt, nil, err.Error(), false)
+		emitCtx, cancel := terminalContext(ctx)
+		_ = r.emitNodeFailed(emitCtx, nodeID, attempt, nil, err.Error(), false)
+		cancel()
 		return err
 	}
 	return r.emitNodeCompleted(ctx, nodeID, attempt, nil, summary, 0, 0, time.Since(start))
@@ -311,6 +323,12 @@ func (r *Runner) finishRun(ctx context.Context, status domain.GraphRunStatus, er
 		Error:          errMsg,
 	}
 	return r.store.UpdateGraphRun(ctx, run)
+}
+
+// terminalContext detaches a terminal event from a cancelled parent while
+// bounding how long persistence may take.
+func terminalContext(ctx context.Context) (context.Context, context.CancelFunc) {
+	return context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
 }
 
 func strPtr(s string) *string {

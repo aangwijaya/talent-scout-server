@@ -23,6 +23,14 @@ Rules:
 
 ## Entries
 
+### 2026-11-16 — #31 Boot reconciliation must close every started node and fail orphaned runs
+- **Context:** Reconciling runs left `running` after a restart, plus three review findings (abandoned app state, cancelled-ctx node terminals, planner outage with no topics).
+- **Problem:** A running run kept its application in `scoring` forever, and a failure persisted with the caller's cancelled context left `node.started` with no terminal event. On boot there is no runner to resume, so finishing such sessions as `abandoned` and scoring them is not possible. EVENTS.md listed no error value for "closed because the server restarted" (server#66 added `server_restart`).
+- **Cause:** Reconciliation was only time-based in the sweeper, and terminal events reused the request/shutdown context that had just died. The abandoned/time-limit path assumed a live in-process manager.
+- **Lesson:** Reconcile persisted state on boot before listeners start: close each dangling `(node_id, attempt)` with exactly one terminal event, then `node.skipped(run_failed)` for every machine node that never ran, then `run.failed`, then `session.ended(failed)`, and move the application to `failed`. Emit terminal node events with `context.WithoutCancel` plus a short timeout, and never emit a retry pair when the parent context is done. Ending a session before any topic exists is a failed run, not an abandoned/scored one. When a needed wire value is outside the contract, open a `contract-change` issue and mark the node `gap` instead of inventing one.
+- **Follow-up:** tests in `internal/graph/reconcile_test.go`, `internal/graph/runner_terminal_ctx_test.go`, `internal/session/sweeper_test.go`, `internal/graph/planner_retry_test.go`; contract-change issue server#66 added `server_restart` for both fields
+- **Repeated?:** first time
+
 ### 2026-11-14 — #64 Accept an answer when message.completed is published, not when the turn ends
 - **Context:** Fixing the 409 `invalid_state` storm the client saw after the opening question: it unlocks the answer box on `message.completed(assistant)`, but the server kept `st.busy` set until the whole turn tail (`node.completed`, question count, `session.updated`) finished.
 - **Problem:** `POST /sessions/{token}/messages` checked only `st.busy`, which flips after `message.completed` is published, so a POST that follows the event could be rejected even though the contract says input is enabled again. Reordering the tail or clearing `busy` before the event makes `Wait`/the sweeper think the step is done and lets the applicant event interleave before `node.completed(interviewer)`.

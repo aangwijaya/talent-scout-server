@@ -80,6 +80,14 @@ func main() {
 	defer stop()
 
 	if st != nil {
+		if reconciled, err := graph.ReconcileOrphanedRuns(ctx, st); err != nil {
+			logger.Error("reconcile orphaned runs", "error", err)
+		} else if reconciled.RunsClosed > 0 || reconciled.SessionsClosed > 0 || reconciled.NodesClosed > 0 {
+			logger.Info("reconciled orphaned runs",
+				"runs", reconciled.RunsClosed,
+				"sessions", reconciled.SessionsClosed,
+				"nodes", reconciled.NodesClosed)
+		}
 		sweeper := session.NewSweeper(st, registry, time.Duration(cfg.SessionMaxMinutes)*time.Minute, logger)
 		go sweeper.Run(ctx)
 	}

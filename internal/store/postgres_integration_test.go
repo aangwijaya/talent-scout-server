@@ -238,6 +238,9 @@ func TestPostgresStore(t *testing.T) {
 		t.Fatalf("second ExpireSession = %v, %v; want false, nil", changed, err)
 	}
 
+	if err := s.UpdateApplicationStatus(ctx, app2.ID, domain.ApplicationStatusInSession); err != nil {
+		t.Fatalf("UpdateApplicationStatus in_session: %v", err)
+	}
 	activeStarted := time.Now().Add(-2 * time.Hour).UTC()
 	activeSess := domain.Session{
 		ID:            domain.NewID(),
@@ -260,6 +263,10 @@ func TestPostgresStore(t *testing.T) {
 	}
 	if gotAbandoned.Status != domain.SessionStatusCompleted || gotAbandoned.FinishReason == nil || *gotAbandoned.FinishReason != domain.FinishReasonAbandoned || gotAbandoned.EndedAt == nil {
 		t.Fatalf("abandoned session = %+v", gotAbandoned)
+	}
+	abandonedApp, err := s.GetApplication(ctx, app2.ID)
+	if err != nil || abandonedApp.Status != domain.ApplicationStatusScoring {
+		t.Fatalf("application after AbandonSession = %+v, %v; want scoring", abandonedApp, err)
 	}
 	changed, err = s.AbandonSession(ctx, activeSess.ID, time.Now().UTC())
 	if err != nil || changed {
@@ -320,6 +327,10 @@ func TestPostgresStore(t *testing.T) {
 	run := domain.GraphRun{ID: domain.NewID(), SessionID: session.ID, Status: domain.GraphRunStatusRunning}
 	if err := s.CreateGraphRun(ctx, run); err != nil {
 		t.Fatalf("CreateGraphRun: %v", err)
+	}
+	running, err := s.ListGraphRunsByStatus(ctx, domain.GraphRunStatusRunning)
+	if err != nil || len(running) != 1 || running[0].ID != run.ID {
+		t.Fatalf("ListGraphRunsByStatus = %+v, %v; want only %s", running, err, run.ID)
 	}
 	first, err := s.AppendNodeEvent(ctx, domain.NodeEvent{RunID: run.ID, NodeID: domain.StrPtr("planner"), Attempt: domain.IntPtr(1), Type: "node.started", Payload: []byte(`{"k":1}`)})
 	if err != nil {

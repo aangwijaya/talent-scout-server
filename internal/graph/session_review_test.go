@@ -572,3 +572,65 @@ func TestExternalFinishStopsLateTurnFailure(t *testing.T) {
 		t.Errorf("run.failed events = %d, want 0; a turn stopped by the sweeper must not fail the run", failed)
 	}
 }
+
+// An idle session with topics is abandoned and then scored on its existing
+// transcript; the application reaches review instead of staying in_session.
+func TestSweepAbandonedSessionWithTopicsScoresToReview(t *testing.T) {
+	st, sess := seedGraphSession(t)
+	manager, registry := newTestManager(t, st, llm.NewFake(FakeReplies))
+	if err := manager.Start(context.Background(), sess); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	waitIdle(t, manager, sess.ID)
+
+	topics, err := st.ListTopicsBySession(context.Background(), sess.ID)
+	if err != nil || len(topics) < 2 {
+		t.Fatalf("topics = %+v, %v", topics, err)
+	}
+	now := time.Now().UTC()
+	answers := []domain.Message{
+		{ID: domain.NewID(), SessionID: sess.ID, TopicID: &topics[0].ID, Role: domain.MessageRoleApplicant, Kind: domain.MessageKindAnswer,
+			Content: "I moved the state into a separate store so each page stayed small and easy to test.", CreatedAt: now.Add(-11 * time.Minute)},
+		{ID: domain.NewID(), SessionID: sess.ID, TopicID: &topics[1].ID, Role: domain.MessageRoleApplicant, Kind: domain.MessageKindAnswer,
+			Content: "Props were crossing four layers, and I explained the tradeoff to the team before we changed it.", CreatedAt: now.Add(-10*time.Minute - 30*time.Second)},
+	}
+	for _, answer := range answers {
+		if err := st.CreateMessage(context.Background(), answer); err != nil {
+			t.Fatalf("CreateMessage: %v", err)
+		}
+	}
+	fresh, err := st.GetSession(context.Background(), sess.ID)
+	if err != nil {
+		t.Fatalf("GetSession: %v", err)
+	}
+	started := now.Add(-12 * time.Minute)
+	fresh.StartedAt = &started
+	if err := st.UpdateSession(context.Background(), fresh); err != nil {
+		t.Fatalf("UpdateSession: %v", err)
+	}
+
+	sweeper := session.NewSweeper(st, registry, 15*time.Minute, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	_, abandoned, _, err := sweeper.SweepOnce(context.Background())
+	if err != nil {
+		t.Fatalf("SweepOnce: %v", err)
+	}
+	if abandoned != 1 {
+		t.Fatalf("abandoned = %d, want 1", abandoned)
+	}
+	waitApplicationStatus(t, st, sess.ApplicationID, domain.ApplicationStatusReview)
+
+	scores := scorerScores(t, st, sess.ApplicationID)
+	if len(scores) == 0 {
+		t.Fatal("no scores stored for the abandoned transcript")
+	}
+	valid := 0
+	for key, score := range scores {
+		if score.Status == domain.ScoreStatusValid {
+			valid++
+		}
+		_ = key
+	}
+	if valid == 0 {
+		t.Errorf("scores = %+v, want at least one criterion scored on the existing transcript", scores)
+	}
+}

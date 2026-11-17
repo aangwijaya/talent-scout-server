@@ -18,10 +18,21 @@ const AbandonAfter = 10 * time.Minute
 // pass SESSION_MAX_MINUTES.
 const DefaultMaxSession = 15 * time.Minute
 
-const sessionEndedEvent = "session.ended"
+const (
+	sessionEndedEvent = "session.ended"
+	runFailedEvent    = "run.failed"
+)
+
+// plannerFailedRunReason is the run.failed reason for a session the sweeper
+// ends before a plan existed: the planner never produced topics.
+const plannerFailedRunReason = "planner_failed"
 
 type sessionEndedPayload struct {
 	FinishReason string `json:"finish_reason"`
+}
+
+type runFailedPayload struct {
+	Error string `json:"error"`
 }
 
 // Sweeper periodically expires invited sessions past their TTL and finishes
@@ -105,32 +116,70 @@ func (s *Sweeper) SweepOnce(ctx context.Context) (expired, abandoned, timedOut i
 			continue
 		}
 
+		// A session the sweeper ends before the planner produced topics has no
+		// transcript to score. It is a failed run, and the application must be
+		// failed so resend-invite can recover the applicant.
+		topics, err := s.store.ListTopicsBySession(ctx, sess.ID)
+		if err != nil {
+			return expired, abandoned, timedOut, err
+		}
+		if len(topics) == 0 {
+			reason = domain.FinishReasonFailed
+		}
+
 		var changed bool
-		if reason == domain.FinishReasonTimeLimit {
+		switch reason {
+		case domain.FinishReasonFailed, domain.FinishReasonTimeLimit:
 			changed, err = s.store.FinishSession(ctx, sess.ID, reason, now)
-			if err != nil {
-				return expired, abandoned, timedOut, err
-			}
-			if changed {
-				timedOut++
-			}
-		} else {
+		default:
 			changed, err = s.store.AbandonSession(ctx, sess.ID, now)
-			if err != nil {
-				return expired, abandoned, timedOut, err
-			}
-			if changed {
-				abandoned++
-			}
+		}
+		if err != nil {
+			return expired, abandoned, timedOut, err
 		}
 		if !changed {
 			continue
 		}
+		if reason == domain.FinishReasonTimeLimit {
+			timedOut++
+		} else {
+			abandoned++
+		}
 
+		if reason == domain.FinishReasonFailed {
+			s.finishFailed(ctx, sess)
+			continue
+		}
 		s.finishApplication(ctx, sess, reason)
 		s.emitEnded(ctx, sess, reason)
 	}
 	return expired, abandoned, timedOut, nil
+}
+
+// finishFailed closes a run the sweeper ended before a plan existed. A live
+// manager emits the run and session events itself; without one the sweeper
+// persists run.failed before session.ended so replay stays ordered.
+func (s *Sweeper) finishFailed(ctx context.Context, sess domain.Session) {
+	if s.registry.NotifyFinished(sess.ID, domain.FinishReasonFailed) {
+		return
+	}
+	run, err := s.store.GetGraphRunBySession(ctx, sess.ID)
+	if err != nil {
+		return
+	}
+	if run.Status == domain.GraphRunStatusRunning {
+		if payload, err := json.Marshal(runFailedPayload{Error: plannerFailedRunReason}); err == nil {
+			_, _ = s.store.AppendNodeEvent(ctx, domain.NodeEvent{RunID: run.ID, Type: runFailedEvent, Payload: payload})
+		}
+		ended := time.Now().UTC()
+		errMsg := plannerFailedRunReason
+		_ = s.store.UpdateGraphRun(ctx, domain.GraphRun{
+			ID: run.ID, Status: domain.GraphRunStatusFailed, EndedAt: &ended, Error: &errMsg,
+		})
+	}
+	if payload, err := json.Marshal(sessionEndedPayload{FinishReason: string(domain.FinishReasonFailed)}); err == nil {
+		_, _ = s.store.AppendNodeEvent(ctx, domain.NodeEvent{RunID: run.ID, Type: sessionEndedEvent, Payload: payload})
+	}
 }
 
 // finishReason decides whether an active session the sweeper may touch is due

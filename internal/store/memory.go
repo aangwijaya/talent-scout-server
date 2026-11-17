@@ -376,8 +376,9 @@ func (m *Memory) ExpireSession(_ context.Context, id string, now time.Time) (boo
 }
 
 // AbandonSession transitions an active session to completed with
-// finish_reason=abandoned. It reports whether the transition happened; a
-// session that is no longer active is skipped (changed=false).
+// finish_reason=abandoned and moves an in_session application to scoring in the
+// same lock, so abandoning is one unit of work. It reports whether the session
+// transition happened; a session that is no longer active is skipped.
 func (m *Memory) AbandonSession(_ context.Context, id string, now time.Time) (bool, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -394,12 +395,14 @@ func (m *Memory) AbandonSession(_ context.Context, id string, now time.Time) (bo
 	session.FinishReason = &reason
 	session.EndedAt = &now
 	m.sessions[id] = session
+	m.finishApplicationLocked(session.ApplicationID, reason)
 	return true, nil
 }
 
 // FinishSession transitions an active session to completed with the given
-// finish_reason. It reports whether the transition happened; a session that is
-// no longer active is skipped (changed=false).
+// finish_reason and moves the application on in the same lock: failed for
+// finish_reason=failed, scoring for every other reason. It reports whether the
+// session transition happened; a session that is no longer active is skipped.
 func (m *Memory) FinishSession(_ context.Context, id string, reason domain.FinishReason, now time.Time) (bool, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -415,7 +418,22 @@ func (m *Memory) FinishSession(_ context.Context, id string, reason domain.Finis
 	session.FinishReason = &reason
 	session.EndedAt = &now
 	m.sessions[id] = session
+	m.finishApplicationLocked(session.ApplicationID, reason)
 	return true, nil
+}
+
+// finishApplicationLocked moves an in_session application to the next state for
+// a finished session. The caller must hold m.mu.
+func (m *Memory) finishApplicationLocked(applicationID string, reason domain.FinishReason) {
+	app, ok := m.applications[applicationID]
+	if !ok || app.Status != domain.ApplicationStatusInSession {
+		return
+	}
+	app.Status = domain.ApplicationStatusScoring
+	if reason == domain.FinishReasonFailed {
+		app.Status = domain.ApplicationStatusFailed
+	}
+	m.applications[app.ID] = app
 }
 
 // ResendInvite revokes the current invited session (when revokeSessionID is
@@ -643,6 +661,25 @@ func (m *Memory) GetGraphRunBySession(_ context.Context, sessionID string) (doma
 		return domain.GraphRun{}, ErrNotFound
 	}
 	return latest, nil
+}
+
+func (m *Memory) ListGraphRunsByStatus(_ context.Context, status domain.GraphRunStatus) ([]domain.GraphRun, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	runs := make([]domain.GraphRun, 0)
+	for _, run := range m.graphRuns {
+		if run.Status == status {
+			runs = append(runs, run)
+		}
+	}
+	sort.Slice(runs, func(i, j int) bool {
+		if runs[i].StartedAt.Equal(runs[j].StartedAt) {
+			return runs[i].ID < runs[j].ID
+		}
+		return runs[i].StartedAt.Before(runs[j].StartedAt)
+	})
+	return runs, nil
 }
 
 func (m *Memory) UpdateGraphRun(_ context.Context, run domain.GraphRun) error {

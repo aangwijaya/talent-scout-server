@@ -4,12 +4,16 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
+	"log/slog"
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/aangwijaya/talent-scout-server/internal/domain"
 	"github.com/aangwijaya/talent-scout-server/internal/llm"
+	"github.com/aangwijaya/talent-scout-server/internal/session"
 )
 
 func TestPlannerOutageIsApplicantRetryable(t *testing.T) {
@@ -366,5 +370,88 @@ func TestApplicantRetryAfterOutageKeepsPlanCheckFeedback(t *testing.T) {
 	}
 	if !strings.Contains(feedback.String(), "topic_count must be between 3 and 5") {
 		t.Errorf("applicant retry planner request lacks attempt 1 plan_check errors:\n%s", feedback.String())
+	}
+}
+
+// A planner outage that the applicant never retries must not leave the session
+// active waiting forever: after the idle limit it ends failed, with its
+// application failed (so resend-invite works) and its graph run failed.
+func TestPlannerOutageNeverRetriedFailsAfterIdleLimit(t *testing.T) {
+	st, sess := seedGraphSession(t)
+	client := &stubClient{chat: func(req llm.Request) (llm.Response, error) {
+		if req.Node == "planner" {
+			return llm.Response{}, llm.ErrUnavailable
+		}
+		return llm.Response{Content: FakeReplies[req.Node]}, nil
+	}}
+	manager, registry := newTestManager(t, st, client)
+	if err := manager.Start(context.Background(), sess); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	waitIdle(t, manager, sess.ID)
+
+	topics, _ := st.ListTopicsBySession(context.Background(), sess.ID)
+	if len(topics) != 0 {
+		t.Fatalf("topics = %d, want none: the planner never produced a plan", len(topics))
+	}
+	fresh, err := st.GetSession(context.Background(), sess.ID)
+	if err != nil {
+		t.Fatalf("GetSession: %v", err)
+	}
+	past := time.Now().Add(-11 * time.Minute)
+	fresh.StartedAt = &past
+	if err := st.UpdateSession(context.Background(), fresh); err != nil {
+		t.Fatalf("UpdateSession: %v", err)
+	}
+
+	sweeper := session.NewSweeper(st, registry, 15*time.Minute, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	_, abandoned, _, err := sweeper.SweepOnce(context.Background())
+	if err != nil {
+		t.Fatalf("SweepOnce: %v", err)
+	}
+	if abandoned != 1 {
+		t.Errorf("abandoned = %d, want 1", abandoned)
+	}
+
+	app, err := st.GetApplication(context.Background(), sess.ApplicationID)
+	if err != nil {
+		t.Fatalf("GetApplication: %v", err)
+	}
+	if app.Status != domain.ApplicationStatusFailed {
+		t.Errorf("application status = %q, want failed", app.Status)
+	}
+	fresh, _ = st.GetSession(context.Background(), sess.ID)
+	if fresh.Status != domain.SessionStatusCompleted || fresh.FinishReason == nil || *fresh.FinishReason != domain.FinishReasonFailed {
+		t.Errorf("session = %+v, want completed/failed", fresh)
+	}
+	run, err := st.GetGraphRunBySession(context.Background(), sess.ID)
+	if err != nil {
+		t.Fatalf("GetGraphRunBySession: %v", err)
+	}
+	if run.Status != domain.GraphRunStatusFailed {
+		t.Errorf("run status = %q, want failed", run.Status)
+	}
+
+	runFailedAt, endedAt := -1, -1
+	for i, event := range sessionEvents(t, st, sess.ID) {
+		switch event.Type {
+		case EventRunFailed:
+			runFailedAt = i
+		case EventSessionEnded:
+			var payload SessionEnded
+			_ = json.Unmarshal(event.Payload, &payload)
+			if payload.FinishReason != string(domain.FinishReasonFailed) {
+				t.Errorf("session.ended finish_reason = %q, want failed", payload.FinishReason)
+			}
+			endedAt = i
+		case EventRunCompleted:
+			t.Error("run.completed emitted for a session that never produced a plan")
+		}
+	}
+	if runFailedAt < 0 || endedAt < 0 {
+		t.Fatalf("run.failed=%d session.ended=%d, want both", runFailedAt, endedAt)
+	}
+	if runFailedAt > endedAt {
+		t.Errorf("run.failed at %d after session.ended at %d, want run.failed first", runFailedAt, endedAt)
 	}
 }

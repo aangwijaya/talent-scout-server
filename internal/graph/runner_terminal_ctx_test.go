@@ -85,3 +85,44 @@ func TestCancelledCodeNodePersistsTerminalFailure(t *testing.T) {
 		t.Fatalf("events = %v, want [node.started node.failed]", eventTypes(t, mem, runner.RunID()))
 	}
 }
+
+func TestCancelledLLMNodeDoesNotRetryOnPlainStore(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	client := &stubClient{chat: func(req llm.Request) (llm.Response, error) {
+		cancel()
+		if req.OnRetry != nil {
+			req.OnRetry(1, errors.New("upstream status 503"))
+		}
+		return llm.Response{}, llm.ErrUnavailable
+	}}
+	// A plain memory store accepts writes on a cancelled ctx, so a retry pair
+	// emitted after cancellation would be persisted and visible here.
+	mem := store.NewMemory()
+	runner := NewRunner(mem, NewBus(mem), client, testModels(), domain.NewID(), "sess-ctx-plain")
+
+	if _, err := runner.RunLLMNode(ctx, "planner", 1, llm.Request{
+		Messages: []llm.Message{{Role: llm.RoleUser, Content: "plan"}},
+	}, "plan", nil); err == nil {
+		t.Fatal("RunLLMNode succeeded, want the cancelled call to fail")
+	}
+
+	events, err := mem.ListNodeEvents(context.Background(), runner.RunID(), 0)
+	if err != nil {
+		t.Fatalf("ListNodeEvents: %v", err)
+	}
+	if len(events) != 2 || events[0].Type != EventNodeStarted || events[1].Type != EventNodeFailed {
+		t.Fatalf("events = %v, want [node.started node.failed]", eventTypes(t, mem, runner.RunID()))
+	}
+	for i, event := range events {
+		if event.Attempt == nil || *event.Attempt != 1 {
+			t.Errorf("event %d (%s) attempt = %v, want 1", i, event.Type, event.Attempt)
+		}
+	}
+	var failed NodeFailed
+	if err := json.Unmarshal(events[1].Payload, &failed); err != nil {
+		t.Fatalf("unmarshal node.failed: %v", err)
+	}
+	if failed.WillRetry {
+		t.Error("node.failed will_retry = true after parent context cancellation, want false")
+	}
+}

@@ -201,6 +201,15 @@ func (s *Sweeper) finishFailed(ctx context.Context, sess domain.Session) bool {
 
 // skipUnexecutedNodes emits node.skipped(run_failed) for every machine node
 // that has no event yet, matching the EVENTS.md §6.3 failure sequence.
+//
+// A node with any event is treated as executed, which would leave an open
+// attempt open. That is safe: finishFailed only reaches this function without a
+// live manager, and in a single process every started session keeps manager
+// state (finishFailed returns through NotifyFinished) while boot reconciliation
+// closes runs a previous process left running. A no-topics run that reaches
+// here therefore only has terminated attempts (the planner never started, or
+// has node.failed). A multi-process deployment would need to close open
+// attempts here too, with an EVENTS.md §4 error value.
 func (s *Sweeper) skipUnexecutedNodes(ctx context.Context, runID string) {
 	events, err := s.store.ListNodeEvents(ctx, runID, 0)
 	if err != nil {

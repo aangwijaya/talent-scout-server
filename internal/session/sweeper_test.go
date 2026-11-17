@@ -425,6 +425,67 @@ func TestSweepNoTopicsFailsSessionApplicationAndRun(t *testing.T) {
 	}
 }
 
+// A no-manager pre-plan run is the only shape skipUnexecutedNodes can close in a
+// single process. The real manager leaves the planner's node.started already
+// closed by node.failed before the session waits for a retry (planner outage) or
+// ends, so the sweeper skips only the nodes that never ran and never strands an
+// open attempt.
+func TestSweepNoManagerPrePlanRunHasNoOpenAttempt(t *testing.T) {
+	st := store.NewMemory()
+	seedApplication(t, st, domain.Application{ID: "a-open", JobID: "j1", Name: "Budi", Email: "b@example.com", Status: domain.ApplicationStatusInSession})
+	started := time.Now().Add(-12 * time.Minute)
+	seedSession(t, st, domain.Session{
+		ID:            "s-open",
+		ApplicationID: "a-open",
+		TokenHash:     "hash-open",
+		Status:        domain.SessionStatusActive,
+		ExpiresAt:     time.Now().Add(24 * time.Hour),
+		StartedAt:     &started,
+	})
+	run := domain.GraphRun{ID: "run-open", SessionID: "s-open", Status: domain.GraphRunStatusRunning}
+	if err := st.CreateGraphRun(context.Background(), run); err != nil {
+		t.Fatalf("CreateGraphRun: %v", err)
+	}
+	appendNodeEvent(t, st, run.ID, domain.StrPtr("planner"), domain.IntPtr(1), "node.started", map[string]any{})
+	appendNodeEvent(t, st, run.ID, domain.StrPtr("planner"), domain.IntPtr(1), "node.failed", map[string]any{"error": "planner_failed", "will_retry": false})
+
+	if _, _, _, err := newSweeper(t, st, nil).SweepOnce(context.Background()); err != nil {
+		t.Fatalf("SweepOnce: %v", err)
+	}
+
+	events, err := st.ListNodeEvents(context.Background(), run.ID, 0)
+	if err != nil {
+		t.Fatalf("ListNodeEvents: %v", err)
+	}
+	type attemptKey struct {
+		nodeID  string
+		attempt int
+	}
+	open := make(map[attemptKey]int)
+	for _, event := range events {
+		if event.NodeID == nil {
+			continue
+		}
+		attempt := 0
+		if event.Attempt != nil {
+			attempt = *event.Attempt
+		}
+		key := attemptKey{nodeID: *event.NodeID, attempt: attempt}
+		switch event.Type {
+		case "node.started":
+			open[key]++
+		case "node.completed", "node.failed", "node.skipped":
+			delete(open, key)
+		}
+	}
+	if len(open) != 0 {
+		t.Errorf("open attempts after the sweep = %v, want none: every node.started needs one terminal event", open)
+	}
+	if got := len(events); got != 10 {
+		t.Errorf("event count = %d, want 10 (planner started/failed, 6 skipped, run.failed, session.ended)", got)
+	}
+}
+
 func appendNodeEvent(t *testing.T, st store.Store, runID string, nodeID *string, attempt *int, eventType string, payload any) {
 	t.Helper()
 	data, err := json.Marshal(payload)

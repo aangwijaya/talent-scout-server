@@ -1,4 +1,4 @@
-package session
+package session_test
 
 import (
 	"context"
@@ -7,9 +7,21 @@ import (
 	"testing"
 	"time"
 
+	"github.com/aangwijaya/talent-scout-server/internal/config"
 	"github.com/aangwijaya/talent-scout-server/internal/domain"
+	"github.com/aangwijaya/talent-scout-server/internal/graph"
+	"github.com/aangwijaya/talent-scout-server/internal/llm"
+	"github.com/aangwijaya/talent-scout-server/internal/session"
 	"github.com/aangwijaya/talent-scout-server/internal/store"
 )
+
+type nodeSkippedPayload struct {
+	Reason string `json:"reason"`
+}
+
+type sessionEndedPayload struct {
+	FinishReason string `json:"finish_reason"`
+}
 
 func seedSession(t *testing.T, st store.Store, s domain.Session) {
 	t.Helper()
@@ -44,9 +56,14 @@ func seedTopic(t *testing.T, st store.Store, sessionID string) {
 	}
 }
 
-func newSweeper(t *testing.T, st store.Store, registry *Registry) *Sweeper {
+func newSweeper(t *testing.T, st store.Store, registry *session.Registry) *session.Sweeper {
 	t.Helper()
-	return NewSweeper(st, registry, 15*time.Minute, slog.New(slog.NewTextHandler(discardWriter{}, nil)))
+	return newSweeperWithLimit(t, st, registry, 15*time.Minute)
+}
+
+func newSweeperWithLimit(t *testing.T, st store.Store, registry *session.Registry, maxSession time.Duration) *session.Sweeper {
+	t.Helper()
+	return session.NewSweeper(st, registry, maxSession, slog.New(slog.NewTextHandler(discardWriter{}, nil)))
 }
 
 type discardWriter struct{}
@@ -220,7 +237,7 @@ func TestSweepLeavesSessionMidStepAlone(t *testing.T) {
 		StartedAt:     &started,
 	})
 	seedTopic(t, st, "s-midstep")
-	registry := NewRegistry()
+	registry := session.NewRegistry()
 	registry.Add("s-midstep")
 
 	_, abandoned, timedOut, err := newSweeper(t, st, registry).SweepOnce(context.Background())
@@ -422,6 +439,155 @@ func TestSweepNoTopicsFailsSessionApplicationAndRun(t *testing.T) {
 	if !(lastSkippedAt >= 0 && lastSkippedAt < runFailedAt && runFailedAt < endedAt) {
 		t.Errorf("node.skipped last=%d run.failed=%d session.ended=%d, want node.skipped... < run.failed < session.ended",
 			lastSkippedAt, runFailedAt, endedAt)
+	}
+}
+
+// outageClient fails every model call as a transport outage, which is how a
+// real pre-plan run ends up waiting for the applicant's manual retry with the
+// planner attempt already closed.
+type outageClient struct{}
+
+func (outageClient) Chat(context.Context, llm.Request) (llm.Response, error) {
+	return llm.Response{}, llm.ErrUnavailable
+}
+
+func (outageClient) Stream(context.Context, llm.Request, func(string) error) (llm.Response, error) {
+	return llm.Response{}, llm.ErrUnavailable
+}
+
+func testModels() config.ModelsConfig {
+	return config.ModelsConfig{
+		Default: config.Defaults{Temperature: 0.3, TimeoutSeconds: 30, MaxRetriesOnHTTPError: 1},
+		Nodes: map[string]config.Node{
+			"planner":     {Model: "deepseek/deepseek-v4.1-flash", MaxTokens: 800},
+			"interviewer": {Model: "z-ai/glm-5.3-flash", MaxTokens: 300, Stream: true},
+			"judge":       {Model: "deepseek/deepseek-v4.1-flash", MaxTokens: 200},
+			"scorer":      {Model: "deepseek/deepseek-v4.1-flash", MaxTokens: 1200},
+		},
+		Prices: map[string]config.Price{
+			"deepseek/deepseek-v4.1-flash": {In: 0.045, Out: 0.5},
+			"z-ai/glm-5.3-flash":           {In: 0.15, Out: 0.50},
+		},
+	}
+}
+
+func waitIdle(t *testing.T, manager *graph.SessionManager, sessionID string) {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if err := manager.Wait(ctx, sessionID); err != nil {
+		t.Fatalf("Wait: %v", err)
+	}
+}
+
+// The only no-manager pre-plan run a real graph step can leave behind is a
+// planner outage: the manager emits node.failed(will_retry=false), then keeps
+// the session active and the run running while it waits for the applicant's
+// manual retry. If the process that owned that run is gone (a restart without
+// boot reconciliation), the sweeper's no-manager failed path runs on exactly
+// this shape. Its planner attempt is already terminal, so skipUnexecutedNodes'
+// "any event means executed" rule leaves no open attempt. An attempt that is
+// open can only exist mid-flight, and boot reconciliation closes every such
+// attempt before the sweeper starts (internal/graph/reconcile.go), so the
+// sweeper never sees one.
+func TestSweepNoManagerPrePlanRunHasNoOpenAttempt(t *testing.T) {
+	ctx := context.Background()
+	st := store.NewMemory()
+	job := domain.Job{
+		ID: "j-open", Title: "Senior Frontend Engineer", Description: "Svelte and React.",
+		Status: domain.JobStatusOpen,
+		Rubric: []domain.RubricCriterion{{Key: "frontend_depth", Label: "Frontend depth", Weight: 1}},
+	}
+	if err := st.CreateJob(ctx, job); err != nil {
+		t.Fatalf("CreateJob: %v", err)
+	}
+	seedApplication(t, st, domain.Application{
+		ID: "a-open", JobID: job.ID, Name: "Budi", Email: "b@example.com",
+		CVText: "Senior Svelte engineer.", Status: domain.ApplicationStatusInvited,
+	})
+	seedSession(t, st, domain.Session{
+		ID: "s-open", ApplicationID: "a-open", TokenHash: "hash-open",
+		Status: domain.SessionStatusInvited, ExpiresAt: time.Now().Add(time.Hour),
+	})
+	started, err := st.StartSession(ctx, "s-open", time.Now().UTC())
+	if err != nil {
+		t.Fatalf("StartSession: %v", err)
+	}
+
+	manager := graph.NewSessionManager(
+		config.Config{SessionMaxMinutes: 15, SessionMaxQuestions: 15},
+		st, graph.NewBus(st), outageClient{}, testModels(), session.NewRegistry(), nil,
+	)
+	if err := manager.Start(ctx, started); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	waitIdle(t, manager, started.ID)
+
+	run, err := st.GetGraphRunBySession(ctx, started.ID)
+	if err != nil {
+		t.Fatalf("GetGraphRunBySession: %v", err)
+	}
+	if run.Status != domain.GraphRunStatusRunning {
+		t.Fatalf("run status = %q, want running while the applicant may still retry", run.Status)
+	}
+
+	// The process that owned the run is gone: a fresh registry has no finish
+	// hook, so the sweeper takes the no-manager failed path. A one-nanosecond
+	// limit makes the session due immediately.
+	if _, _, _, err := newSweeperWithLimit(t, st, session.NewRegistry(), time.Nanosecond).SweepOnce(ctx); err != nil {
+		t.Fatalf("SweepOnce: %v", err)
+	}
+
+	events, err := st.ListNodeEvents(ctx, run.ID, 0)
+	if err != nil {
+		t.Fatalf("ListNodeEvents: %v", err)
+	}
+	type attemptKey struct {
+		nodeID  string
+		attempt int
+	}
+	open := make(map[attemptKey]int)
+	plannerStarts, plannerTerminals := 0, 0
+	for _, event := range events {
+		if event.NodeID == nil {
+			continue
+		}
+		attempt := 0
+		if event.Attempt != nil {
+			attempt = *event.Attempt
+		}
+		key := attemptKey{nodeID: *event.NodeID, attempt: attempt}
+		switch event.Type {
+		case "node.started":
+			open[key]++
+			if *event.NodeID == "planner" {
+				plannerStarts++
+			}
+		case "node.completed", "node.failed", "node.skipped":
+			delete(open, key)
+			if *event.NodeID == "planner" {
+				plannerTerminals++
+			}
+		}
+	}
+	if len(open) != 0 {
+		t.Errorf("open attempts after the sweep = %v, want none: every node.started needs one terminal event", open)
+	}
+	if plannerStarts != 1 || plannerTerminals != 1 {
+		t.Errorf("planner started=%d terminals=%d, want 1/1: the outage closes the attempt before the session waits", plannerStarts, plannerTerminals)
+	}
+
+	gotRun, _ := st.GetGraphRun(ctx, run.ID)
+	if gotRun.Status != domain.GraphRunStatusFailed {
+		t.Errorf("run status = %q, want failed", gotRun.Status)
+	}
+	got, _ := st.GetSession(ctx, started.ID)
+	if got.Status != domain.SessionStatusCompleted || got.FinishReason == nil || *got.FinishReason != domain.FinishReasonFailed {
+		t.Errorf("session = %+v, want completed/failed", got)
+	}
+	app, _ := st.GetApplication(ctx, "a-open")
+	if app.Status != domain.ApplicationStatusFailed {
+		t.Errorf("application status = %q, want failed", app.Status)
 	}
 }
 

@@ -24,6 +24,12 @@ const (
 	nodeSkippedEvent  = "node.skipped"
 )
 
+// machineNodeIDs is the ordered machine-node list (docs/EVENTS.md §3).
+// internal/session cannot import internal/graph because graph imports session.
+var machineNodeIDs = []string{
+	"planner", "plan_check", "interviewer", "judge", "guard", "scorer", "evidence_check",
+}
+
 // plannerFailedRunReason is the run.failed reason for a session the sweeper
 // ends before a plan existed: the planner never produced topics.
 const plannerFailedRunReason = "planner_failed"
@@ -124,6 +130,7 @@ func (s *Sweeper) SweepOnce(ctx context.Context) (expired, abandoned, timedOut i
 		// A session the sweeper ends before the planner produced topics has no
 		// transcript to score. It is a failed run, and the application must be
 		// failed so resend-invite can recover the applicant.
+		dueReason := reason
 		topics, err := s.store.ListTopicsBySession(ctx, sess.ID)
 		if err != nil {
 			return expired, abandoned, timedOut, err
@@ -145,15 +152,19 @@ func (s *Sweeper) SweepOnce(ctx context.Context) (expired, abandoned, timedOut i
 		if !changed {
 			continue
 		}
+		if reason == domain.FinishReasonFailed {
+			// A run the sweeper closes itself is a failed run, never an
+			// abandonment. Only a session that was idle and whose run had
+			// already ended remains an abandonment.
+			if !s.finishFailed(ctx, sess) && dueReason == domain.FinishReasonAbandoned {
+				abandoned++
+			}
+			continue
+		}
 		if reason == domain.FinishReasonTimeLimit {
 			timedOut++
 		} else if reason == domain.FinishReasonAbandoned {
 			abandoned++
-		}
-
-		if reason == domain.FinishReasonFailed {
-			s.finishFailed(ctx, sess)
-			continue
 		}
 		s.finishApplication(ctx, sess, reason)
 		s.emitEnded(ctx, sess, reason)
@@ -163,16 +174,19 @@ func (s *Sweeper) SweepOnce(ctx context.Context) (expired, abandoned, timedOut i
 
 // finishFailed closes a run the sweeper ended before a plan existed. A live
 // manager emits the run and session events itself; without one the sweeper
-// persists run.failed before session.ended so replay stays ordered.
-func (s *Sweeper) finishFailed(ctx context.Context, sess domain.Session) {
+// persists run.failed before session.ended so replay stays ordered. It reports
+// whether it closed a running run itself, as opposed to ending a session whose
+// run had already ended.
+func (s *Sweeper) finishFailed(ctx context.Context, sess domain.Session) bool {
 	if s.registry.NotifyFinished(sess.ID, domain.FinishReasonFailed) {
-		return
+		return false
 	}
 	run, err := s.store.GetGraphRunBySession(ctx, sess.ID)
 	if err != nil {
-		return
+		return false
 	}
-	if run.Status == domain.GraphRunStatusRunning {
+	closedRun := run.Status == domain.GraphRunStatusRunning
+	if closedRun {
 		s.skipUnexecutedNodes(ctx, run.ID)
 		if payload, err := json.Marshal(runFailedPayload{Error: plannerFailedRunReason}); err == nil {
 			_, _ = s.store.AppendNodeEvent(ctx, domain.NodeEvent{RunID: run.ID, Type: runFailedEvent, Payload: payload})
@@ -186,6 +200,7 @@ func (s *Sweeper) finishFailed(ctx context.Context, sess domain.Session) {
 	if payload, err := json.Marshal(sessionEndedPayload{FinishReason: string(domain.FinishReasonFailed)}); err == nil {
 		_, _ = s.store.AppendNodeEvent(ctx, domain.NodeEvent{RunID: run.ID, Type: sessionEndedEvent, Payload: payload})
 	}
+	return closedRun
 }
 
 // skipUnexecutedNodes emits node.skipped(run_failed) for every machine node
@@ -205,7 +220,7 @@ func (s *Sweeper) skipUnexecutedNodes(ctx context.Context, runID string) {
 	if err != nil {
 		return
 	}
-	for _, nodeID := range domain.MachineNodeIDs() {
+	for _, nodeID := range machineNodeIDs {
 		if _, ok := seen[nodeID]; ok {
 			continue
 		}

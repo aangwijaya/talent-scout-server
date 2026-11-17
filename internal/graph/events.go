@@ -53,7 +53,9 @@ type EdgeRef struct {
 
 // NodeIDs is the ordered machine-node list. recruiter_gate is a human gate
 // outside the runner and emits no node events, but it is reported in run.started.
-var NodeIDs = append(domain.MachineNodeIDs(), "recruiter_gate")
+var NodeIDs = []string{
+	"planner", "plan_check", "interviewer", "judge", "guard", "scorer", "evidence_check", "recruiter_gate",
+}
 
 var nodeTypes = map[string]NodeType{
 	"planner":        NodeTypeSplitter,

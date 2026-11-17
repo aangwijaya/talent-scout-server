@@ -114,40 +114,35 @@ func TestRateLimitMiddlewareWrites429(t *testing.T) {
 	}
 }
 
-func TestRateLimiterCheckDoesNotConsume(t *testing.T) {
-	limiter := NewRateLimiter(2, time.Hour)
+func TestRateLimiterRefundGivesSlotBack(t *testing.T) {
+	limiter := NewRateLimiter(1, time.Hour)
 
-	for i := 0; i < 5; i++ {
-		if ok, _ := limiter.Check("ip"); !ok {
-			t.Fatalf("Check %d should allow before any failure is recorded", i+1)
+	for i := 0; i < 3; i++ {
+		if !limiter.Allow("ip") {
+			t.Fatalf("attempt %d should be allowed after the previous slot was refunded", i+1)
 		}
+		limiter.Refund("ip")
 	}
-
-	limiter.Record("ip")
-	limiter.Record("ip")
-
-	if ok, _ := limiter.Check("ip"); ok {
-		t.Fatal("Check should block after the configured number of failures")
+	if !limiter.Allow("ip") {
+		t.Fatal("slot should be free after refunds")
+	}
+	if limiter.Allow("ip") {
+		t.Fatal("unrefunded slot should block the next attempt")
 	}
 }
 
-func TestRateLimiterCheckAndRecordResetAfterWindow(t *testing.T) {
-	now := time.Date(2026, 11, 17, 8, 0, 0, 0, time.UTC)
-	limiter := NewRateLimiter(1, 15*time.Minute)
-	limiter.now = func() time.Time { return now }
+func TestRateLimiterRefundNeverGoesBelowZero(t *testing.T) {
+	limiter := NewRateLimiter(1, time.Hour)
 
-	limiter.Record("ip")
-	if ok, _ := limiter.Check("ip"); ok {
-		t.Fatal("Check should block within the window")
+	limiter.Refund("unknown")
+	limiter.Allow("ip")
+	limiter.Refund("ip")
+	limiter.Refund("ip")
+	if !limiter.Allow("ip") {
+		t.Fatal("first attempt after refunds should be allowed")
 	}
-
-	now = now.Add(15 * time.Minute)
-	if ok, _ := limiter.Check("ip"); !ok {
-		t.Fatal("Check should allow after the window resets")
-	}
-	limiter.Record("ip")
 	if limiter.Allow("ip") {
-		t.Fatal("Allow should block after one recorded failure in the new window")
+		t.Fatal("extra refunds must not create spare slots")
 	}
 }
 
@@ -168,9 +163,9 @@ func TestRateLimiterRetryAfterCountsDown(t *testing.T) {
 	}
 
 	now = now.Add(5 * time.Minute)
-	ok, retry = limiter.Check("ip")
+	ok, retry = limiter.AllowWithRetry("ip")
 	if ok {
-		t.Fatal("Check should still deny inside the window")
+		t.Fatal("request should still be denied inside the window")
 	}
 	if retry != 10*time.Minute {
 		t.Fatalf("retry after = %v, want 10m", retry)

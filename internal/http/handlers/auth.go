@@ -46,7 +46,10 @@ type loginResponse struct {
 
 func (h *Auth) Login(w http.ResponseWriter, r *http.Request) {
 	ip := middleware.ClientIP(r, h.cfg.BFFSharedSecret)
-	if ok, retryAfter := h.loginLimiter.Check(ip); !ok {
+	// Take the slot before reading the body, so concurrent attempts can't all
+	// pass the check before any failure is recorded. A successful login gives
+	// the slot back: only failed attempts count toward the limit.
+	if ok, retryAfter := h.loginLimiter.AllowWithRetry(ip); !ok {
 		apierror.WriteRateLimited(w, retryAfter)
 		return
 	}
@@ -54,14 +57,12 @@ func (h *Auth) Login(w http.ResponseWriter, r *http.Request) {
 	r.Body = http.MaxBytesReader(w, r.Body, maxLoginBody)
 	var req loginRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		h.loginLimiter.Record(ip)
 		writeUnauthorized(w)
 		return
 	}
 
 	if h.cfg.RecruiterPassword == "" ||
 		subtle.ConstantTimeCompare([]byte(req.Password), []byte(h.cfg.RecruiterPassword)) != 1 {
-		h.loginLimiter.Record(ip)
 		writeUnauthorized(w)
 		return
 	}
@@ -71,6 +72,7 @@ func (h *Auth) Login(w http.ResponseWriter, r *http.Request) {
 		apierror.Write(w, http.StatusInternalServerError, apierror.CodeInternalError, "could not issue access token", nil)
 		return
 	}
+	h.loginLimiter.Refund(ip)
 	apierror.JSON(w, http.StatusOK, loginResponse{AccessToken: token, ExpiresAt: expiresAt})
 }
 

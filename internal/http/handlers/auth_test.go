@@ -2,10 +2,12 @@ package handlers_test
 
 import (
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -253,4 +255,83 @@ func TestLoginRateLimitNeverTrustsXFFWithoutConfiguredSecret(t *testing.T) {
 	rec = httptest.NewRecorder()
 	h.Login(rec, req("203.0.113.8"))
 	assertRateLimited(t, rec, 15*60)
+}
+
+// signalReader reports, once, that the handler started reading the body,
+// which means the request already passed the rate-limit check.
+type signalReader struct {
+	r    io.Reader
+	once sync.Once
+	read chan struct{}
+}
+
+func (s *signalReader) Read(p []byte) (int, error) {
+	s.once.Do(func() { close(s.read) })
+	return s.r.Read(p)
+}
+
+// A client that sends its body slowly must not get past the limit: the slot
+// is taken before the body is read, not after the password check fails.
+func TestLoginConcurrentFailuresCapped(t *testing.T) {
+	const attempts = 50
+	cfg := authConfig()
+	cfg.LoginMaxAttempts = 5
+	cfg.LoginWindowMinutes = 15
+	h := handlers.NewAuth(cfg, auth.New(cfg.AuthTokenSecret), nil)
+
+	codes := make([]int, attempts)
+	writers := make([]*io.PipeWriter, attempts)
+	reading := make([]chan struct{}, attempts)
+	done := make([]chan struct{}, attempts)
+	for i := 0; i < attempts; i++ {
+		pr, pw := io.Pipe()
+		writers[i] = pw
+		reading[i] = make(chan struct{})
+		done[i] = make(chan struct{})
+		body := &signalReader{r: pr, read: reading[i]}
+		go func(i int) {
+			defer close(done[i])
+			rec := httptest.NewRecorder()
+			h.Login(rec, httptest.NewRequest(http.MethodPost, "/api/v1/auth/login", body))
+			codes[i] = rec.Code
+		}(i)
+	}
+
+	// Wait until every request has either been rejected or is blocked reading
+	// its body, so all of them passed the limit check before any failure.
+	for i := 0; i < attempts; i++ {
+		select {
+		case <-reading[i]:
+		case <-done[i]:
+		case <-time.After(5 * time.Second):
+			t.Fatalf("request %d neither read its body nor finished", i)
+		}
+	}
+	for i := 0; i < attempts; i++ {
+		go func(w *io.PipeWriter) {
+			_, _ = w.Write([]byte(`{"password":"wrong"}`))
+			_ = w.Close()
+		}(writers[i])
+	}
+	for i := 0; i < attempts; i++ {
+		<-done[i]
+	}
+
+	var unauthorized, limited int
+	for _, code := range codes {
+		switch code {
+		case http.StatusUnauthorized:
+			unauthorized++
+		case http.StatusTooManyRequests:
+			limited++
+		default:
+			t.Errorf("unexpected status %d", code)
+		}
+	}
+	if unauthorized > cfg.LoginMaxAttempts {
+		t.Errorf("%d attempts were checked against the password, want at most %d", unauthorized, cfg.LoginMaxAttempts)
+	}
+	if limited != attempts-unauthorized {
+		t.Errorf("429 count = %d, want %d", limited, attempts-unauthorized)
+	}
 }

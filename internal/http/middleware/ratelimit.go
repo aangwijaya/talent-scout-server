@@ -67,40 +67,15 @@ func (l *RateLimiter) AllowWithRetry(key string) (bool, time.Duration) {
 	return true, 0
 }
 
-// Check reports whether key is still within budget without consuming a slot.
-// It is used by the login limiter, where only failed attempts count.
-func (l *RateLimiter) Check(key string) (bool, time.Duration) {
+// Refund gives back one slot taken by AllowWithRetry. The login limiter uses
+// it after a successful login, so only failed attempts stay counted.
+func (l *RateLimiter) Refund(key string) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 
-	now := l.now()
-	l.sweep(now)
-
-	b := l.buckets[key]
-	if b == nil || now.Sub(b.windowStart) >= l.window {
-		return true, 0
+	if b := l.buckets[key]; b != nil && b.count > 0 {
+		b.count--
 	}
-	if b.count >= l.limit {
-		return false, l.window - now.Sub(b.windowStart)
-	}
-	return true, 0
-}
-
-// Record consumes one slot for a key without rejecting it. It is used by the
-// login limiter after a failed password check.
-func (l *RateLimiter) Record(key string) {
-	l.mu.Lock()
-	defer l.mu.Unlock()
-
-	now := l.now()
-	l.sweep(now)
-
-	b := l.buckets[key]
-	if b == nil || now.Sub(b.windowStart) >= l.window {
-		l.buckets[key] = &bucket{windowStart: now, count: 1}
-		return
-	}
-	b.count++
 }
 
 // sweep deletes expired buckets, at most once per window, so Allow stays O(1)

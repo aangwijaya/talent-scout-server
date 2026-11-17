@@ -130,7 +130,6 @@ func (s *Sweeper) SweepOnce(ctx context.Context) (expired, abandoned, timedOut i
 		// A session the sweeper ends before the planner produced topics has no
 		// transcript to score. It is a failed run, and the application must be
 		// failed so resend-invite can recover the applicant.
-		dueReason := reason
 		topics, err := s.store.ListTopicsBySession(ctx, sess.ID)
 		if err != nil {
 			return expired, abandoned, timedOut, err
@@ -153,12 +152,9 @@ func (s *Sweeper) SweepOnce(ctx context.Context) (expired, abandoned, timedOut i
 			continue
 		}
 		if reason == domain.FinishReasonFailed {
-			// A run the sweeper closes itself is a failed run, never an
-			// abandonment. Only a session that was idle and whose run had
-			// already ended remains an abandonment.
-			if !s.finishFailed(ctx, sess) && dueReason == domain.FinishReasonAbandoned {
-				abandoned++
-			}
+			// A session with no topics is a failed run, never an abandonment,
+			// whether the sweeper closes the run itself or it was already over.
+			s.finishFailed(ctx, sess)
 			continue
 		}
 		if reason == domain.FinishReasonTimeLimit {

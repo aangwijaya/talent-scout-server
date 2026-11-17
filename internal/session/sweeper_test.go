@@ -437,3 +437,34 @@ func appendNodeEvent(t *testing.T, st store.Store, runID string, nodeID *string,
 		t.Fatalf("AppendNodeEvent %s: %v", eventType, err)
 	}
 }
+
+// A no-topics session whose run already ended (here: failed) is still a failed
+// finish, never an abandonment, even though the sweeper closes no run itself.
+func TestSweepNoTopicsWithClosedRunIsNotAbandoned(t *testing.T) {
+	st := store.NewMemory()
+	seedApplication(t, st, domain.Application{ID: "a-closed", JobID: "j1", Name: "Budi", Email: "b@example.com", Status: domain.ApplicationStatusInSession})
+	started := time.Now().Add(-12 * time.Minute)
+	seedSession(t, st, domain.Session{
+		ID:            "s-closed",
+		ApplicationID: "a-closed",
+		TokenHash:     "hash-closed",
+		Status:        domain.SessionStatusActive,
+		ExpiresAt:     time.Now().Add(24 * time.Hour),
+		StartedAt:     &started,
+	})
+	if err := st.CreateGraphRun(context.Background(), domain.GraphRun{ID: "run-closed", SessionID: "s-closed", Status: domain.GraphRunStatusFailed}); err != nil {
+		t.Fatalf("CreateGraphRun: %v", err)
+	}
+
+	_, abandoned, timedOut, err := newSweeper(t, st, nil).SweepOnce(context.Background())
+	if err != nil {
+		t.Fatalf("SweepOnce: %v", err)
+	}
+	if abandoned != 0 || timedOut != 0 {
+		t.Errorf("abandoned=%d timedOut=%d, want 0/0", abandoned, timedOut)
+	}
+	got, _ := st.GetSession(context.Background(), "s-closed")
+	if got.FinishReason == nil || *got.FinishReason != domain.FinishReasonFailed {
+		t.Errorf("session finish_reason = %v, want failed", got.FinishReason)
+	}
+}

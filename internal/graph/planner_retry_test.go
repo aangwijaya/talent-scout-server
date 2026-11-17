@@ -409,8 +409,8 @@ func TestPlannerOutageNeverRetriedFailsAfterIdleLimit(t *testing.T) {
 	if err != nil {
 		t.Fatalf("SweepOnce: %v", err)
 	}
-	if abandoned != 1 {
-		t.Errorf("abandoned = %d, want 1", abandoned)
+	if abandoned != 0 {
+		t.Errorf("abandoned = %d, want 0: a no-topics finish is failed, not abandoned", abandoned)
 	}
 
 	app, err := st.GetApplication(context.Background(), sess.ApplicationID)

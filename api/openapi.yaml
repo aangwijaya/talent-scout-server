@@ -70,6 +70,8 @@ paths:
                 $ref: "#/components/schemas/LoginResponse"
         "401":
           $ref: "#/components/responses/Unauthorized"
+        "429":
+          $ref: "#/components/responses/RateLimited"
 
   /auth/sse-token:
     post:
@@ -428,6 +430,8 @@ paths:
           $ref: "#/components/responses/Conflict"
         "410":
           $ref: "#/components/responses/SessionGone"
+        "429":
+          $ref: "#/components/responses/RateLimited"
 
   /sessions/{token}/retry:
     post:
@@ -634,6 +638,12 @@ components:
             $ref: "#/components/schemas/Error"
     RateLimited:
       description: Too many requests.
+      headers:
+        Retry-After:
+          description: Whole seconds until the rate-limit window resets.
+          schema:
+            type: integer
+            minimum: 1
       content:
         application/json:
           schema:

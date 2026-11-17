@@ -42,6 +42,13 @@ func NewRateLimiter(limit int, window time.Duration) *RateLimiter {
 }
 
 func (l *RateLimiter) Allow(key string) bool {
+	ok, _ := l.AllowWithRetry(key)
+	return ok
+}
+
+// AllowWithRetry consumes one slot and, when the key is already limited,
+// returns how long remains until its window resets.
+func (l *RateLimiter) AllowWithRetry(key string) (bool, time.Duration) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 
@@ -54,10 +61,21 @@ func (l *RateLimiter) Allow(key string) bool {
 		l.buckets[key] = b
 	}
 	if b.count >= l.limit {
-		return false
+		return false, l.window - now.Sub(b.windowStart)
 	}
 	b.count++
-	return true
+	return true, 0
+}
+
+// Refund gives back one slot taken by AllowWithRetry. The login limiter uses
+// it after a successful login, so only failed attempts stay counted.
+func (l *RateLimiter) Refund(key string) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+
+	if b := l.buckets[key]; b != nil && b.count > 0 {
+		b.count--
+	}
 }
 
 // sweep deletes expired buckets, at most once per window, so Allow stays O(1)
@@ -84,6 +102,16 @@ func clientIP(r *http.Request, secret string) string {
 			return ip
 		}
 	}
+	return remoteIP(r)
+}
+
+// ClientIP exposes the repo's trusted-IP rule to handlers that key their own
+// rates (for example the login limiter). It behaves exactly like clientIP.
+func ClientIP(r *http.Request, secret string) string {
+	return clientIP(r, secret)
+}
+
+func remoteIP(r *http.Request) string {
 	host, _, err := net.SplitHostPort(r.RemoteAddr)
 	if err != nil {
 		return r.RemoteAddr
@@ -104,8 +132,8 @@ func firstForwardedFor(xff string) string {
 func RateLimit(limiter *RateLimiter, secret string) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			if !limiter.Allow(clientIP(r, secret)) {
-				apierror.Write(w, http.StatusTooManyRequests, apierror.CodeRateLimited, "too many requests", nil)
+			if ok, retryAfter := limiter.AllowWithRetry(clientIP(r, secret)); !ok {
+				apierror.WriteRateLimited(w, retryAfter)
 				return
 			}
 			next.ServeHTTP(w, r)

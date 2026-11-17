@@ -11,6 +11,8 @@ var allEnv = []string{
 	"LLM_MODE", "LLM_BASE_URL", "OPENROUTER_API_KEY", "MODELS_CONFIG_PATH",
 	"EMAIL_MODE", "GMAIL_CLIENT_ID", "GMAIL_CLIENT_SECRET", "GMAIL_REFRESH_TOKEN",
 	"EMAIL_FROM", "SESSION_TTL_HOURS", "SESSION_MAX_MINUTES", "SESSION_MAX_QUESTIONS",
+	"LOGIN_MAX_ATTEMPTS", "LOGIN_WINDOW_MINUTES", "MESSAGE_MAX_PER_WINDOW",
+	"MESSAGE_WINDOW_MINUTES",
 	"TEST_DATABASE_URL",
 }
 
@@ -48,6 +50,12 @@ func TestLoadDefaults(t *testing.T) {
 	if len(cfg.FrontendOrigins) != 0 {
 		t.Errorf("FrontendOrigins = %v, want empty", cfg.FrontendOrigins)
 	}
+	if cfg.LoginMaxAttempts != 5 || cfg.LoginWindowMinutes != 15 {
+		t.Errorf("login rate defaults = %d/%d, want 5/15", cfg.LoginMaxAttempts, cfg.LoginWindowMinutes)
+	}
+	if cfg.MessageMaxPerWindow != 20 || cfg.MessageWindowMinutes != 10 {
+		t.Errorf("message rate defaults = %d/%d, want 20/10", cfg.MessageMaxPerWindow, cfg.MessageWindowMinutes)
+	}
 }
 
 func TestLoadFromEnv(t *testing.T) {
@@ -57,6 +65,10 @@ func TestLoadFromEnv(t *testing.T) {
 	t.Setenv("LLM_MODE", "fake")
 	t.Setenv("FRONTEND_ORIGIN", " https://a.example , ,http://localhost:5173 ")
 	t.Setenv("SESSION_TTL_HOURS", "24")
+	t.Setenv("LOGIN_MAX_ATTEMPTS", "3")
+	t.Setenv("LOGIN_WINDOW_MINUTES", "30")
+	t.Setenv("MESSAGE_MAX_PER_WINDOW", "7")
+	t.Setenv("MESSAGE_WINDOW_MINUTES", "5")
 	t.Setenv("AUTH_TOKEN_SECRET", validAuthTokenSecret)
 
 	cfg, err := Load()
@@ -82,6 +94,12 @@ func TestLoadFromEnv(t *testing.T) {
 	if cfg.AuthTokenSecret != validAuthTokenSecret {
 		t.Errorf("AuthTokenSecret = %q, want the configured value", cfg.AuthTokenSecret)
 	}
+	if cfg.LoginMaxAttempts != 3 || cfg.LoginWindowMinutes != 30 {
+		t.Errorf("login rate = %d/%d, want 3/30", cfg.LoginMaxAttempts, cfg.LoginWindowMinutes)
+	}
+	if cfg.MessageMaxPerWindow != 7 || cfg.MessageWindowMinutes != 5 {
+		t.Errorf("message rate = %d/%d, want 7/5", cfg.MessageMaxPerWindow, cfg.MessageWindowMinutes)
+	}
 }
 
 func TestLoadRejectsInvalidValues(t *testing.T) {
@@ -96,6 +114,10 @@ func TestLoadRejectsInvalidValues(t *testing.T) {
 		{name: "session ttl", key: "SESSION_TTL_HOURS", val: "week"},
 		{name: "empty auth secret", key: "AUTH_TOKEN_SECRET", val: ""},
 		{name: "short auth secret", key: "AUTH_TOKEN_SECRET", val: "too-short"},
+		{name: "zero login attempts", key: "LOGIN_MAX_ATTEMPTS", val: "0"},
+		{name: "non-integer login window", key: "LOGIN_WINDOW_MINUTES", val: "soon"},
+		{name: "zero message limit", key: "MESSAGE_MAX_PER_WINDOW", val: "0"},
+		{name: "zero message window", key: "MESSAGE_WINDOW_MINUTES", val: "0"},
 	}
 
 	for _, tc := range tests {

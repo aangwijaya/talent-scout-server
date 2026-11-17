@@ -59,6 +59,12 @@ func newChatFixtureWrapped(t *testing.T, start bool, wrap func(store.Store) stor
 
 func newChatFixtureWithLLM(t *testing.T, start bool, wrap func(store.Store) store.Store, client llm.Client) *chatFixture {
 	t.Helper()
+	cfg := config.Config{SessionMaxMinutes: 15, SessionMaxQuestions: 15}
+	return newChatFixtureWithConfig(t, start, wrap, client, cfg)
+}
+
+func newChatFixtureWithConfig(t *testing.T, start bool, wrap func(store.Store) store.Store, client llm.Client, cfg config.Config) *chatFixture {
+	t.Helper()
 	ctx := context.Background()
 	base := store.NewMemory()
 	st := store.Store(base)
@@ -107,7 +113,6 @@ func newChatFixtureWithLLM(t *testing.T, start bool, wrap func(store.Store) stor
 		st = wrap(st)
 	}
 
-	cfg := config.Config{SessionMaxMinutes: 15, SessionMaxQuestions: 15}
 	bus := graph.NewBus(st)
 	registry := session.NewRegistry()
 	manager := graph.NewSessionManager(cfg, st, bus, client, chatModels(), registry, nil)

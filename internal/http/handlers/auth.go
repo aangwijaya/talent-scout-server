@@ -10,22 +10,29 @@ import (
 	"github.com/aangwijaya/talent-scout-server/internal/auth"
 	"github.com/aangwijaya/talent-scout-server/internal/config"
 	"github.com/aangwijaya/talent-scout-server/internal/http/apierror"
+	"github.com/aangwijaya/talent-scout-server/internal/http/middleware"
 	"github.com/aangwijaya/talent-scout-server/internal/store"
 )
 
 const maxLoginBody = 4 << 10
 
 type Auth struct {
-	cfg    config.Config
-	tokens *auth.Manager
-	store  store.Store
+	cfg          config.Config
+	tokens       *auth.Manager
+	store        store.Store
+	loginLimiter *middleware.RateLimiter
 }
 
 func NewAuth(cfg config.Config, tokens *auth.Manager, st store.Store) *Auth {
 	if tokens == nil {
 		tokens = auth.New(cfg.AuthTokenSecret)
 	}
-	return &Auth{cfg: cfg, tokens: tokens, store: st}
+	return &Auth{
+		cfg:          cfg,
+		tokens:       tokens,
+		store:        st,
+		loginLimiter: middleware.NewRateLimiter(cfg.LoginRateLimit(), cfg.LoginRateWindow()),
+	}
 }
 
 type loginRequest struct {
@@ -38,6 +45,15 @@ type loginResponse struct {
 }
 
 func (h *Auth) Login(w http.ResponseWriter, r *http.Request) {
+	ip := middleware.ClientIP(r, h.cfg.BFFSharedSecret)
+	// Take the slot before reading the body, so concurrent attempts can't all
+	// pass the check before any failure is recorded. A successful login gives
+	// the slot back: only failed attempts count toward the limit.
+	if ok, retryAfter := h.loginLimiter.AllowWithRetry(ip); !ok {
+		apierror.WriteRateLimited(w, retryAfter)
+		return
+	}
+
 	r.Body = http.MaxBytesReader(w, r.Body, maxLoginBody)
 	var req loginRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -56,6 +72,7 @@ func (h *Auth) Login(w http.ResponseWriter, r *http.Request) {
 		apierror.Write(w, http.StatusInternalServerError, apierror.CodeInternalError, "could not issue access token", nil)
 		return
 	}
+	h.loginLimiter.Refund(ip)
 	apierror.JSON(w, http.StatusOK, loginResponse{AccessToken: token, ExpiresAt: expiresAt})
 }
 

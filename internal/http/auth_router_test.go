@@ -355,3 +355,29 @@ func TestRunSSERequiresSSEToken(t *testing.T) {
 		})
 	}
 }
+
+func TestLoginRateLimitedMatchesContract(t *testing.T) {
+	router, _ := authRouter(t)
+	validator := conformance.New(t)
+
+	for i := 0; i < 5; i++ {
+		req := httptest.NewRequest(http.MethodPost, "/api/v1/auth/login", strings.NewReader(`{"password":"wrong"}`))
+		rec := httptest.NewRecorder()
+		router.ServeHTTP(rec, req)
+		if rec.Code != http.StatusUnauthorized {
+			t.Fatalf("failed attempt %d status = %d, want 401", i+1, rec.Code)
+		}
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/auth/login", strings.NewReader(`{"password":"wrong"}`))
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusTooManyRequests {
+		t.Fatalf("status = %d, want 429 (body: %s)", rec.Code, rec.Body.String())
+	}
+	validator.ValidateResponse(t, req, rec.Result())
+	if rec.Header().Get("Retry-After") == "" {
+		t.Error("Retry-After header is missing")
+	}
+}

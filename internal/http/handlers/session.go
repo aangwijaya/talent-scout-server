@@ -16,6 +16,7 @@ import (
 	"github.com/aangwijaya/talent-scout-server/internal/domain"
 	"github.com/aangwijaya/talent-scout-server/internal/graph"
 	"github.com/aangwijaya/talent-scout-server/internal/http/apierror"
+	"github.com/aangwijaya/talent-scout-server/internal/http/middleware"
 	"github.com/aangwijaya/talent-scout-server/internal/session"
 	"github.com/aangwijaya/talent-scout-server/internal/sse"
 	"github.com/aangwijaya/talent-scout-server/internal/store"
@@ -24,14 +25,19 @@ import (
 const maxAnswerChars = 2000
 
 type Sessions struct {
-	cfg     config.Config
-	store   store.Store
-	manager *graph.SessionManager
-	bus     *graph.Bus
+	cfg            config.Config
+	store          store.Store
+	manager        *graph.SessionManager
+	bus            *graph.Bus
+	messageLimiter *middleware.RateLimiter
 }
 
 func NewSessions(cfg config.Config, st store.Store) *Sessions {
-	return &Sessions{cfg: cfg, store: st}
+	return &Sessions{
+		cfg:            cfg,
+		store:          st,
+		messageLimiter: middleware.NewRateLimiter(cfg.MessageRateLimit(), cfg.MessageRateWindow()),
+	}
 }
 
 // SetChat attaches the live graph manager and event bus. Without them the chat
@@ -240,6 +246,11 @@ func (h *Sessions) SendMessage(w http.ResponseWriter, r *http.Request) {
 	content := strings.TrimSpace(req.Content)
 	if n := utf8.RuneCountInString(content); n < 1 || n > maxAnswerChars {
 		apierror.Write(w, http.StatusBadRequest, apierror.CodeValidationFailed, "content must be 1-2000 characters", map[string]string{"field": "content"})
+		return
+	}
+
+	if ok, retryAfter := h.messageLimiter.AllowWithRetry(sess.ID); !ok {
+		apierror.WriteRateLimited(w, retryAfter)
 		return
 	}
 

@@ -3,7 +3,10 @@ package apierror
 import (
 	"encoding/json"
 	"log/slog"
+	"math"
 	"net/http"
+	"strconv"
+	"time"
 )
 
 const (
@@ -36,6 +39,17 @@ type envelope struct {
 
 func Write(w http.ResponseWriter, status int, code, message string, details any) {
 	JSON(w, status, envelope{Error: body{Code: code, Message: message, Details: details}})
+}
+
+// WriteRateLimited writes the contract's 429 body plus a Retry-After header in
+// whole seconds (rounded up, at least 1).
+func WriteRateLimited(w http.ResponseWriter, retryAfter time.Duration) {
+	seconds := int(math.Ceil(retryAfter.Seconds()))
+	if seconds < 1 {
+		seconds = 1
+	}
+	w.Header().Set("Retry-After", strconv.Itoa(seconds))
+	Write(w, http.StatusTooManyRequests, CodeRateLimited, "too many requests", nil)
 }
 
 func JSON(w http.ResponseWriter, status int, v any) {

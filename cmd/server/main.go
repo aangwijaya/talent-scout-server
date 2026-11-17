@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"os"
@@ -79,26 +80,23 @@ func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
-	if st != nil {
-		if reconciled, err := graph.ReconcileOrphanedRuns(ctx, st); err != nil {
-			logger.Error("reconcile orphaned runs", "error", err)
-		} else if reconciled.RunsClosed > 0 || reconciled.SessionsClosed > 0 || reconciled.NodesClosed > 0 {
-			logger.Info("reconciled orphaned runs",
-				"runs", reconciled.RunsClosed,
-				"sessions", reconciled.SessionsClosed,
-				"nodes", reconciled.NodesClosed)
-		}
-		sweeper := session.NewSweeper(st, registry, time.Duration(cfg.SessionMaxMinutes)*time.Minute, logger)
-		go sweeper.Run(ctx)
-	}
-
 	errCh := make(chan error, 1)
-	go func() {
-		logger.Info("server listening", "addr", server.Addr, "env", cfg.AppEnv)
-		if err := server.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
-			errCh <- err
-		}
-	}()
+	if err := boot(ctx, st, registry, time.Duration(cfg.SessionMaxMinutes)*time.Minute, logger,
+		func(ctx context.Context, sweeper *session.Sweeper) {
+			go sweeper.Run(ctx)
+		},
+		func() {
+			go func() {
+				logger.Info("server listening", "addr", server.Addr, "env", cfg.AppEnv)
+				if err := server.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+					errCh <- err
+				}
+			}()
+		},
+	); err != nil {
+		logger.Error("boot", "error", err)
+		os.Exit(1)
+	}
 
 	select {
 	case err := <-errCh:
@@ -113,6 +111,36 @@ func main() {
 		logger.Error("graceful shutdown", "error", err)
 		os.Exit(1)
 	}
+}
+
+// boot reconciles runs left by a previous process before the sweeper and the
+// listener start. A reconciliation failure aborts boot: the sweeper would
+// otherwise finish leftover sessions as abandoned/time_limit and move their
+// applications to scoring with no manager to score them.
+func boot(
+	ctx context.Context,
+	st store.Store,
+	registry *session.Registry,
+	maxSession time.Duration,
+	logger *slog.Logger,
+	startSweeper func(context.Context, *session.Sweeper),
+	startListener func(),
+) error {
+	if st != nil {
+		reconciled, err := graph.ReconcileOrphanedRuns(ctx, st)
+		if err != nil {
+			return fmt.Errorf("reconcile orphaned runs: %w", err)
+		}
+		if reconciled.RunsClosed > 0 || reconciled.SessionsClosed > 0 || reconciled.NodesClosed > 0 {
+			logger.Info("reconciled orphaned runs",
+				"runs", reconciled.RunsClosed,
+				"sessions", reconciled.SessionsClosed,
+				"nodes", reconciled.NodesClosed)
+		}
+		startSweeper(ctx, session.NewSweeper(st, registry, maxSession, logger))
+	}
+	startListener()
+	return nil
 }
 
 // newLLMClient builds the model client. In fake mode the per-node canned

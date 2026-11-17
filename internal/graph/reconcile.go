@@ -89,7 +89,9 @@ func ReconcileOrphanedRuns(ctx context.Context, st store.Store) (ReconcileResult
 		if _, ok := handled[sess.ID]; ok {
 			continue
 		}
-		if run, runErr := st.GetGraphRunBySession(ctx, sess.ID); runErr == nil && run.Status == domain.GraphRunStatusRunning {
+		run, runErr := st.GetGraphRunBySession(ctx, sess.ID)
+		runWasRunning := runErr == nil && run.Status == domain.GraphRunStatusRunning
+		if runWasRunning {
 			// A running run created between the two lists: close it the same way.
 			nodes, err := reconcileRunNodes(ctx, st, run.ID)
 			if err != nil {
@@ -115,6 +117,13 @@ func ReconcileOrphanedRuns(ctx context.Context, st store.Store) (ReconcileResult
 		}
 		if changed {
 			result.SessionsClosed++
+		}
+		if runErr == nil && !runWasRunning && changed {
+			// The run closed before the session did; the session still ending
+			// must emit session.ended on that run.
+			if err := appendRunEvent(ctx, st, run.ID, EventSessionEnded, SessionEnded{FinishReason: string(domain.FinishReasonFailed)}); err != nil {
+				return result, err
+			}
 		}
 		if err := markApplicationFailed(ctx, st, sess.ApplicationID); err != nil {
 			return result, err

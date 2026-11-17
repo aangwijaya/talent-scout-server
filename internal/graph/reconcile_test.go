@@ -327,6 +327,50 @@ func TestReconcileFailsScoringApplicationAfterAbandonedSession(t *testing.T) {
 	}
 }
 
+func TestReconcileFinishesActiveSessionWhoseRunAlreadyClosed(t *testing.T) {
+	ctx := context.Background()
+	st := store.NewMemory()
+	sess, run := seedOrphan(t, st, true)
+	if err := st.UpdateGraphRun(ctx, domain.GraphRun{ID: run.ID, Status: domain.GraphRunStatusFailed}); err != nil {
+		t.Fatalf("UpdateGraphRun: %v", err)
+	}
+
+	result, err := ReconcileOrphanedRuns(ctx, st)
+	if err != nil {
+		t.Fatalf("ReconcileOrphanedRuns: %v", err)
+	}
+	if result.RunsClosed != 0 || result.SessionsClosed != 1 {
+		t.Fatalf("result = %+v, want 0 runs and 1 session (run was already closed)", result)
+	}
+
+	got, _ := st.GetSession(ctx, sess.ID)
+	if got.Status != domain.SessionStatusCompleted || got.FinishReason == nil || *got.FinishReason != domain.FinishReasonFailed {
+		t.Errorf("session = %+v, want completed/failed", got)
+	}
+
+	events, err := st.ListNodeEvents(ctx, run.ID, 0)
+	if err != nil {
+		t.Fatalf("ListNodeEvents: %v", err)
+	}
+	ended := 0
+	for _, event := range events {
+		if event.Type != EventSessionEnded {
+			continue
+		}
+		ended++
+		var payload SessionEnded
+		if err := json.Unmarshal(event.Payload, &payload); err != nil {
+			t.Fatalf("unmarshal session.ended: %v", err)
+		}
+		if payload.FinishReason != string(domain.FinishReasonFailed) {
+			t.Errorf("session.ended finish_reason = %q, want failed", payload.FinishReason)
+		}
+	}
+	if ended != 1 {
+		t.Errorf("session.ended events = %d, want exactly 1 on the closed run", ended)
+	}
+}
+
 func TestReconcileIsIdempotentAcrossBoots(t *testing.T) {
 	ctx := context.Background()
 	st := store.NewMemory()

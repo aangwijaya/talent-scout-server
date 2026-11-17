@@ -21,6 +21,7 @@ const DefaultMaxSession = 15 * time.Minute
 const (
 	sessionEndedEvent = "session.ended"
 	runFailedEvent    = "run.failed"
+	nodeSkippedEvent  = "node.skipped"
 )
 
 // plannerFailedRunReason is the run.failed reason for a session the sweeper
@@ -33,6 +34,10 @@ type sessionEndedPayload struct {
 
 type runFailedPayload struct {
 	Error string `json:"error"`
+}
+
+type nodeSkippedPayload struct {
+	Reason string `json:"reason"`
 }
 
 // Sweeper periodically expires invited sessions past their TTL and finishes
@@ -142,7 +147,7 @@ func (s *Sweeper) SweepOnce(ctx context.Context) (expired, abandoned, timedOut i
 		}
 		if reason == domain.FinishReasonTimeLimit {
 			timedOut++
-		} else {
+		} else if reason == domain.FinishReasonAbandoned {
 			abandoned++
 		}
 
@@ -168,6 +173,7 @@ func (s *Sweeper) finishFailed(ctx context.Context, sess domain.Session) {
 		return
 	}
 	if run.Status == domain.GraphRunStatusRunning {
+		s.skipUnexecutedNodes(ctx, run.ID)
 		if payload, err := json.Marshal(runFailedPayload{Error: plannerFailedRunReason}); err == nil {
 			_, _ = s.store.AppendNodeEvent(ctx, domain.NodeEvent{RunID: run.ID, Type: runFailedEvent, Payload: payload})
 		}
@@ -179,6 +185,33 @@ func (s *Sweeper) finishFailed(ctx context.Context, sess domain.Session) {
 	}
 	if payload, err := json.Marshal(sessionEndedPayload{FinishReason: string(domain.FinishReasonFailed)}); err == nil {
 		_, _ = s.store.AppendNodeEvent(ctx, domain.NodeEvent{RunID: run.ID, Type: sessionEndedEvent, Payload: payload})
+	}
+}
+
+// skipUnexecutedNodes emits node.skipped(run_failed) for every machine node
+// that has no event yet, matching the EVENTS.md §6.3 failure sequence.
+func (s *Sweeper) skipUnexecutedNodes(ctx context.Context, runID string) {
+	events, err := s.store.ListNodeEvents(ctx, runID, 0)
+	if err != nil {
+		return
+	}
+	seen := make(map[string]struct{}, len(events))
+	for _, event := range events {
+		if event.NodeID != nil {
+			seen[*event.NodeID] = struct{}{}
+		}
+	}
+	payload, err := json.Marshal(nodeSkippedPayload{Reason: "run_failed"})
+	if err != nil {
+		return
+	}
+	for _, nodeID := range domain.MachineNodeIDs() {
+		if _, ok := seen[nodeID]; ok {
+			continue
+		}
+		_, _ = s.store.AppendNodeEvent(ctx, domain.NodeEvent{
+			RunID: runID, NodeID: domain.StrPtr(nodeID), Type: nodeSkippedEvent, Payload: payload,
+		})
 	}
 }
 

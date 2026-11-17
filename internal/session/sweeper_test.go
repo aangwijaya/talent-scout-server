@@ -344,13 +344,15 @@ func TestSweepNoTopicsFailsSessionApplicationAndRun(t *testing.T) {
 	if err := st.CreateGraphRun(context.Background(), run); err != nil {
 		t.Fatalf("CreateGraphRun: %v", err)
 	}
+	appendNodeEvent(t, st, run.ID, domain.StrPtr("planner"), domain.IntPtr(1), "node.started", map[string]any{})
+	appendNodeEvent(t, st, run.ID, domain.StrPtr("planner"), domain.IntPtr(1), "node.failed", map[string]any{"error": "planner_failed", "will_retry": false})
 
 	_, abandoned, timedOut, err := newSweeper(t, st, nil).SweepOnce(context.Background())
 	if err != nil {
 		t.Fatalf("SweepOnce: %v", err)
 	}
-	if abandoned != 1 || timedOut != 0 {
-		t.Errorf("abandoned=%d timedOut=%d, want 1/0", abandoned, timedOut)
+	if abandoned != 0 || timedOut != 0 {
+		t.Errorf("abandoned=%d timedOut=%d, want 0/0: a no-topics finish is failed, not abandoned", abandoned, timedOut)
 	}
 
 	got, _ := st.GetSession(context.Background(), "s-no-topics")
@@ -370,9 +372,27 @@ func TestSweepNoTopicsFailsSessionApplicationAndRun(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ListNodeEvents: %v", err)
 	}
-	runFailedAt, endedAt := -1, -1
+	runFailedAt, endedAt, lastSkippedAt := -1, -1, -1
+	skips := make(map[string]int)
 	for i, event := range events {
 		switch event.Type {
+		case "node.skipped":
+			if event.NodeID == nil {
+				t.Errorf("node.skipped at %d has no node_id", i)
+				continue
+			}
+			var payload nodeSkippedPayload
+			if err := json.Unmarshal(event.Payload, &payload); err != nil {
+				t.Fatalf("unmarshal node.skipped: %v", err)
+			}
+			if payload.Reason != "run_failed" {
+				t.Errorf("node.skipped(%s) reason = %q, want run_failed", *event.NodeID, payload.Reason)
+			}
+			if event.Attempt != nil {
+				t.Errorf("node.skipped(%s) attempt = %d, want null", *event.NodeID, *event.Attempt)
+			}
+			skips[*event.NodeID]++
+			lastSkippedAt = i
 		case "run.failed":
 			runFailedAt = i
 		case "session.ended":
@@ -386,10 +406,34 @@ func TestSweepNoTopicsFailsSessionApplicationAndRun(t *testing.T) {
 			}
 		}
 	}
+	for _, nodeID := range []string{"plan_check", "interviewer", "judge", "guard", "scorer", "evidence_check"} {
+		if skips[nodeID] != 1 {
+			t.Errorf("node.skipped(%s) = %d, want exactly 1 before run.failed", nodeID, skips[nodeID])
+		}
+	}
+	for _, nodeID := range []string{"planner", "recruiter_gate"} {
+		if skips[nodeID] != 0 {
+			t.Errorf("node.skipped(%s) = %d, want 0", nodeID, skips[nodeID])
+		}
+	}
 	if runFailedAt < 0 || endedAt < 0 {
 		t.Fatalf("run.failed=%d session.ended=%d, want both persisted without a live runner", runFailedAt, endedAt)
 	}
-	if runFailedAt > endedAt {
-		t.Errorf("run.failed at %d after session.ended at %d, want run.failed first", runFailedAt, endedAt)
+	if !(lastSkippedAt >= 0 && lastSkippedAt < runFailedAt && runFailedAt < endedAt) {
+		t.Errorf("node.skipped last=%d run.failed=%d session.ended=%d, want node.skipped... < run.failed < session.ended",
+			lastSkippedAt, runFailedAt, endedAt)
+	}
+}
+
+func appendNodeEvent(t *testing.T, st store.Store, runID string, nodeID *string, attempt *int, eventType string, payload any) {
+	t.Helper()
+	data, err := json.Marshal(payload)
+	if err != nil {
+		t.Fatalf("marshal payload: %v", err)
+	}
+	if _, err := st.AppendNodeEvent(context.Background(), domain.NodeEvent{
+		RunID: runID, NodeID: nodeID, Attempt: attempt, Type: eventType, Payload: data,
+	}); err != nil {
+		t.Fatalf("AppendNodeEvent %s: %v", eventType, err)
 	}
 }

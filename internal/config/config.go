@@ -56,7 +56,6 @@ type Config struct {
 	LoginWindowMinutes     int
 	MessageMaxPerWindow    int
 	MessageWindowMinutes   int
-	TrustedProxy           bool
 	TestDatabaseURL        string
 }
 
@@ -86,12 +85,7 @@ func Load() (Config, error) {
 		TestDatabaseURL:        os.Getenv("TEST_DATABASE_URL"),
 	}
 
-	trustedProxy, err := envBool("TRUSTED_PROXY", false)
-	if err != nil {
-		return Config{}, err
-	}
-	cfg.TrustedProxy = trustedProxy
-
+	var err error
 	if cfg.LoginMaxAttempts, err = envInt("LOGIN_MAX_ATTEMPTS", defaultLoginMaxAttempts); err != nil {
 		return Config{}, err
 	}
@@ -195,18 +189,6 @@ func envOr(key, fallback string) string {
 		return v
 	}
 	return fallback
-}
-
-func envBool(key string, fallback bool) (bool, error) {
-	v := os.Getenv(key)
-	if v == "" {
-		return fallback, nil
-	}
-	b, err := strconv.ParseBool(v)
-	if err != nil {
-		return false, fmt.Errorf("%s must be a boolean: %w", key, err)
-	}
-	return b, nil
 }
 
 func envInt(key string, fallback int) (int, error) {

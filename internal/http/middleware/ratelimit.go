@@ -130,16 +130,10 @@ func clientIP(r *http.Request, secret string) string {
 	return remoteIP(r)
 }
 
-// TrustedProxyClientIP returns the client IP for a trusted proxy deployment.
-// It reads X-Forwarded-For only when trustedProxy is enabled; otherwise a
-// caller could spoof the header and pick its own rate-limit bucket.
-func TrustedProxyClientIP(r *http.Request, trustedProxy bool) string {
-	if trustedProxy {
-		if ip := firstForwardedFor(r.Header.Get("X-Forwarded-For")); ip != "" {
-			return ip
-		}
-	}
-	return remoteIP(r)
+// ClientIP exposes the repo's trusted-IP rule to handlers that key their own
+// rates (for example the login limiter). It behaves exactly like clientIP.
+func ClientIP(r *http.Request, secret string) string {
+	return clientIP(r, secret)
 }
 
 func remoteIP(r *http.Request) string {

@@ -177,31 +177,6 @@ func TestRateLimiterRetryAfterCountsDown(t *testing.T) {
 	}
 }
 
-func TestTrustedProxyClientIP(t *testing.T) {
-	tests := []struct {
-		name         string
-		trustedProxy bool
-		xff          string
-		want         string
-	}{
-		{name: "trusted proxy uses XFF", trustedProxy: true, xff: "203.0.113.7, 10.0.0.5", want: "203.0.113.7"},
-		{name: "untrusted proxy ignores XFF", trustedProxy: false, xff: "203.0.113.7", want: "10.0.0.5"},
-		{name: "trusted proxy with empty XFF falls back", trustedProxy: true, xff: "", want: "10.0.0.5"},
-	}
-
-	for _, tc := range tests {
-		t.Run(tc.name, func(t *testing.T) {
-			r := httptest.NewRequest(http.MethodPost, "/", nil)
-			r.RemoteAddr = "10.0.0.5:1234"
-			r.Header.Set("X-Forwarded-For", tc.xff)
-
-			if got := TrustedProxyClientIP(r, tc.trustedProxy); got != tc.want {
-				t.Fatalf("TrustedProxyClientIP = %q, want %q", got, tc.want)
-			}
-		})
-	}
-}
-
 func TestRateLimitMiddlewareKeysByTrustedIP(t *testing.T) {
 	limiter := NewRateLimiter(1, time.Hour)
 	handler := RateLimit(limiter, "shared-secret")(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

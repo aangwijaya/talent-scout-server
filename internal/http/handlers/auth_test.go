@@ -179,13 +179,15 @@ func TestLoginSuccessDoesNotCountTowardLimit(t *testing.T) {
 	assertRateLimited(t, rec, 15*60)
 }
 
-func TestLoginRateLimitUsesTrustedProxy(t *testing.T) {
+func TestLoginRateLimitKeysByTrustedClientIP(t *testing.T) {
 	tests := []struct {
-		name         string
-		trustedProxy bool
+		name      string
+		bffSecret string
+		header    string
 	}{
-		{name: "trusted proxy on", trustedProxy: true},
-		{name: "trusted proxy off", trustedProxy: false},
+		{name: "matching BFF secret trusts XFF", bffSecret: "shared-secret", header: "shared-secret"},
+		{name: "wrong BFF secret ignores XFF", bffSecret: "shared-secret", header: "wrong"},
+		{name: "missing BFF secret ignores XFF", bffSecret: "shared-secret", header: ""},
 	}
 
 	for _, tc := range tests {
@@ -193,30 +195,62 @@ func TestLoginRateLimitUsesTrustedProxy(t *testing.T) {
 			cfg := authConfig()
 			cfg.LoginMaxAttempts = 1
 			cfg.LoginWindowMinutes = 15
-			cfg.TrustedProxy = tc.trustedProxy
+			cfg.BFFSharedSecret = tc.bffSecret
 			h := handlers.NewAuth(cfg, auth.New(cfg.AuthTokenSecret), nil)
 
+			req := func(xff string) *http.Request {
+				r := rateLimitLoginRequest(`{"password":"wrong"}`, "10.0.0.5:1234", xff)
+				if tc.header != "" {
+					r.Header.Set("X-BFF-Secret", tc.header)
+				}
+				return r
+			}
+
 			rec := httptest.NewRecorder()
-			h.Login(rec, rateLimitLoginRequest(`{"password":"wrong"}`, "10.0.0.5:1234", "203.0.113.7"))
+			h.Login(rec, req("203.0.113.7"))
 			if rec.Code != http.StatusUnauthorized {
 				t.Fatalf("first IP A status = %d, want 401", rec.Code)
 			}
 
 			rec = httptest.NewRecorder()
-			h.Login(rec, rateLimitLoginRequest(`{"password":"wrong"}`, "10.0.0.5:1234", "203.0.113.7"))
+			h.Login(rec, req("203.0.113.7"))
 			assertRateLimited(t, rec, 15*60)
 
 			rec = httptest.NewRecorder()
-			h.Login(rec, rateLimitLoginRequest(`{"password":"wrong"}`, "10.0.0.5:1234", "203.0.113.8"))
-			if tc.trustedProxy {
+			h.Login(rec, req("203.0.113.8"))
+			if tc.bffSecret != "" && tc.header == tc.bffSecret {
 				if rec.Code != http.StatusUnauthorized {
 					t.Fatalf("IP B status = %d, want 401 (trusted XFF keys are independent)", rec.Code)
 				}
 			} else {
-				// A different XFF must not buy a new budget when the proxy is
-				// not trusted.
+				// A different XFF must not buy a new budget when the caller
+				// did not prove it is the BFF.
 				assertRateLimited(t, rec, 15*60)
 			}
 		})
 	}
+}
+
+func TestLoginRateLimitNeverTrustsXFFWithoutConfiguredSecret(t *testing.T) {
+	cfg := authConfig()
+	cfg.LoginMaxAttempts = 1
+	cfg.LoginWindowMinutes = 15
+	cfg.BFFSharedSecret = ""
+	h := handlers.NewAuth(cfg, auth.New(cfg.AuthTokenSecret), nil)
+
+	req := func(xff string) *http.Request {
+		r := rateLimitLoginRequest(`{"password":"wrong"}`, "10.0.0.5:1234", xff)
+		r.Header.Set("X-BFF-Secret", "")
+		return r
+	}
+
+	rec := httptest.NewRecorder()
+	h.Login(rec, req("203.0.113.7"))
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("first attempt status = %d, want 401", rec.Code)
+	}
+
+	rec = httptest.NewRecorder()
+	h.Login(rec, req("203.0.113.8"))
+	assertRateLimited(t, rec, 15*60)
 }

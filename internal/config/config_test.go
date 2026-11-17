@@ -12,7 +12,7 @@ var allEnv = []string{
 	"EMAIL_MODE", "GMAIL_CLIENT_ID", "GMAIL_CLIENT_SECRET", "GMAIL_REFRESH_TOKEN",
 	"EMAIL_FROM", "SESSION_TTL_HOURS", "SESSION_MAX_MINUTES", "SESSION_MAX_QUESTIONS",
 	"LOGIN_MAX_ATTEMPTS", "LOGIN_WINDOW_MINUTES", "MESSAGE_MAX_PER_WINDOW",
-	"MESSAGE_WINDOW_MINUTES", "TRUSTED_PROXY",
+	"MESSAGE_WINDOW_MINUTES",
 	"TEST_DATABASE_URL",
 }
 
@@ -56,9 +56,6 @@ func TestLoadDefaults(t *testing.T) {
 	if cfg.MessageMaxPerWindow != 20 || cfg.MessageWindowMinutes != 10 {
 		t.Errorf("message rate defaults = %d/%d, want 20/10", cfg.MessageMaxPerWindow, cfg.MessageWindowMinutes)
 	}
-	if cfg.TrustedProxy {
-		t.Error("TrustedProxy = true, want false")
-	}
 }
 
 func TestLoadFromEnv(t *testing.T) {
@@ -72,7 +69,6 @@ func TestLoadFromEnv(t *testing.T) {
 	t.Setenv("LOGIN_WINDOW_MINUTES", "30")
 	t.Setenv("MESSAGE_MAX_PER_WINDOW", "7")
 	t.Setenv("MESSAGE_WINDOW_MINUTES", "5")
-	t.Setenv("TRUSTED_PROXY", "true")
 	t.Setenv("AUTH_TOKEN_SECRET", validAuthTokenSecret)
 
 	cfg, err := Load()
@@ -104,9 +100,6 @@ func TestLoadFromEnv(t *testing.T) {
 	if cfg.MessageMaxPerWindow != 7 || cfg.MessageWindowMinutes != 5 {
 		t.Errorf("message rate = %d/%d, want 7/5", cfg.MessageMaxPerWindow, cfg.MessageWindowMinutes)
 	}
-	if !cfg.TrustedProxy {
-		t.Error("TrustedProxy = false, want true")
-	}
 }
 
 func TestLoadRejectsInvalidValues(t *testing.T) {
@@ -125,7 +118,6 @@ func TestLoadRejectsInvalidValues(t *testing.T) {
 		{name: "non-integer login window", key: "LOGIN_WINDOW_MINUTES", val: "soon"},
 		{name: "zero message limit", key: "MESSAGE_MAX_PER_WINDOW", val: "0"},
 		{name: "zero message window", key: "MESSAGE_WINDOW_MINUTES", val: "0"},
-		{name: "invalid trusted proxy", key: "TRUSTED_PROXY", val: "maybe"},
 	}
 
 	for _, tc := range tests {

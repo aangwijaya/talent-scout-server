@@ -45,7 +45,7 @@ type loginResponse struct {
 }
 
 func (h *Auth) Login(w http.ResponseWriter, r *http.Request) {
-	ip := middleware.TrustedProxyClientIP(r, h.cfg.TrustedProxy)
+	ip := middleware.ClientIP(r, h.cfg.BFFSharedSecret)
 	if ok, retryAfter := h.loginLimiter.Check(ip); !ok {
 		apierror.WriteRateLimited(w, retryAfter)
 		return

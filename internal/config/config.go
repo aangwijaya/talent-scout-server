@@ -5,6 +5,7 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/aangwijaya/talent-scout-server/internal/auth"
 )
@@ -19,6 +20,11 @@ const (
 	defaultSessionTTL     = 168
 	defaultSessionMinutes = 15
 	defaultSessionMaxQues = 15
+
+	defaultLoginMaxAttempts     = 5
+	defaultLoginWindowMinutes   = 15
+	defaultMessageMaxPerWindow  = 20
+	defaultMessageWindowMinutes = 10
 )
 
 type Config struct {
@@ -46,6 +52,11 @@ type Config struct {
 	SessionTTLHours        int
 	SessionMaxMinutes      int
 	SessionMaxQuestions    int
+	LoginMaxAttempts       int
+	LoginWindowMinutes     int
+	MessageMaxPerWindow    int
+	MessageWindowMinutes   int
+	TrustedProxy           bool
 	TestDatabaseURL        string
 }
 
@@ -75,7 +86,24 @@ func Load() (Config, error) {
 		TestDatabaseURL:        os.Getenv("TEST_DATABASE_URL"),
 	}
 
-	var err error
+	trustedProxy, err := envBool("TRUSTED_PROXY", false)
+	if err != nil {
+		return Config{}, err
+	}
+	cfg.TrustedProxy = trustedProxy
+
+	if cfg.LoginMaxAttempts, err = envInt("LOGIN_MAX_ATTEMPTS", defaultLoginMaxAttempts); err != nil {
+		return Config{}, err
+	}
+	if cfg.LoginWindowMinutes, err = envInt("LOGIN_WINDOW_MINUTES", defaultLoginWindowMinutes); err != nil {
+		return Config{}, err
+	}
+	if cfg.MessageMaxPerWindow, err = envInt("MESSAGE_MAX_PER_WINDOW", defaultMessageMaxPerWindow); err != nil {
+		return Config{}, err
+	}
+	if cfg.MessageWindowMinutes, err = envInt("MESSAGE_WINDOW_MINUTES", defaultMessageWindowMinutes); err != nil {
+		return Config{}, err
+	}
 	if cfg.SessionTTLHours, err = envInt("SESSION_TTL_HOURS", defaultSessionTTL); err != nil {
 		return Config{}, err
 	}
@@ -114,7 +142,52 @@ func (c Config) validate() error {
 	if len(c.AuthTokenSecret) < auth.MinSecretBytes {
 		return fmt.Errorf("AUTH_TOKEN_SECRET must be at least %d bytes", auth.MinSecretBytes)
 	}
+	for _, check := range []struct {
+		name string
+		val  int
+	}{
+		{name: "LOGIN_MAX_ATTEMPTS", val: c.LoginMaxAttempts},
+		{name: "LOGIN_WINDOW_MINUTES", val: c.LoginWindowMinutes},
+		{name: "MESSAGE_MAX_PER_WINDOW", val: c.MessageMaxPerWindow},
+		{name: "MESSAGE_WINDOW_MINUTES", val: c.MessageWindowMinutes},
+	} {
+		if check.val <= 0 {
+			return fmt.Errorf("%s must be greater than zero", check.name)
+		}
+	}
 	return nil
+}
+
+// LoginRateLimit is the number of failed logins allowed per window. A zero
+// value (hand-built Config in tests) falls back to the product default.
+func (c Config) LoginRateLimit() int {
+	if c.LoginMaxAttempts > 0 {
+		return c.LoginMaxAttempts
+	}
+	return defaultLoginMaxAttempts
+}
+
+func (c Config) LoginRateWindow() time.Duration {
+	minutes := c.LoginWindowMinutes
+	if minutes <= 0 {
+		minutes = defaultLoginWindowMinutes
+	}
+	return time.Duration(minutes) * time.Minute
+}
+
+func (c Config) MessageRateLimit() int {
+	if c.MessageMaxPerWindow > 0 {
+		return c.MessageMaxPerWindow
+	}
+	return defaultMessageMaxPerWindow
+}
+
+func (c Config) MessageRateWindow() time.Duration {
+	minutes := c.MessageWindowMinutes
+	if minutes <= 0 {
+		minutes = defaultMessageWindowMinutes
+	}
+	return time.Duration(minutes) * time.Minute
 }
 
 func envOr(key, fallback string) string {
@@ -122,6 +195,18 @@ func envOr(key, fallback string) string {
 		return v
 	}
 	return fallback
+}
+
+func envBool(key string, fallback bool) (bool, error) {
+	v := os.Getenv(key)
+	if v == "" {
+		return fallback, nil
+	}
+	b, err := strconv.ParseBool(v)
+	if err != nil {
+		return false, fmt.Errorf("%s must be a boolean: %w", key, err)
+	}
+	return b, nil
 }
 
 func envInt(key string, fallback int) (int, error) {

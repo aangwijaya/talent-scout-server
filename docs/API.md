@@ -9,7 +9,7 @@
 - Public URLs are built from the server env `PUBLIC_APP_URL` (default `https://talentscout.vercel.app`): `apply_url` = `${PUBLIC_APP_URL}/apply/{jobId}`, session link in email = `${PUBLIC_APP_URL}/s/{token}`. The API path (`/sessions/{token}`) differs from the page path (`/s/{token}`).
 - **Callers.** The client is a server-side SvelteKit app (BFF, see client `docs/SERVER-SIDE.md`). All REST calls come from the SvelteKit server, never from the browser. The only browser → API calls are the two SSE streams.
 - Recruiter auth: header `Authorization: Bearer <access_token>`, sent only by the SvelteKit server. The browser never sees `access_token`. For the run SSE stream the browser uses a short-lived `sse_token` in the query instead (see `POST /auth/sse-token`).
-- Client IP forwarding: the SvelteKit server sends `X-Forwarded-For: <client ip>` (from `event.getClientAddress()`) plus `X-BFF-Secret: <BFF_SHARED_SECRET>`. The API trusts `X-Forwarded-For` **only** when `X-BFF-Secret` matches (constant-time); otherwise it uses the TCP remote address. The trusted IP is what the apply rate limit (5/IP/hour) counts.
+- Client IP forwarding: the SvelteKit server sends `X-Forwarded-For: <client ip>` (from `event.getClientAddress()`) plus `X-BFF-Secret: <BFF_SHARED_SECRET>`. The API trusts `X-Forwarded-For` **only** when `X-BFF-Secret` matches (constant-time); otherwise it uses the TCP remote address. The trusted IP is what the apply rate limit (5/IP/hour) counts. The recruiter login limit counts `X-Forwarded-For` only when `TRUSTED_PROXY` is enabled; otherwise it counts the TCP remote address.
 - Applicant auth: session `token` in the path (no header).
 - List: `?limit=` (default 50, max 100) and `?cursor=`; response `{ "items": [...], "next_cursor": "..." | null }`.
 
@@ -98,7 +98,7 @@ Enum: `Application.status` = `applied|invited|in_session|scoring|review|shortlis
 `deep=1` runs a light query against the DB (the `db` field exists only with `deep=1`; `"error"` + HTTP 503 when the DB is unreachable, e.g. Supabase paused). Without `deep` the DB is not touched.
 
 ### `POST /auth/login`
-Req `{ "password": "..." }` → 200 `{ "access_token": "...", "expires_at": "..." }` (valid for 12 hours) · 401 `unauthorized`.
+Req `{ "password": "..." }` → 200 `{ "access_token": "...", "expires_at": "..." }` (valid for 12 hours) · 401 `unauthorized` · 429 `rate_limited` (max 5 failed attempts/IP/15 minutes; `Retry-After` in seconds). Successful logins do not count.
 The single password is compared with env `RECRUITER_PASSWORD` (constant-time). `access_token` = a stateless HMAC-signed token (`AUTH_TOKEN_SECRET`) containing `expires_at`; no refresh, logout, or token table. The SvelteKit server stores the token in an httpOnly cookie on its own domain (`ts_session`, `maxAge` from `expires_at`) and never returns it to browser JS; any 401 → the SvelteKit server clears the cookie and redirects to login. `access_token` is accepted **only** in the `Authorization` header (not in a query string).
 
 ### `POST /auth/sse-token`
@@ -176,7 +176,7 @@ Req `{ "content": "..." }` (1–2000 char) → 202
 ```json
 { "message": Message, "awaiting": "assistant" }
 ```
-The AI reply arrives via SSE. 409 `invalid_state` if the AI has not finished replying (the applicant must wait for `message.completed`) or if the session is waiting for `POST /sessions/{token}/retry`; 410 if the session is finished/time is up.
+The AI reply arrives via SSE. 409 `invalid_state` if the AI has not finished replying (the applicant must wait for `message.completed`) or if the session is waiting for `POST /sessions/{token}/retry`; 410 if the session is finished/time is up; 429 `rate_limited` (max 20 messages/session/10 minutes; `Retry-After` in seconds).
 
 ### `POST /sessions/{token}/retry` → 202
 ```json

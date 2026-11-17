@@ -42,6 +42,13 @@ func NewRateLimiter(limit int, window time.Duration) *RateLimiter {
 }
 
 func (l *RateLimiter) Allow(key string) bool {
+	ok, _ := l.AllowWithRetry(key)
+	return ok
+}
+
+// AllowWithRetry consumes one slot and, when the key is already limited,
+// returns how long remains until its window resets.
+func (l *RateLimiter) AllowWithRetry(key string) (bool, time.Duration) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 
@@ -54,10 +61,46 @@ func (l *RateLimiter) Allow(key string) bool {
 		l.buckets[key] = b
 	}
 	if b.count >= l.limit {
-		return false
+		return false, l.window - now.Sub(b.windowStart)
 	}
 	b.count++
-	return true
+	return true, 0
+}
+
+// Check reports whether key is still within budget without consuming a slot.
+// It is used by the login limiter, where only failed attempts count.
+func (l *RateLimiter) Check(key string) (bool, time.Duration) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+
+	now := l.now()
+	l.sweep(now)
+
+	b := l.buckets[key]
+	if b == nil || now.Sub(b.windowStart) >= l.window {
+		return true, 0
+	}
+	if b.count >= l.limit {
+		return false, l.window - now.Sub(b.windowStart)
+	}
+	return true, 0
+}
+
+// Record consumes one slot for a key without rejecting it. It is used by the
+// login limiter after a failed password check.
+func (l *RateLimiter) Record(key string) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+
+	now := l.now()
+	l.sweep(now)
+
+	b := l.buckets[key]
+	if b == nil || now.Sub(b.windowStart) >= l.window {
+		l.buckets[key] = &bucket{windowStart: now, count: 1}
+		return
+	}
+	b.count++
 }
 
 // sweep deletes expired buckets, at most once per window, so Allow stays O(1)
@@ -84,6 +127,22 @@ func clientIP(r *http.Request, secret string) string {
 			return ip
 		}
 	}
+	return remoteIP(r)
+}
+
+// TrustedProxyClientIP returns the client IP for a trusted proxy deployment.
+// It reads X-Forwarded-For only when trustedProxy is enabled; otherwise a
+// caller could spoof the header and pick its own rate-limit bucket.
+func TrustedProxyClientIP(r *http.Request, trustedProxy bool) string {
+	if trustedProxy {
+		if ip := firstForwardedFor(r.Header.Get("X-Forwarded-For")); ip != "" {
+			return ip
+		}
+	}
+	return remoteIP(r)
+}
+
+func remoteIP(r *http.Request) string {
 	host, _, err := net.SplitHostPort(r.RemoteAddr)
 	if err != nil {
 		return r.RemoteAddr
@@ -104,8 +163,8 @@ func firstForwardedFor(xff string) string {
 func RateLimit(limiter *RateLimiter, secret string) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			if !limiter.Allow(clientIP(r, secret)) {
-				apierror.Write(w, http.StatusTooManyRequests, apierror.CodeRateLimited, "too many requests", nil)
+			if ok, retryAfter := limiter.AllowWithRetry(clientIP(r, secret)); !ok {
+				apierror.WriteRateLimited(w, retryAfter)
 				return
 			}
 			next.ServeHTTP(w, r)

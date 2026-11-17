@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -105,5 +106,117 @@ func TestLoginRejectsWhenPasswordNotConfigured(t *testing.T) {
 
 	if rec.Code != http.StatusUnauthorized {
 		t.Fatalf("status = %d, want 401", rec.Code)
+	}
+}
+
+func rateLimitLoginRequest(body, remoteAddr, xff string) *http.Request {
+	r := loginRequest(body)
+	if remoteAddr != "" {
+		r.RemoteAddr = remoteAddr
+	}
+	if xff != "" {
+		r.Header.Set("X-Forwarded-For", xff)
+	}
+	return r
+}
+
+func assertRateLimited(t *testing.T, rec *httptest.ResponseRecorder, maxRetry int) {
+	t.Helper()
+	if rec.Code != http.StatusTooManyRequests {
+		t.Fatalf("status = %d, want 429 (body: %s)", rec.Code, rec.Body.String())
+	}
+	code, _, _ := decodeError(t, rec)
+	if code != "rate_limited" {
+		t.Errorf("error.code = %q, want rate_limited", code)
+	}
+	retry, err := strconv.Atoi(rec.Header().Get("Retry-After"))
+	if err != nil || retry < 1 || retry > maxRetry {
+		t.Errorf("Retry-After = %q, want 1..%d seconds", rec.Header().Get("Retry-After"), maxRetry)
+	}
+}
+
+func TestLoginLimitsFailedAttemptsPerIP(t *testing.T) {
+	cfg := authConfig()
+	cfg.LoginMaxAttempts = 2
+	cfg.LoginWindowMinutes = 15
+	h := handlers.NewAuth(cfg, auth.New(cfg.AuthTokenSecret), nil)
+
+	for i := 0; i < 2; i++ {
+		rec := httptest.NewRecorder()
+		h.Login(rec, loginRequest(`{"password":"wrong"}`))
+		if rec.Code != http.StatusUnauthorized {
+			t.Fatalf("failed attempt %d status = %d, want 401", i+1, rec.Code)
+		}
+	}
+
+	rec := httptest.NewRecorder()
+	h.Login(rec, loginRequest(`{"password":"correct horse"}`))
+	assertRateLimited(t, rec, 15*60)
+}
+
+func TestLoginSuccessDoesNotCountTowardLimit(t *testing.T) {
+	cfg := authConfig()
+	cfg.LoginMaxAttempts = 1
+	cfg.LoginWindowMinutes = 15
+	h := handlers.NewAuth(cfg, auth.New(cfg.AuthTokenSecret), nil)
+
+	for i := 0; i < 3; i++ {
+		rec := httptest.NewRecorder()
+		h.Login(rec, loginRequest(`{"password":"correct horse"}`))
+		if rec.Code != http.StatusOK {
+			t.Fatalf("successful login %d status = %d, want 200", i+1, rec.Code)
+		}
+	}
+
+	rec := httptest.NewRecorder()
+	h.Login(rec, loginRequest(`{"password":"wrong"}`))
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("first failed login status = %d, want 401", rec.Code)
+	}
+
+	rec = httptest.NewRecorder()
+	h.Login(rec, loginRequest(`{"password":"wrong"}`))
+	assertRateLimited(t, rec, 15*60)
+}
+
+func TestLoginRateLimitUsesTrustedProxy(t *testing.T) {
+	tests := []struct {
+		name         string
+		trustedProxy bool
+	}{
+		{name: "trusted proxy on", trustedProxy: true},
+		{name: "trusted proxy off", trustedProxy: false},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg := authConfig()
+			cfg.LoginMaxAttempts = 1
+			cfg.LoginWindowMinutes = 15
+			cfg.TrustedProxy = tc.trustedProxy
+			h := handlers.NewAuth(cfg, auth.New(cfg.AuthTokenSecret), nil)
+
+			rec := httptest.NewRecorder()
+			h.Login(rec, rateLimitLoginRequest(`{"password":"wrong"}`, "10.0.0.5:1234", "203.0.113.7"))
+			if rec.Code != http.StatusUnauthorized {
+				t.Fatalf("first IP A status = %d, want 401", rec.Code)
+			}
+
+			rec = httptest.NewRecorder()
+			h.Login(rec, rateLimitLoginRequest(`{"password":"wrong"}`, "10.0.0.5:1234", "203.0.113.7"))
+			assertRateLimited(t, rec, 15*60)
+
+			rec = httptest.NewRecorder()
+			h.Login(rec, rateLimitLoginRequest(`{"password":"wrong"}`, "10.0.0.5:1234", "203.0.113.8"))
+			if tc.trustedProxy {
+				if rec.Code != http.StatusUnauthorized {
+					t.Fatalf("IP B status = %d, want 401 (trusted XFF keys are independent)", rec.Code)
+				}
+			} else {
+				// A different XFF must not buy a new budget when the proxy is
+				// not trusted.
+				assertRateLimited(t, rec, 15*60)
+			}
+		})
 	}
 }

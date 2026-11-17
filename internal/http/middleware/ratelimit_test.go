@@ -1,9 +1,11 @@
 package middleware
 
 import (
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"testing"
 	"time"
 )
@@ -92,6 +94,111 @@ func TestRateLimitMiddlewareWrites429(t *testing.T) {
 	handler.ServeHTTP(rec2, second)
 	if rec2.Code != http.StatusTooManyRequests {
 		t.Fatalf("second status = %d, want 429", rec2.Code)
+	}
+	var got struct {
+		Error struct {
+			Code    string `json:"code"`
+			Message string `json:"message"`
+			Details any    `json:"details"`
+		} `json:"error"`
+	}
+	if err := json.Unmarshal(rec2.Body.Bytes(), &got); err != nil {
+		t.Fatalf("decode error body: %v", err)
+	}
+	if got.Error.Code != "rate_limited" {
+		t.Errorf("error.code = %q, want rate_limited", got.Error.Code)
+	}
+	retry, err := strconv.Atoi(rec2.Header().Get("Retry-After"))
+	if err != nil || retry < 1 || retry > int(time.Hour/time.Second) {
+		t.Errorf("Retry-After = %q, want 1..3600 seconds", rec2.Header().Get("Retry-After"))
+	}
+}
+
+func TestRateLimiterCheckDoesNotConsume(t *testing.T) {
+	limiter := NewRateLimiter(2, time.Hour)
+
+	for i := 0; i < 5; i++ {
+		if ok, _ := limiter.Check("ip"); !ok {
+			t.Fatalf("Check %d should allow before any failure is recorded", i+1)
+		}
+	}
+
+	limiter.Record("ip")
+	limiter.Record("ip")
+
+	if ok, _ := limiter.Check("ip"); ok {
+		t.Fatal("Check should block after the configured number of failures")
+	}
+}
+
+func TestRateLimiterCheckAndRecordResetAfterWindow(t *testing.T) {
+	now := time.Date(2026, 11, 17, 8, 0, 0, 0, time.UTC)
+	limiter := NewRateLimiter(1, 15*time.Minute)
+	limiter.now = func() time.Time { return now }
+
+	limiter.Record("ip")
+	if ok, _ := limiter.Check("ip"); ok {
+		t.Fatal("Check should block within the window")
+	}
+
+	now = now.Add(15 * time.Minute)
+	if ok, _ := limiter.Check("ip"); !ok {
+		t.Fatal("Check should allow after the window resets")
+	}
+	limiter.Record("ip")
+	if limiter.Allow("ip") {
+		t.Fatal("Allow should block after one recorded failure in the new window")
+	}
+}
+
+func TestRateLimiterRetryAfterCountsDown(t *testing.T) {
+	now := time.Date(2026, 11, 17, 8, 0, 0, 0, time.UTC)
+	limiter := NewRateLimiter(1, 15*time.Minute)
+	limiter.now = func() time.Time { return now }
+
+	if ok, _ := limiter.AllowWithRetry("ip"); !ok {
+		t.Fatal("first request should be allowed")
+	}
+	ok, retry := limiter.AllowWithRetry("ip")
+	if ok {
+		t.Fatal("second request should be denied")
+	}
+	if retry != 15*time.Minute {
+		t.Fatalf("retry after = %v, want 15m", retry)
+	}
+
+	now = now.Add(5 * time.Minute)
+	ok, retry = limiter.Check("ip")
+	if ok {
+		t.Fatal("Check should still deny inside the window")
+	}
+	if retry != 10*time.Minute {
+		t.Fatalf("retry after = %v, want 10m", retry)
+	}
+}
+
+func TestTrustedProxyClientIP(t *testing.T) {
+	tests := []struct {
+		name         string
+		trustedProxy bool
+		xff          string
+		want         string
+	}{
+		{name: "trusted proxy uses XFF", trustedProxy: true, xff: "203.0.113.7, 10.0.0.5", want: "203.0.113.7"},
+		{name: "untrusted proxy ignores XFF", trustedProxy: false, xff: "203.0.113.7", want: "10.0.0.5"},
+		{name: "trusted proxy with empty XFF falls back", trustedProxy: true, xff: "", want: "10.0.0.5"},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			r := httptest.NewRequest(http.MethodPost, "/", nil)
+			r.RemoteAddr = "10.0.0.5:1234"
+			r.Header.Set("X-Forwarded-For", tc.xff)
+
+			if got := TrustedProxyClientIP(r, tc.trustedProxy); got != tc.want {
+				t.Fatalf("TrustedProxyClientIP = %q, want %q", got, tc.want)
+			}
+		})
 	}
 }
 

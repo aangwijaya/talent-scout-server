@@ -10,22 +10,29 @@ import (
 	"github.com/aangwijaya/talent-scout-server/internal/auth"
 	"github.com/aangwijaya/talent-scout-server/internal/config"
 	"github.com/aangwijaya/talent-scout-server/internal/http/apierror"
+	"github.com/aangwijaya/talent-scout-server/internal/http/middleware"
 	"github.com/aangwijaya/talent-scout-server/internal/store"
 )
 
 const maxLoginBody = 4 << 10
 
 type Auth struct {
-	cfg    config.Config
-	tokens *auth.Manager
-	store  store.Store
+	cfg          config.Config
+	tokens       *auth.Manager
+	store        store.Store
+	loginLimiter *middleware.RateLimiter
 }
 
 func NewAuth(cfg config.Config, tokens *auth.Manager, st store.Store) *Auth {
 	if tokens == nil {
 		tokens = auth.New(cfg.AuthTokenSecret)
 	}
-	return &Auth{cfg: cfg, tokens: tokens, store: st}
+	return &Auth{
+		cfg:          cfg,
+		tokens:       tokens,
+		store:        st,
+		loginLimiter: middleware.NewRateLimiter(cfg.LoginRateLimit(), cfg.LoginRateWindow()),
+	}
 }
 
 type loginRequest struct {
@@ -38,15 +45,23 @@ type loginResponse struct {
 }
 
 func (h *Auth) Login(w http.ResponseWriter, r *http.Request) {
+	ip := middleware.TrustedProxyClientIP(r, h.cfg.TrustedProxy)
+	if ok, retryAfter := h.loginLimiter.Check(ip); !ok {
+		apierror.WriteRateLimited(w, retryAfter)
+		return
+	}
+
 	r.Body = http.MaxBytesReader(w, r.Body, maxLoginBody)
 	var req loginRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		h.loginLimiter.Record(ip)
 		writeUnauthorized(w)
 		return
 	}
 
 	if h.cfg.RecruiterPassword == "" ||
 		subtle.ConstantTimeCompare([]byte(req.Password), []byte(h.cfg.RecruiterPassword)) != 1 {
+		h.loginLimiter.Record(ip)
 		writeUnauthorized(w)
 		return
 	}

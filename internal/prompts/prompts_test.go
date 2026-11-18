@@ -115,6 +115,27 @@ func TestSystemPromptsShareTheUntrustedDataRule(t *testing.T) {
 	}
 }
 
+func TestInterviewerPromptAsksOneOpenEndedQuestion(t *testing.T) {
+	system, ok := prompts.System(prompts.NodeInterviewer)
+	if !ok {
+		t.Fatal("interviewer system prompt not found")
+	}
+	lower := strings.ToLower(system)
+	for _, want := range []string{
+		"exactly one open-ended question",
+		"single question mark",
+		"never ask a second question",
+		"never offer answer choices",
+		"which one",
+		"pick one",
+		"choose one",
+	} {
+		if !strings.Contains(lower, want) {
+			t.Errorf("interviewer prompt missing %q:\n%s", want, system)
+		}
+	}
+}
+
 func TestScorerPromptForbidsScoringFromAnswerInstructions(t *testing.T) {
 	system, ok := prompts.System(prompts.NodeScorer)
 	if !ok {

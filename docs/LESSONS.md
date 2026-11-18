@@ -23,6 +23,14 @@ Rules:
 
 ## Entries
 
+### 2026-11-18 — #63 Interviewer asks one open question; size the timeout from recorded latency
+- **Context:** Following #14, live runs still produced multiple-choice and two-part interviewer turns, a 30 s timeout sat close to a recorded 26.2 s reply, and TECH-STACK §8 still carried the old `~$0.005` estimate.
+- **Problem:** The prompt said "one focused question" but did not ban option letters, "which one", "pick one", or a follow-on request, so the model still returned "(a)/(b)/(c)" turns. `config/models.yaml` had one shared 30 s timeout for every node; the recorded fixture contains an interviewer reply of 1827 completion tokens in 26,179 ms and a later `node.failed` (`timeout`) on the same node.
+- **Cause:** Negative instructions were too generic and left the exact choice formats open, and the timeout was not re-sized after raising the interviewer to `max_tokens: 4000` with reasoning.
+- **Lesson:** In the interviewer system prompt, require exactly one open-ended question per turn, at most 80 words, ending with a single question mark, and explicitly forbid a second question, answer choices, option letters, "which one", "pick one", "choose one", "select one", and "just the letter"; keep the runtime 120-word stop unchanged. Size the shared request timeout from recorded latency: 60 s (the OpenRouter client cap) leaves room over the 26.2 s reply; keep `max_tokens: 4000` and `reasoning: { effort: low }`. Measured cost from the #14 runs: normal sessions `$0.006772` (26,882 in / 7,909 out) and `$0.008021` (36,380 in / 8,068 out), retry-heavy `$0.012421` (37,192 in / 17,599 out), so budget about `$0.013` per session rather than `$0.005`.
+- **Follow-up:** offline prompt test in `internal/prompts/prompts_test.go`, question-form checker in `internal/e2e/questions_test.go` used by the live E2E, and the config guard in `internal/e2e/models_config_test.go`. Fresh live sessions were not possible in this node because `OPENROUTER_API_KEY` was not in the process environment; re-run the live E2E when the key is available.
+- **Repeated?:** first time
+
 ### 2026-11-16 — #31 Boot reconciliation must close every started node and fail orphaned runs
 - **Context:** Reconciling runs left `running` after a restart, plus three review findings (abandoned app state, cancelled-ctx node terminals, planner outage with no topics).
 - **Problem:** A running run kept its application in `scoring` forever, and a failure persisted with the caller's cancelled context left `node.started` with no terminal event. On boot there is no runner to resume, so finishing such sessions as `abandoned` and scoring them is not possible. EVENTS.md listed no error value for "closed because the server restarted" (server#66 added `server_restart`).

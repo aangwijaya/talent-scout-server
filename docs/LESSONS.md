@@ -23,6 +23,14 @@ Rules:
 
 ## Entries
 
+### 2026-11-20 — #63 A prompt alone did not stop two-part questions; cut at the first `?`
+- **Context:** The human live gate for #63 ran three sessions on `z-ai/glm-5.3-flash` with the new prompt: 0 interviewer timeouts (every call `finish_reason="stop"`, longest 412 completion tokens) and no answer choices, but 9 of ~36 interviewer turns still held 2+ question marks and all three sessions failed the one-question check. Costs were `$0.006874`, `$0.005392` and `$0.007097` per session.
+- **Problem:** The failures were always a question followed by a second one ("…? And …?", "…? Could you walk me through…?"). Negative instructions ("never ask a second question") did not hold on this model.
+- **Cause:** The prompt asked for compliance with no deterministic backstop, so any model turn that ignored the rule reached the applicant and the transcript.
+- **Lesson:** For a hard reply-shape rule, pair the prompt with a streaming guard: stop at the first `?` exactly like the 120-word stop, keep the deltas already sent, and store only that prefix. Add the exact wrong pattern ("…? And …?") to the prompt and require exactly one `?`, at the last character. Keep the 60 s timeout and `max_tokens: 4000` with `reasoning: { effort: low }`; the gate saw no timeouts and ≤412 completion tokens, and live costs fit the `~$0.013` per-session budget.
+- **Follow-up:** tests in `internal/graph/interviewer_test.go` (two questions stream only the first, a single question is unchanged) and `internal/prompts/prompts_test.go`; live E2E `interviewerTurnProblems` still checks the stored turns
+- **Repeated?:** same as entry 2026-11-18 (prompt-only rule was not enough)
+
 ### 2026-11-18 — #63 Interviewer asks one open question; size the timeout from recorded latency
 - **Context:** Following #14, live runs still produced multiple-choice and two-part interviewer turns, a 30 s timeout sat close to a recorded 26.2 s reply, and TECH-STACK §8 still carried the old `~$0.005` estimate.
 - **Problem:** The prompt said "one focused question" but did not ban option letters, "which one", "pick one", or a follow-on request, so the model still returned "(a)/(b)/(c)" turns. `config/models.yaml` had one shared 30 s timeout for every node; the recorded fixture contains an interviewer reply of 1827 completion tokens in 26,179 ms and a later `node.failed` (`timeout`) on the same node.

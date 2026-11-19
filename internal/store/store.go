@@ -58,6 +58,7 @@ type Store interface {
 	CreateJob(ctx context.Context, job domain.Job) error
 	CreateJobWithinLimit(ctx context.Context, job domain.Job, limit int) error
 	UpdateJob(ctx context.Context, job domain.Job) error
+	UpdateJobRubricIfNoApplications(ctx context.Context, job domain.Job) error
 	CountJobs(ctx context.Context) (int, error)
 	GetJob(ctx context.Context, id string) (domain.Job, error)
 	ListJobs(ctx context.Context) ([]domain.Job, error)

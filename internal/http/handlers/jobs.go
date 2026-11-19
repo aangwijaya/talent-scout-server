@@ -190,8 +190,9 @@ func (h *Jobs) Create(w http.ResponseWriter, r *http.Request) {
 }
 
 // Update changes any subset of a job. The rubric is immutable once the job has
-// an application because stored scores reference its keys; title, description
-// and status stay editable.
+// an application because stored scores reference its keys; the check and the
+// update are one atomic store operation, so an application that arrives during
+// the request still conflicts. Title, description and status stay editable.
 func (h *Jobs) Update(w http.ResponseWriter, r *http.Request) {
 	job, ok := h.getJob(w, r)
 	if !ok {
@@ -222,15 +223,6 @@ func (h *Jobs) Update(w http.ResponseWriter, r *http.Request) {
 			writeValidationError(w, verr)
 			return
 		}
-		count, err := h.store.CountApplicationsByJob(r.Context(), job.ID)
-		if err != nil {
-			apierror.Write(w, http.StatusInternalServerError, apierror.CodeInternalError, "could not check job applications", nil)
-			return
-		}
-		if count > 0 {
-			apierror.Write(w, http.StatusConflict, apierror.CodeInvalidState, "the rubric cannot change after an application", nil)
-			return
-		}
 		job.Rubric = *req.Rubric
 	}
 	if req.Status != nil {
@@ -242,12 +234,19 @@ func (h *Jobs) Update(w http.ResponseWriter, r *http.Request) {
 	}
 
 	job.UpdatedAt = time.Now().UTC()
-	if err := h.store.UpdateJob(r.Context(), job); err != nil {
-		if errors.Is(err, store.ErrNotFound) {
+	update := h.store.UpdateJob
+	if req.Rubric != nil {
+		update = h.store.UpdateJobRubricIfNoApplications
+	}
+	if err := update(r.Context(), job); err != nil {
+		switch {
+		case errors.Is(err, store.ErrNotFound):
 			apierror.Write(w, http.StatusNotFound, apierror.CodeNotFound, "job not found", nil)
-			return
+		case errors.Is(err, store.ErrConflict):
+			apierror.Write(w, http.StatusConflict, apierror.CodeInvalidState, "the rubric cannot change after an application", nil)
+		default:
+			apierror.Write(w, http.StatusInternalServerError, apierror.CodeInternalError, "could not update job", nil)
 		}
-		apierror.Write(w, http.StatusInternalServerError, apierror.CodeInternalError, "could not update job", nil)
 		return
 	}
 

@@ -751,3 +751,61 @@ func TestMemoryUpdateJobCountAndOrder(t *testing.T) {
 		t.Fatalf("CreateJobWithinLimit below cap: %v", err)
 	}
 }
+
+func TestMemoryUpdateJobRubricIfNoApplications(t *testing.T) {
+	ctx := context.Background()
+	s := store.NewMemory()
+
+	job := domain.Job{
+		ID:          domain.NewID(),
+		Title:       "Senior Frontend Engineer",
+		Description: "Build the recruiter dashboard and the applicant screening experience.",
+		Rubric:      []domain.RubricCriterion{{Key: "frontend_depth", Label: "Frontend depth", Description: "Svelte/React", Weight: 2}},
+		Status:      domain.JobStatusOpen,
+	}
+	if err := s.CreateJob(ctx, job); err != nil {
+		t.Fatalf("CreateJob: %v", err)
+	}
+
+	updated := job
+	updated.Title = "Staff Frontend Engineer"
+	updated.Rubric = []domain.RubricCriterion{{Key: "system_design", Label: "System design", Description: "Component boundaries.", Weight: 3}}
+	if err := s.UpdateJobRubricIfNoApplications(ctx, updated); err != nil {
+		t.Fatalf("UpdateJobRubricIfNoApplications without applications: %v", err)
+	}
+	got, err := s.GetJob(ctx, job.ID)
+	if err != nil {
+		t.Fatalf("GetJob after update: %v", err)
+	}
+	if got.Title != updated.Title || got.Rubric[0].Key != "system_design" {
+		t.Fatalf("GetJob after update = %+v", got)
+	}
+
+	if err := s.CreateApplication(ctx, domain.Application{
+		ID:     domain.NewID(),
+		JobID:  job.ID,
+		Name:   "Budi",
+		Email:  "budi@example.com",
+		Status: domain.ApplicationStatusApplied,
+	}); err != nil {
+		t.Fatalf("CreateApplication: %v", err)
+	}
+
+	blocked := updated
+	blocked.Title = "Should Not Apply"
+	blocked.Rubric = []domain.RubricCriterion{{Key: "communication", Label: "Communication", Description: "Clarity and collaboration.", Weight: 1}}
+	if err := s.UpdateJobRubricIfNoApplications(ctx, blocked); !errors.Is(err, store.ErrConflict) {
+		t.Fatalf("UpdateJobRubricIfNoApplications with application = %v, want ErrConflict", err)
+	}
+	got, err = s.GetJob(ctx, job.ID)
+	if err != nil {
+		t.Fatalf("GetJob after conflict: %v", err)
+	}
+	if got.Title != updated.Title || got.Rubric[0].Key != "system_design" {
+		t.Fatalf("job changed despite conflict: %+v", got)
+	}
+
+	if err := s.UpdateJobRubricIfNoApplications(ctx, domain.Job{ID: domain.NewID()}); !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("UpdateJobRubricIfNoApplications unknown = %v, want ErrNotFound", err)
+	}
+}

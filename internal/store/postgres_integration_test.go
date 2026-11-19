@@ -93,6 +93,17 @@ func TestPostgresStore(t *testing.T) {
 		t.Fatalf("UpdateJob unknown = %v, want ErrNotFound", err)
 	}
 
+	job.Rubric = []domain.RubricCriterion{{Key: "system_design", Label: "System design", Description: "Component boundaries.", Weight: 3}}
+	if err := s.UpdateJobRubricIfNoApplications(ctx, job); err != nil {
+		t.Fatalf("UpdateJobRubricIfNoApplications without applications: %v", err)
+	}
+	if got, err := s.GetJob(ctx, job.ID); err != nil || got.Rubric[0].Key != "system_design" {
+		t.Fatalf("GetJob after rubric update = %+v, %v", got, err)
+	}
+	if err := s.UpdateJobRubricIfNoApplications(ctx, domain.Job{ID: domain.NewID()}); !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("UpdateJobRubricIfNoApplications unknown = %v, want ErrNotFound", err)
+	}
+
 	newerJob := domain.Job{
 		ID:          domain.NewID(),
 		Title:       "Newer Job",
@@ -130,6 +141,16 @@ func TestPostgresStore(t *testing.T) {
 	}
 	if err := s.CreateApplication(ctx, app); err != nil {
 		t.Fatalf("CreateApplication: %v", err)
+	}
+
+	blocked := job
+	blocked.Title = "Should Not Apply"
+	blocked.Rubric = []domain.RubricCriterion{{Key: "communication", Label: "Communication", Description: "Clarity and collaboration.", Weight: 1}}
+	if err := s.UpdateJobRubricIfNoApplications(ctx, blocked); !errors.Is(err, store.ErrConflict) {
+		t.Fatalf("UpdateJobRubricIfNoApplications with application = %v, want ErrConflict", err)
+	}
+	if got, err := s.GetJob(ctx, job.ID); err != nil || got.Title != job.Title || got.Rubric[0].Key != "system_design" {
+		t.Fatalf("job changed despite conflict = %+v, %v", got, err)
 	}
 
 	expiresAt := time.Now().Add(168 * time.Hour).UTC()

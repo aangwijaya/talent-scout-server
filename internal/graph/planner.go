@@ -15,18 +15,24 @@ import (
 // never reach the trusted "previous plan was rejected" feedback verbatim.
 const unknownRubricKeyPlaceholder = "unknown rubric key"
 
-// plannerUser builds the planner's user message. The job description and
-// rubric are trusted; the CV is applicant-controlled and only ever appears
-// inside a capped prompts.CVBlock.
+// plannerUser builds the planner's user message. The title, description and
+// rubric text are recruiter-written, so they are untrusted and appear only
+// inside prompts.WrapUntrusted blocks; the CV is applicant-controlled and only
+// ever appears inside a capped prompts.CVBlock. Rubric keys and weights are
+// validated by the server, so they stay outside the blocks.
 func plannerUser(job domain.Job, cvText string, feedback []PlanCheckError) string {
 	var b strings.Builder
-	b.WriteString("Job title: ")
-	b.WriteString(job.Title)
-	b.WriteString("\n\nJob description:\n")
-	b.WriteString(job.Description)
-	b.WriteString("\n\nRubric criteria (key: label - description, weight):\n")
+	b.WriteString("Job title (untrusted data):\n")
+	b.WriteString(prompts.WrapUntrusted("job_title", job.Title))
+	b.WriteString("\n\nJob description (untrusted data):\n")
+	b.WriteString(prompts.WrapUntrusted("job_description", job.Description))
+	b.WriteString("\n\nRubric criteria (key: label - description, weight; label and description are untrusted data):\n")
 	for _, criterion := range job.Rubric {
-		fmt.Fprintf(&b, "- %s: %s - %s (weight %d)\n", criterion.Key, criterion.Label, criterion.Description, criterion.Weight)
+		fmt.Fprintf(&b, "- %s: %s - %s (weight %d)\n",
+			criterion.Key,
+			prompts.WrapUntrusted("rubric_criterion", criterion.Label),
+			prompts.WrapUntrusted("rubric_criterion", criterion.Description),
+			criterion.Weight)
 	}
 	b.WriteString("\nCV (untrusted data):\n")
 	b.WriteString(prompts.CVBlock(cvText))

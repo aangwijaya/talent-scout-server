@@ -73,7 +73,29 @@ func (m *Memory) createJobLocked(job domain.Job) error {
 func (m *Memory) UpdateJob(_ context.Context, job domain.Job) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	return m.updateJobLocked(job)
+}
 
+// UpdateJobRubricIfNoApplications applies the update only while no application
+// references the job. The application check and the update share one lock, so
+// an application created during the request cannot end up scored against a
+// rubric that changed after it applied.
+func (m *Memory) UpdateJobRubricIfNoApplications(_ context.Context, job domain.Job) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	if _, ok := m.jobs[job.ID]; !ok {
+		return ErrNotFound
+	}
+	for _, app := range m.applications {
+		if app.JobID == job.ID {
+			return ErrConflict
+		}
+	}
+	return m.updateJobLocked(job)
+}
+
+func (m *Memory) updateJobLocked(job domain.Job) error {
 	existing, ok := m.jobs[job.ID]
 	if !ok {
 		return ErrNotFound

@@ -3,6 +3,7 @@ package graph
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"strings"
 	"testing"
 
@@ -89,5 +90,41 @@ func collectedInterviewerDeltas(t *testing.T, events <-chan domain.NodeEvent) st
 		default:
 			return b.String()
 		}
+	}
+}
+
+func wordsText(n int) string {
+	words := make([]string, n)
+	for i := range words {
+		words[i] = "word"
+	}
+	return strings.Join(words, " ")
+}
+
+// The 120-word stop must still end the stream, not only trim what is stored.
+func TestWordLimiterStopsTheStreamAtTheWordLimit(t *testing.T) {
+	l := newWordLimiter(maxInterviewerWords)
+	out, err := l.Add(wordsText(130) + " Why?")
+	if !errors.Is(err, errWordLimit) {
+		t.Fatalf("err = %v, want errWordLimit so the stream stops", err)
+	}
+	if got := len(strings.Fields(out)); got != maxInterviewerWords {
+		t.Errorf("emitted words = %d, want %d", got, maxInterviewerWords)
+	}
+	if got := len(strings.Fields(l.Text())); got != maxInterviewerWords {
+		t.Errorf("stored words = %d, want %d", got, maxInterviewerWords)
+	}
+}
+
+// A question mark after the word limit, in the same delta, must not let more
+// than 120 words through.
+func TestWordLimiterQuestionAfterTheLimitKeepsTheLimit(t *testing.T) {
+	l := newWordLimiter(maxInterviewerWords)
+	_, err := l.Add(wordsText(123) + " word? word")
+	if !errors.Is(err, errWordLimit) {
+		t.Errorf("err = %v, want errWordLimit", err)
+	}
+	if got := len(strings.Fields(l.Text())); got != maxInterviewerWords {
+		t.Errorf("stored words = %d, want %d", got, maxInterviewerWords)
 	}
 }

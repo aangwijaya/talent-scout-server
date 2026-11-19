@@ -129,9 +129,8 @@ func TestInterviewerPromptAsksOneOpenEndedQuestion(t *testing.T) {
 		"two questions",
 		"never ask a second question",
 		"never offer answer choices",
-		"which one",
-		"pick one",
-		"choose one",
+		"just the letter",
+		"one real example from their own work",
 	} {
 		if !strings.Contains(lower, want) {
 			t.Errorf("interviewer prompt missing %q:\n%s", want, system)

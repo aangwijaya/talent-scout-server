@@ -23,6 +23,14 @@ Rules:
 
 ## Entries
 
+### 2026-11-20 — #63 The answer-choice check flagged "pick one real example"
+- **Context:** The second live gate (e030e35, three sessions) had no two-part turns and no timeouts, but each session failed once on "offers answer choices".
+- **Problem:** The flagged turns asked the applicant to "pick one interaction where users felt lag … How did you capture it?". That is an open question about their own work, not multiple choice.
+- **Cause:** The checker (and the prompt) banned bare "pick one", "choose one", "which one" and "select one", which also match open requests for one concrete example.
+- **Lesson:** Flag only choices the interviewer supplies: option letters, "Option A", "one of these three", "just the letter". Say in the prompt that asking for one real example of their own is fine. Check a live-gate failure's text before tightening the model further; the checker can be the bug.
+- **Follow-up:** `internal/e2e/questions_test.go` keeps both sides (the live "pick one interaction" turn passes, "pick one of these three: …" fails); `internal/graph/interviewer_test.go` now proves the 120-word stop ends the stream and that a `?` after word 120 cannot lengthen the reply.
+- **Repeated?:** no
+
 ### 2026-11-20 — #63 A prompt alone did not stop two-part questions; cut at the first `?`
 - **Context:** The human live gate for #63 ran three sessions on `z-ai/glm-5.3-flash` with the new prompt: 0 interviewer timeouts (every call `finish_reason="stop"`, longest 412 completion tokens) and no answer choices, but 9 of ~36 interviewer turns still held 2+ question marks and all three sessions failed the one-question check. Costs were `$0.006874`, `$0.005392` and `$0.007097` per session.
 - **Problem:** The failures were always a question followed by a second one ("…? And …?", "…? Could you walk me through…?"). Negative instructions ("never ask a second question") did not hold on this model.

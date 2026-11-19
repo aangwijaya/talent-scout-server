@@ -42,6 +42,21 @@ func TestInterviewerTurnProblems(t *testing.T) {
 			want:    []string{"asks more than one question"},
 		},
 		{
+			name:    "pick one real example (live run, 2026-11-20)",
+			content: "Let's separate that from the first-load numbers: pick one interaction on the console where users actually felt lag — say opening a filtered table or switching tenants. How did you capture the slowdown and what did you change?",
+			want:    nil,
+		},
+		{
+			name:    "choose one piece of your own work",
+			content: "Choose one piece of shared state from the dashboard, for example a filter or a session, and tell me which component owned it and why?",
+			want:    nil,
+		},
+		{
+			name:    "pick from supplied options",
+			content: "Pick one of these three: rewrite it, ship it, or escalate it?",
+			want:    []string{"offers answer choices"},
+		},
+		{
 			name:    "option a",
 			content: "Would you choose Option A or Option B for this migration?",
 			want:    []string{"offers answer choices"},

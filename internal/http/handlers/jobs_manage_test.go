@@ -3,6 +3,7 @@ package handlers_test
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -421,5 +422,50 @@ func TestRubricSuggestionValidation(t *testing.T) {
 				t.Errorf("field = %q, want %q", details["field"], tc.field)
 			}
 		})
+	}
+}
+
+// failingChat is an llm.Client whose provider always errors.
+type failingChat struct{ calls int }
+
+func (f *failingChat) Chat(context.Context, llm.Request) (llm.Response, error) {
+	f.calls++
+	return llm.Response{}, errors.New("provider down")
+}
+
+func (f *failingChat) Stream(context.Context, llm.Request, func(string) error) (llm.Response, error) {
+	return llm.Response{}, errors.New("provider down")
+}
+
+// Invalid output costs the slot, so a description written to make the model
+// fail can't bypass the 10/hour cap.
+func TestRubricSuggestionInvalidOutputUsesTheSlot(t *testing.T) {
+	fake := llm.NewFake(map[string]string{"rubric_suggester": `{"rubric":[{"key":"BAD"}]}`})
+	h := newManageJobs(store.NewMemory(), fake)
+
+	body := `{"title":"Senior Frontend Engineer","description":"` + manageDescription + `"}`
+	for i := 0; i < 10; i++ {
+		rec := serveBody(h.SuggestRubric, http.MethodPost, "/api/v1/jobs/rubric-suggestion", body, "")
+		if rec.Code != http.StatusBadGateway {
+			t.Fatalf("suggestion %d status = %d, want 502", i+1, rec.Code)
+		}
+	}
+	rec := serveBody(h.SuggestRubric, http.MethodPost, "/api/v1/jobs/rubric-suggestion", body, "")
+	if rec.Code != http.StatusTooManyRequests {
+		t.Fatalf("11th status = %d, want 429", rec.Code)
+	}
+}
+
+// A provider failure refunds the slot.
+func TestRubricSuggestionProviderErrorRefundsTheSlot(t *testing.T) {
+	chat := &failingChat{}
+	h := newManageJobs(store.NewMemory(), chat)
+
+	body := `{"title":"Senior Frontend Engineer","description":"` + manageDescription + `"}`
+	for i := 0; i < 11; i++ {
+		rec := serveBody(h.SuggestRubric, http.MethodPost, "/api/v1/jobs/rubric-suggestion", body, "")
+		if rec.Code != http.StatusBadGateway {
+			t.Fatalf("suggestion %d status = %d, want 502", i+1, rec.Code)
+		}
 	}
 }

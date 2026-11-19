@@ -287,12 +287,19 @@ func (h *Jobs) SuggestRubric(w http.ResponseWriter, r *http.Request) {
 
 	rubric, err := h.suggestRubric(r.Context(), req.Title, req.Description)
 	if err != nil {
-		h.suggestionLimiter.Refund(middleware.RubricSuggestionRateKey)
+		if !errors.Is(err, errInvalidSuggestion) {
+			h.suggestionLimiter.Refund(middleware.RubricSuggestionRateKey)
+		}
 		apierror.Write(w, http.StatusBadGateway, apierror.CodeLLMUnavailable, "rubric suggestion is unavailable", nil)
 		return
 	}
 	apierror.JSON(w, http.StatusOK, rubricSuggestionResponse{Rubric: rubric})
 }
+
+// errInvalidSuggestion means the model answered twice with output that failed
+// validation. Unlike a provider error, it keeps its rate-limit slot, so a
+// description written to make the model fail can't bypass the hourly cap.
+var errInvalidSuggestion = errors.New("rubric suggestion failed validation")
 
 func (h *Jobs) suggestRubric(ctx context.Context, title, description string) ([]domain.RubricCriterion, error) {
 	node, err := h.models.Node("rubric_suggester")
@@ -320,7 +327,7 @@ func (h *Jobs) suggestRubric(ctx context.Context, title, description string) ([]
 			return rubric, nil
 		}
 	}
-	return nil, errors.New("rubric suggestion failed validation")
+	return nil, errInvalidSuggestion
 }
 
 func parseRubricSuggestion(content string) ([]domain.RubricCriterion, error) {

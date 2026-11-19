@@ -33,7 +33,9 @@ func authRouter(t *testing.T) (http.Handler, config.Config) {
 		Description: "We are hiring a senior frontend engineer with deep Svelte and React experience.",
 		Status:      domain.JobStatusOpen,
 		Rubric: []domain.RubricCriterion{
-			{Key: "frontend_depth", Label: "Frontend depth", Description: "Svelte and React", Weight: 2},
+			{Key: "frontend_depth", Label: "Frontend depth", Description: "Svelte and React depth.", Weight: 3},
+			{Key: "system_design", Label: "System design", Description: "Component boundaries.", Weight: 2},
+			{Key: "communication", Label: "Communication", Description: "Clarity and collaboration.", Weight: 1},
 		},
 	}); err != nil {
 		t.Fatalf("seed job: %v", err)

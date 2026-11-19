@@ -38,7 +38,10 @@
 | GET | `/health` | — | Health check (`?deep=1` checks the DB) |
 | POST | `/auth/login` | — | Recruiter login |
 | POST | `/auth/sse-token` | recruiter | Mint a short-lived token for one run SSE stream |
-| GET | `/jobs` | recruiter | List jobs (MVP: contains 1 seeded job) |
+| GET | `/jobs` | recruiter | List jobs (newest first) |
+| POST | `/jobs` | recruiter | Create a job |
+| PATCH | `/jobs/{jobId}` | recruiter | Edit a job |
+| POST | `/jobs/rubric-suggestion` | recruiter | Suggest a draft rubric |
 | GET | `/jobs/{jobId}` | recruiter | Job detail |
 | GET | `/jobs/{jobId}/public` | — | Job info for the apply page |
 | POST | `/jobs/{jobId}/applications` | — | Apply (multipart) |
@@ -56,7 +59,14 @@
 | GET | `/graph-runs/{runId}` | recruiter | Graph run snapshot |
 | GET | `/graph-runs/{runId}/events` | `sse_token` (query) | Live graph SSE + replay |
 
-**Post-MVP (not implemented in the 1-week build):** `POST /jobs` (create job) and `PATCH /jobs/{jobId}` (edit job). The MVP has only **one job**, created by the seed (`cmd/seed`, see "Job Seed" below).
+**Job validation** (shared by the seed, create and edit):
+
+- `title`: 3–120 characters.
+- `description`: markdown, 50–12000 characters.
+- `rubric`: 3–6 criteria, unique `key` matching `^[a-z][a-z0-9_]{1,39}$`, `label` 2–60, `description` 10–300, `weight` integer 1–3.
+- `status`: `open` or `closed`.
+
+Validation errors use 400 `validation_failed` with `details.field`, for example `rubric[2].weight`.
 
 ## Shared Shapes
 
@@ -106,9 +116,19 @@ Auth: recruiter Bearer. Req `{ "run_id": "7c9e6679-…" }` → 200 `{ "sse_token
 `sse_token` = stateless HMAC token (`AUTH_TOKEN_SECRET`) with claims `aud=sse`, `run_id`, `expires_at` (now + 60 s). It is accepted only as `?sse_token=` on `GET /graph-runs/{run_id}/events` for the same `run_id`, and only checked when the stream connects (an open stream is not cut when the token expires). To reconnect, mint a new token. The SvelteKit server mints it in a server load (and a small cookie-authenticated `+server.ts` endpoint for reconnects) and passes it to the browser.
 
 ### `GET /jobs` → 200 `{ "items": [Job], "next_cursor": null }`
+All jobs, newest first.
+
+### `POST /jobs` → 201 `Job`
+Auth: recruiter Bearer. Req `{ "title", "description", "rubric": [RubricCriterion], "status"? }`. `status` defaults to `open`. Validated with the job rules above. 400 `validation_failed` with `details.field`. 409 `invalid_state` when 20 jobs already exist (counting open and closed jobs and the seed).
+
+### `PATCH /jobs/{jobId}` → 200 `Job`
+Auth: recruiter Bearer. Req: any subset of `title`, `description`, `rubric`, `status`. 400 `validation_failed` with `details.field`; 404 `not_found`. `rubric` can't change once the job has any application: 409 `invalid_state`, because existing scores reference its keys. Title, description and status stay editable. Closing a job doesn't touch running sessions; new applies get the existing 409 `invalid_state` (job closed).
+
+### `POST /jobs/rubric-suggestion` → 200 `{ "rubric": [RubricCriterion] }`
+Auth: recruiter Bearer. Req `{ "title", "description" }` with the same title and description limits as a job. The server validates the suggestion with the rubric rules above. It retries the model once on invalid output, then returns 502 `llm_unavailable`. Nothing is stored. 429 `rate_limited` when the 10-per-hour budget is spent (the limit is global, not per client IP, because the shared password carries no recruiter identity); `Retry-After` in seconds. A model failure refunds the slot. The title and description go to the model as untrusted data blocks.
 
 ### Job Seed (not an endpoint)
-One demo job is created by `go run ./cmd/seed` from `config/seed-job.yaml` (idempotent: if the `id` already exists, it is not recreated). Validation run by the seed: title 3–120 chars; description 50–8000 chars; rubric 3–6 criteria, unique `key` `^[a-z][a-z0-9_]{1,39}$`, `weight` integer 1–3. `status` = `open`.
+One demo job is created by `go run ./cmd/seed` from `config/seed-job.yaml` (idempotent: if the `id` already exists, it is not recreated). The seed uses the same validation as create/edit (see "Job validation" above) and sets `status` = `open`.
 
 ### `GET /jobs/{jobId}` → 200 `Job` · 404
 

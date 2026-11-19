@@ -11,14 +11,14 @@ One web app, routed by path: recruiter at `/dashboard/...`, apply form at `/appl
 
 | Role | Needs |
 |---|---|
-| **Recruiter** (1 person, single-tenant) | See the demo job (1 seeded job with its rubric), see applicants, read transcripts, scores & evidence, decide shortlist/reject, watch the agent graph run. |
+| **Recruiter** (1 person, single-tenant) | Create, edit, open and close jobs with their rubrics, see applicants, read transcripts, scores & evidence, decide shortlist/reject, watch the agent graph run. |
 | **Applicant** | Apply quickly (name, email, PDF CV), receive a session link, answer a ~10–15 minute chat without an account. |
 
 ## 3. User Flow
 
 ### Recruiter
 1. Open `/dashboard`, log in with the single password (env `RECRUITER_PASSWORD`) → get a bearer token.
-2. The demo job already exists (created by the seed: `title`, `description`, `rubric` with 3–6 criteria). No create/edit job UI in the MVP.
+2. Create or edit a job (`title`, `description`, `rubric` with 3–6 criteria), optionally starting from an AI-suggested rubric the recruiter edits. The seeded demo job is also available, and jobs can be opened or closed.
 3. Share the public apply link `https://talentscout.vercel.app/apply/{jobId}`.
 4. Open the applicant list → status of each. For applicants with status `invited`, click **Get invite link** → copy the session link and send it manually (default `EMAIL_MODE=log`).
 5. Open applicant detail: CV text, transcript, topics, per-criterion scores + evidence quotes, graph run (replay/live).
@@ -35,7 +35,7 @@ One web app, routed by path: recruiter at `/dashboard/...`, apply form at `/appl
 
 | ID | Requirement |
 |---|---|
-| FR-1 | One demo job is created via seed (`cmd/seed`); the recruiter can list & view job details (read-only). Create/edit job = post-MVP. |
+| FR-1 | The recruiter can create, edit, open and close jobs; an AI-suggested rubric is a draft the recruiter edits. One demo job is also created via seed (`cmd/seed`). |
 | FR-2 | Public apply page; validates email, name, PDF ≤ 2 MB; one email can apply only once per job. |
 | FR-3 | The server extracts CV text from the PDF. |
 | FR-4 | The server creates a random session token (one-time, valid for 7 days). Default `EMAIL_MODE=log`: the link is printed to the server log and the recruiter can get it in the dashboard. `EMAIL_MODE=gmail` (optional): the link is sent via the Gmail API (OAuth2, no SMTP). |
@@ -65,7 +65,6 @@ Multi-tenant/organizations; applicant accounts; auth other than the single recru
 
 ### Post-MVP (deliberately cut from the 1-week build)
 
-- Create/edit job UI & endpoints (`POST /jobs`, `PATCH /jobs/{jobId}`, rubric editor); the MVP uses 1 seeded job.
 - Gmail email as the default + custom domain verification (MVP: `EMAIL_MODE=log`, link copied from the dashboard).
 - Fuller recruiter auth (multi-user, refresh tokens, server-side logout).
 - Model fallback (`:free`) and advanced retries (regenerate interviewer, retry judge, planner attempts > 2). What stays: scorer/evidence check max 3 attempts in total and Judge follow-ups max 2 per topic.

@@ -27,6 +27,40 @@ func NewPostgres(pool *pgxpool.Pool) *Postgres {
 }
 
 func (p *Postgres) CreateJob(ctx context.Context, job domain.Job) error {
+	return p.createJob(ctx, p.pool, job)
+}
+
+// CreateJobWithinLimit inserts a job only while the table holds fewer than
+// limit jobs. An advisory lock serializes the count and insert so two
+// concurrent creates cannot both pass the cap.
+func (p *Postgres) CreateJobWithinLimit(ctx context.Context, job domain.Job, limit int) error {
+	tx, err := p.pool.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(ctx)
+
+	if _, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtext('jobs_cap'))`); err != nil {
+		return mapError(err)
+	}
+	var count int
+	if err := tx.QueryRow(ctx, `SELECT count(*) FROM jobs`).Scan(&count); err != nil {
+		return mapError(err)
+	}
+	if count >= limit {
+		return ErrConflict
+	}
+	if err := p.createJob(ctx, tx, job); err != nil {
+		return err
+	}
+	return mapError(tx.Commit(ctx))
+}
+
+type execer interface {
+	Exec(ctx context.Context, sql string, arguments ...any) (pgconn.CommandTag, error)
+}
+
+func (p *Postgres) createJob(ctx context.Context, exec execer, job domain.Job) error {
 	defaultJobStatus(&job)
 	rubric, err := json.Marshal(job.Rubric)
 	if err != nil {
@@ -39,11 +73,42 @@ func (p *Postgres) CreateJob(ctx context.Context, job domain.Job) error {
 	if job.UpdatedAt.IsZero() {
 		job.UpdatedAt = job.CreatedAt
 	}
-	_, err = p.pool.Exec(ctx, `
+	_, err = exec.Exec(ctx, `
 		INSERT INTO jobs (id, title, description, rubric, status, created_at, updated_at)
 		VALUES ($1, $2, $3, $4, $5, $6, $7)`,
 		job.ID, job.Title, job.Description, string(rubric), job.Status, job.CreatedAt, job.UpdatedAt)
 	return mapError(err)
+}
+
+func (p *Postgres) UpdateJob(ctx context.Context, job domain.Job) error {
+	defaultJobStatus(&job)
+	rubric, err := json.Marshal(job.Rubric)
+	if err != nil {
+		return fmt.Errorf("marshal rubric: %w", err)
+	}
+	updatedAt := job.UpdatedAt
+	if updatedAt.IsZero() {
+		updatedAt = time.Now().UTC()
+	}
+	tag, err := p.pool.Exec(ctx, `
+		UPDATE jobs SET title = $2, description = $3, rubric = $4, status = $5, updated_at = $6
+		WHERE id = $1`,
+		job.ID, job.Title, job.Description, string(rubric), job.Status, updatedAt)
+	if err != nil {
+		return mapError(err)
+	}
+	if tag.RowsAffected() == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
+func (p *Postgres) CountJobs(ctx context.Context) (int, error) {
+	var count int
+	if err := p.pool.QueryRow(ctx, `SELECT count(*) FROM jobs`).Scan(&count); err != nil {
+		return 0, mapError(err)
+	}
+	return count, nil
 }
 
 func (p *Postgres) GetJob(ctx context.Context, id string) (domain.Job, error) {
@@ -56,7 +121,7 @@ func (p *Postgres) GetJob(ctx context.Context, id string) (domain.Job, error) {
 }
 
 func (p *Postgres) ListJobs(ctx context.Context) ([]domain.Job, error) {
-	rows, err := p.pool.Query(ctx, `SELECT `+jobColumns+` FROM jobs ORDER BY created_at, id`)
+	rows, err := p.pool.Query(ctx, `SELECT `+jobColumns+` FROM jobs ORDER BY created_at DESC, id DESC`)
 	if err != nil {
 		return nil, mapError(err)
 	}

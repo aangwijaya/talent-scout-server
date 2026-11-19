@@ -17,6 +17,17 @@ const (
 	ApplyRateLimitWindow = time.Hour
 )
 
+// Rubric suggestion limit: 10 LLM calls per hour in total. The demo has one
+// shared recruiter password, so the token carries no recruiter identity and the
+// limit is global rather than per client IP.
+const (
+	RubricSuggestionRateLimit  = 10
+	RubricSuggestionRateWindow = time.Hour
+)
+
+// RubricSuggestionRateKey is the single key all suggestion calls share.
+const RubricSuggestionRateKey = "rubric_suggestion"
+
 type bucket struct {
 	windowStart time.Time
 	count       int

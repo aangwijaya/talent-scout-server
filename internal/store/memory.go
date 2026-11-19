@@ -39,7 +39,22 @@ func NewMemory() *Memory {
 func (m *Memory) CreateJob(_ context.Context, job domain.Job) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	return m.createJobLocked(job)
+}
 
+// CreateJobWithinLimit inserts a job only while the store holds fewer than
+// limit jobs. The count and insert share one lock so two concurrent creates
+// cannot both pass a cap check.
+func (m *Memory) CreateJobWithinLimit(_ context.Context, job domain.Job, limit int) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if len(m.jobs) >= limit {
+		return ErrConflict
+	}
+	return m.createJobLocked(job)
+}
+
+func (m *Memory) createJobLocked(job domain.Job) error {
 	if _, ok := m.jobs[job.ID]; ok {
 		return ErrConflict
 	}
@@ -53,6 +68,33 @@ func (m *Memory) CreateJob(_ context.Context, job domain.Job) error {
 	}
 	m.jobs[job.ID] = cloneJob(job)
 	return nil
+}
+
+func (m *Memory) UpdateJob(_ context.Context, job domain.Job) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	existing, ok := m.jobs[job.ID]
+	if !ok {
+		return ErrNotFound
+	}
+	defaultJobStatus(&job)
+	existing.Title = job.Title
+	existing.Description = job.Description
+	existing.Rubric = append([]domain.RubricCriterion(nil), job.Rubric...)
+	existing.Status = job.Status
+	existing.UpdatedAt = job.UpdatedAt
+	if existing.UpdatedAt.IsZero() {
+		existing.UpdatedAt = time.Now().UTC()
+	}
+	m.jobs[job.ID] = existing
+	return nil
+}
+
+func (m *Memory) CountJobs(_ context.Context) (int, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	return len(m.jobs), nil
 }
 
 func (m *Memory) GetJob(_ context.Context, id string) (domain.Job, error) {
@@ -76,9 +118,9 @@ func (m *Memory) ListJobs(_ context.Context) ([]domain.Job, error) {
 	}
 	sort.Slice(jobs, func(i, j int) bool {
 		if jobs[i].CreatedAt.Equal(jobs[j].CreatedAt) {
-			return jobs[i].ID < jobs[j].ID
+			return jobs[i].ID > jobs[j].ID
 		}
-		return jobs[i].CreatedAt.Before(jobs[j].CreatedAt)
+		return jobs[i].CreatedAt.After(jobs[j].CreatedAt)
 	})
 	return jobs, nil
 }

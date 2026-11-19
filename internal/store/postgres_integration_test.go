@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net/url"
 	"os"
+	"strings"
 	"testing"
 	"time"
 
@@ -66,6 +67,56 @@ func TestPostgresStore(t *testing.T) {
 	}
 	if got.Title != job.Title || len(got.Rubric) != 1 {
 		t.Fatalf("GetJob = %+v", got)
+	}
+
+	count, err := s.CountJobs(ctx)
+	if err != nil || count != 1 {
+		t.Fatalf("CountJobs = %d, %v; want 1, nil", count, err)
+	}
+
+	// The migration raises the description limit to 12000 characters; an
+	// update must persist a description past the old 8000 limit.
+	job.Title = "Staff Frontend Engineer"
+	job.Description = strings.Repeat("a", 9000)
+	job.Status = domain.JobStatusClosed
+	if err := s.UpdateJob(ctx, job); err != nil {
+		t.Fatalf("UpdateJob: %v", err)
+	}
+	updated, err := s.GetJob(ctx, job.ID)
+	if err != nil {
+		t.Fatalf("GetJob after update: %v", err)
+	}
+	if updated.Title != job.Title || updated.Status != domain.JobStatusClosed || len(updated.Description) != 9000 {
+		t.Fatalf("GetJob after update = %+v", updated)
+	}
+	if err := s.UpdateJob(ctx, domain.Job{ID: domain.NewID()}); !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("UpdateJob unknown = %v, want ErrNotFound", err)
+	}
+
+	newerJob := domain.Job{
+		ID:          domain.NewID(),
+		Title:       "Newer Job",
+		Description: strings.Repeat("b", 60),
+		Rubric:      []domain.RubricCriterion{{Key: "system_design", Label: "System design", Description: "Component boundaries.", Weight: 2}},
+		Status:      domain.JobStatusOpen,
+	}
+	if err := s.CreateJobWithinLimit(ctx, newerJob, 20); err != nil {
+		t.Fatalf("CreateJobWithinLimit: %v", err)
+	}
+	if err := s.CreateJobWithinLimit(ctx, domain.Job{
+		ID:          domain.NewID(),
+		Title:       "Over Cap",
+		Description: strings.Repeat("c", 60),
+		Status:      domain.JobStatusOpen,
+	}, 2); !errors.Is(err, store.ErrConflict) {
+		t.Fatalf("CreateJobWithinLimit at cap = %v, want ErrConflict", err)
+	}
+	jobs, err := s.ListJobs(ctx)
+	if err != nil {
+		t.Fatalf("ListJobs: %v", err)
+	}
+	if len(jobs) != 2 || jobs[0].ID != newerJob.ID {
+		t.Fatalf("ListJobs = %+v, want newest first", jobs)
 	}
 
 	app := domain.Application{
@@ -141,7 +192,7 @@ func TestPostgresStore(t *testing.T) {
 		t.Fatalf("CreateApplicationWithSession session = %+v, %v", got, err)
 	}
 
-	count, err := s.CountApplicationsByJob(ctx, job.ID)
+	count, err = s.CountApplicationsByJob(ctx, job.ID)
 	if err != nil || count != 2 {
 		t.Fatalf("CountApplicationsByJob = %d, %v; want 2, nil", count, err)
 	}

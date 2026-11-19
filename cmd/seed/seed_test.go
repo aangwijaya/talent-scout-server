@@ -14,9 +14,9 @@ func validJob() domain.Job {
 		Title:       "Senior Frontend Engineer",
 		Description: strings.Repeat("a", 60),
 		Rubric: []domain.RubricCriterion{
-			{Key: "frontend_depth", Label: "Frontend depth", Description: "d", Weight: 2},
-			{Key: "system_design", Label: "System design", Description: "d", Weight: 2},
-			{Key: "communication", Label: "Communication", Description: "d", Weight: 1},
+			{Key: "frontend_depth", Label: "Frontend depth", Description: "Svelte and React depth.", Weight: 2},
+			{Key: "system_design", Label: "System design", Description: "Component boundaries.", Weight: 2},
+			{Key: "communication", Label: "Communication", Description: "Clarity and collaboration.", Weight: 1},
 		},
 		Status: domain.JobStatusOpen,
 	}
@@ -52,12 +52,12 @@ func TestValidateJob(t *testing.T) {
 		{
 			name:    "description too short",
 			mutate:  func(j *domain.Job) { j.Description = "short" },
-			wantErr: "description must be 50-8000",
+			wantErr: "description must be 50-12000",
 		},
 		{
 			name:    "description too long",
-			mutate:  func(j *domain.Job) { j.Description = strings.Repeat("a", 8001) },
-			wantErr: "description must be 50-8000",
+			mutate:  func(j *domain.Job) { j.Description = strings.Repeat("a", 12001) },
+			wantErr: "description must be 50-12000",
 		},
 		{
 			name: "too few criteria",

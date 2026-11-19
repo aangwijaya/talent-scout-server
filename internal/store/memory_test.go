@@ -3,6 +3,7 @@ package store_test
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -676,5 +677,77 @@ func TestMemoryAbandonSession(t *testing.T) {
 	changed, err = s.AbandonSession(ctx, invited.ID, now)
 	if err != nil || changed {
 		t.Fatalf("AbandonSession(invited) = %v, %v; want false, nil", changed, err)
+	}
+}
+
+func TestMemoryUpdateJobCountAndOrder(t *testing.T) {
+	ctx := context.Background()
+	s := store.NewMemory()
+	now := time.Now().UTC()
+
+	older := domain.Job{
+		ID:          domain.NewID(),
+		Title:       "Older Job",
+		Description: "Build the recruiter dashboard and the applicant screening experience.",
+		Rubric:      []domain.RubricCriterion{{Key: "frontend_depth", Label: "Frontend depth", Description: "Svelte and React depth.", Weight: 2}},
+		Status:      domain.JobStatusOpen,
+		CreatedAt:   now.Add(-time.Hour),
+	}
+	newer := domain.Job{
+		ID:          domain.NewID(),
+		Title:       "Newer Job",
+		Description: "Build the applicant screening experience and the recruiter dashboard.",
+		Rubric:      []domain.RubricCriterion{{Key: "system_design", Label: "System design", Description: "Component boundaries.", Weight: 2}},
+		Status:      domain.JobStatusOpen,
+		CreatedAt:   now,
+	}
+	if err := s.CreateJob(ctx, older); err != nil {
+		t.Fatalf("CreateJob older: %v", err)
+	}
+	if err := s.CreateJob(ctx, newer); err != nil {
+		t.Fatalf("CreateJob newer: %v", err)
+	}
+
+	count, err := s.CountJobs(ctx)
+	if err != nil || count != 2 {
+		t.Fatalf("CountJobs = %d, %v; want 2, nil", count, err)
+	}
+
+	list, err := s.ListJobs(ctx)
+	if err != nil {
+		t.Fatalf("ListJobs: %v", err)
+	}
+	if len(list) != 2 || list[0].ID != newer.ID || list[1].ID != older.ID {
+		t.Fatalf("ListJobs order = %+v, want newest first", list)
+	}
+
+	updated := older
+	updated.Title = "Updated Older Job"
+	updated.Status = domain.JobStatusClosed
+	updated.Description = strings.Repeat("a", 9000)
+	if err := s.UpdateJob(ctx, updated); err != nil {
+		t.Fatalf("UpdateJob: %v", err)
+	}
+	got, err := s.GetJob(ctx, older.ID)
+	if err != nil {
+		t.Fatalf("GetJob: %v", err)
+	}
+	if got.Title != updated.Title || got.Status != domain.JobStatusClosed || len(got.Description) != 9000 {
+		t.Fatalf("GetJob after update = %+v", got)
+	}
+	if !got.UpdatedAt.After(older.CreatedAt) {
+		t.Errorf("UpdatedAt = %v, want after %v", got.UpdatedAt, older.CreatedAt)
+	}
+
+	if err := s.UpdateJob(ctx, domain.Job{ID: domain.NewID()}); !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("UpdateJob missing = %v, want ErrNotFound", err)
+	}
+
+	capped := domain.Job{ID: domain.NewID(), Title: "Third Job", Description: strings.Repeat("a", 60), Status: domain.JobStatusOpen}
+	if err := s.CreateJobWithinLimit(ctx, capped, 2); !errors.Is(err, store.ErrConflict) {
+		t.Fatalf("CreateJobWithinLimit at cap = %v, want ErrConflict", err)
+	}
+	if err := s.CreateJobWithinLimit(ctx, capped, 3); err != nil {
+		t.Fatalf("CreateJobWithinLimit below cap: %v", err)
 	}
 }

@@ -60,8 +60,9 @@ func newApplicationsFixture(t *testing.T, emailMode string) *applicationsFixture
 		Description: "We are hiring a senior frontend engineer with deep Svelte and React experience.",
 		Status:      domain.JobStatusOpen,
 		Rubric: []domain.RubricCriterion{
-			{Key: "frontend_depth", Label: "Frontend depth", Description: "Svelte and React", Weight: 2},
-			{Key: "communication", Label: "Communication", Description: "Clarity", Weight: 1},
+			{Key: "frontend_depth", Label: "Frontend depth", Description: "Svelte and React depth.", Weight: 2},
+			{Key: "communication", Label: "Communication", Description: "Clarity and collaboration.", Weight: 1},
+			{Key: "system_design", Label: "System design", Description: "Component boundaries.", Weight: 2},
 		},
 	}); err != nil {
 		t.Fatalf("seed job: %v", err)
@@ -381,7 +382,7 @@ func TestGetApplicationDetailMatchesContract(t *testing.T) {
 	if got.Application.OverallScore == nil || *got.Application.OverallScore != (4*2+3)/3.0 {
 		t.Errorf("overall_score = %v, want %v", got.Application.OverallScore, (4*2+3)/3.0)
 	}
-	if got.Job.ID != applicationsJobID || len(got.Job.Rubric) != 2 {
+	if got.Job.ID != applicationsJobID || len(got.Job.Rubric) != 3 {
 		t.Errorf("job = %+v", got.Job)
 	}
 	if got.CVText != app.CVText {

@@ -4,7 +4,6 @@ info:
   version: 1.0.0
   description: |
     Recruiter-side AI screening API. Derived from `docs/API.md` and `docs/EVENTS.md`.
-    The MVP does not implement `POST /jobs` or `PATCH /jobs/{jobId}`.
 servers:
   - url: /api/v1
 tags:
@@ -125,6 +124,68 @@ paths:
                     type: [string, "null"]
         "401":
           $ref: "#/components/responses/Unauthorized"
+    post:
+      tags: [jobs]
+      operationId: createJob
+      summary: Create a job
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/JobCreateRequest"
+      responses:
+        "201":
+          description: Job created.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Job"
+        "400":
+          $ref: "#/components/responses/ValidationFailed"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "409":
+          $ref: "#/components/responses/Conflict"
+
+  /jobs/rubric-suggestion:
+    post:
+      tags: [jobs]
+      operationId: suggestJobRubric
+      summary: Suggest a draft rubric for a job
+      description: |
+        Asks the model for 3-6 rubric criteria. Nothing is stored; the recruiter
+        edits the draft before saving. The model output is retried once on
+        invalid output, then the endpoint returns `llm_unavailable`.
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RubricSuggestionRequest"
+      responses:
+        "200":
+          description: Suggested rubric.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RubricSuggestionResponse"
+        "400":
+          $ref: "#/components/responses/ValidationFailed"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "429":
+          $ref: "#/components/responses/RateLimited"
+        "502":
+          description: The model could not produce a valid suggestion.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
 
   /jobs/{jobId}:
     get:
@@ -146,6 +207,38 @@ paths:
           $ref: "#/components/responses/Unauthorized"
         "404":
           $ref: "#/components/responses/NotFound"
+    patch:
+      tags: [jobs]
+      operationId: updateJob
+      summary: Edit a job
+      description: |
+        Any subset of `title`, `description`, `rubric` and `status`. The rubric
+        cannot change once the job has any application.
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/JobId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/JobUpdateRequest"
+      responses:
+        "200":
+          description: Updated job.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Job"
+        "400":
+          $ref: "#/components/responses/ValidationFailed"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
 
   /jobs/{jobId}/public:
     get:
@@ -746,8 +839,12 @@ components:
           pattern: "^[a-z][a-z0-9_]{1,39}$"
         label:
           type: string
+          minLength: 2
+          maxLength: 60
         description:
           type: string
+          minLength: 10
+          maxLength: 300
         weight:
           type: integer
           minimum: 1
@@ -775,10 +872,16 @@ components:
           format: uuid
         title:
           type: string
+          minLength: 3
+          maxLength: 120
         description:
           type: string
+          minLength: 50
+          maxLength: 12000
         rubric:
           type: array
+          minItems: 3
+          maxItems: 6
           items:
             $ref: "#/components/schemas/RubricCriterion"
         status:
@@ -795,6 +898,71 @@ components:
         updated_at:
           type: string
           format: date-time
+
+    JobCreateRequest:
+      type: object
+      required: [title, description, rubric]
+      properties:
+        title:
+          type: string
+          minLength: 3
+          maxLength: 120
+        description:
+          type: string
+          minLength: 50
+          maxLength: 12000
+        rubric:
+          type: array
+          minItems: 3
+          maxItems: 6
+          items:
+            $ref: "#/components/schemas/RubricCriterion"
+        status:
+          $ref: "#/components/schemas/JobStatus"
+
+    JobUpdateRequest:
+      type: object
+      properties:
+        title:
+          type: string
+          minLength: 3
+          maxLength: 120
+        description:
+          type: string
+          minLength: 50
+          maxLength: 12000
+        rubric:
+          type: array
+          minItems: 3
+          maxItems: 6
+          items:
+            $ref: "#/components/schemas/RubricCriterion"
+        status:
+          $ref: "#/components/schemas/JobStatus"
+
+    RubricSuggestionRequest:
+      type: object
+      required: [title, description]
+      properties:
+        title:
+          type: string
+          minLength: 3
+          maxLength: 120
+        description:
+          type: string
+          minLength: 50
+          maxLength: 12000
+
+    RubricSuggestionResponse:
+      type: object
+      required: [rubric]
+      properties:
+        rubric:
+          type: array
+          minItems: 3
+          maxItems: 6
+          items:
+            $ref: "#/components/schemas/RubricCriterion"
 
     PublicJob:
       type: object

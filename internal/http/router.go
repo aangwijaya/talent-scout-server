@@ -53,9 +53,12 @@ func NewRouter(cfg config.Config, deps Deps) http.Handler {
 		r.Method(http.MethodPost, "/auth/login", http.HandlerFunc(login.Login))
 		r.With(requireRecruiter).Method(http.MethodPost, "/auth/sse-token", http.HandlerFunc(login.SSEToken))
 
-		jobs := handlers.NewJobs(cfg, deps.Store)
+		jobs := handlers.NewJobs(cfg, deps.Store, deps.LLM, deps.Models)
 		r.With(requireRecruiter).Method(http.MethodGet, "/jobs", http.HandlerFunc(jobs.List))
+		r.With(requireRecruiter).Method(http.MethodPost, "/jobs", http.HandlerFunc(jobs.Create))
+		r.With(requireRecruiter).Method(http.MethodPost, "/jobs/rubric-suggestion", http.HandlerFunc(jobs.SuggestRubric))
 		r.With(requireRecruiter).Method(http.MethodGet, "/jobs/{jobId}", http.HandlerFunc(jobs.Get))
+		r.With(requireRecruiter).Method(http.MethodPatch, "/jobs/{jobId}", http.HandlerFunc(jobs.Update))
 		r.Method(http.MethodGet, "/jobs/{jobId}/public", http.HandlerFunc(jobs.Public))
 
 		apply := handlers.NewApply(cfg, deps.Store, deps.Storage, deps.Extractor, deps.Mailer)

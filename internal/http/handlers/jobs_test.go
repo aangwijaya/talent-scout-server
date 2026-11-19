@@ -63,7 +63,7 @@ func jobsStore(t *testing.T) *store.Memory {
 }
 
 func TestListJobs(t *testing.T) {
-	h := handlers.NewJobs(jobsConfig(), jobsStore(t))
+	h := handlers.NewJobs(jobsConfig(), jobsStore(t), nil, config.ModelsConfig{})
 
 	rec := httptest.NewRecorder()
 	h.List(rec, httptest.NewRequest(http.MethodGet, "/api/v1/jobs", nil))
@@ -100,7 +100,7 @@ func TestListJobs(t *testing.T) {
 }
 
 func TestGetJob(t *testing.T) {
-	h := handlers.NewJobs(jobsConfig(), jobsStore(t))
+	h := handlers.NewJobs(jobsConfig(), jobsStore(t), nil, config.ModelsConfig{})
 
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/jobs/"+jobsJobID, nil)
@@ -133,7 +133,7 @@ func TestGetJob(t *testing.T) {
 }
 
 func TestGetJobNotFound(t *testing.T) {
-	h := handlers.NewJobs(jobsConfig(), jobsStore(t))
+	h := handlers.NewJobs(jobsConfig(), jobsStore(t), nil, config.ModelsConfig{})
 
 	for _, id := range []string{"7c9e6679-0000-4000-8000-000000000099", "not-a-uuid"} {
 		rec := httptest.NewRecorder()
@@ -148,7 +148,7 @@ func TestGetJobNotFound(t *testing.T) {
 }
 
 func TestGetPublicJob(t *testing.T) {
-	h := handlers.NewJobs(jobsConfig(), jobsStore(t))
+	h := handlers.NewJobs(jobsConfig(), jobsStore(t), nil, config.ModelsConfig{})
 
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/jobs/"+jobsJobID+"/public", nil)
@@ -176,7 +176,7 @@ func TestGetPublicJob(t *testing.T) {
 }
 
 func TestGetPublicJobNotFound(t *testing.T) {
-	h := handlers.NewJobs(jobsConfig(), jobsStore(t))
+	h := handlers.NewJobs(jobsConfig(), jobsStore(t), nil, config.ModelsConfig{})
 
 	for _, id := range []string{"7c9e6679-0000-4000-8000-000000000099", "not-a-uuid"} {
 		rec := httptest.NewRecorder()
@@ -198,7 +198,7 @@ func (listFailingStore) ListApplicationsByJob(context.Context, string, *domain.A
 
 func TestListJobsUsesApplicationCountQuery(t *testing.T) {
 	st := listFailingStore{jobsStore(t)}
-	h := handlers.NewJobs(jobsConfig(), st)
+	h := handlers.NewJobs(jobsConfig(), st, nil, config.ModelsConfig{})
 
 	rec := httptest.NewRecorder()
 	h.List(rec, httptest.NewRequest(http.MethodGet, "/api/v1/jobs", nil))

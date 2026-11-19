@@ -123,7 +123,10 @@ func TestInterviewerPromptAsksOneOpenEndedQuestion(t *testing.T) {
 	lower := strings.ToLower(system)
 	for _, want := range []string{
 		"exactly one open-ended question",
-		"single question mark",
+		"exactly one question mark",
+		"last character",
+		"? and ",
+		"two questions",
 		"never ask a second question",
 		"never offer answer choices",
 		"which one",

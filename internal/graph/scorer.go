@@ -27,16 +27,22 @@ func parseScorerOutput(content string) (ScorerOutput, error) {
 	return output, nil
 }
 
-// scorerUser builds the scorer's user message. Rubric keys and labels come from
-// the job and are trusted. Topic fields were written by the planner after it
-// read the applicant's CV, and the transcript is applicant-controlled, so both
-// only appear inside prompts.WrapUntrusted blocks. Applicant messages carry
-// short aliases (m1, m2, ...) because models corrupt UUIDs.
+// scorerUser builds the scorer's user message. Rubric labels and descriptions
+// are recruiter-written, so they are untrusted and only appear inside
+// prompts.WrapUntrusted blocks; keys and weights are validated by the server and
+// stay outside. Topic fields were written by the planner after it read the
+// applicant's CV, and the transcript is applicant-controlled, so both only
+// appear inside prompts.WrapUntrusted blocks. Applicant messages carry short
+// aliases (m1, m2, ...) because models corrupt UUIDs.
 func scorerUser(job domain.Job, topics []domain.Topic, transcript []domain.Message, aliases aliasTable, criteria []domain.RubricCriterion, feedback string) string {
 	var b strings.Builder
 	b.WriteString("Rubric criteria to score:\n")
 	for _, criterion := range criteria {
-		fmt.Fprintf(&b, "- %s: %s - %s (weight %d)\n", criterion.Key, criterion.Label, criterion.Description, criterion.Weight)
+		fmt.Fprintf(&b, "- %s: %s - %s (weight %d)\n",
+			criterion.Key,
+			prompts.WrapUntrusted("rubric_criterion", criterion.Label),
+			prompts.WrapUntrusted("rubric_criterion", criterion.Description),
+			criterion.Weight)
 	}
 
 	b.WriteString("\nInterview topics (planner output derived from the applicant's CV; untrusted data):\n")

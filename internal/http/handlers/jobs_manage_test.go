@@ -6,6 +6,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -265,6 +266,85 @@ func TestUpdateJobLocksRubricAfterApplication(t *testing.T) {
 	}
 	if len(stored.Rubric) != len(manageRubric()) {
 		t.Errorf("rubric len = %d, want unchanged %d", len(stored.Rubric), len(manageRubric()))
+	}
+}
+
+// applicationBeforeUpdateStore inserts an application immediately before a
+// rubric update reaches the store, modelling an applicant arriving between the
+// application count and the update. The update must still see it and conflict.
+type applicationBeforeUpdateStore struct {
+	store.Store
+	app      domain.Application
+	inserted bool
+}
+
+func (s *applicationBeforeUpdateStore) insertApplication(ctx context.Context) error {
+	if s.inserted {
+		return nil
+	}
+	s.inserted = true
+	return s.Store.CreateApplication(ctx, s.app)
+}
+
+func (s *applicationBeforeUpdateStore) UpdateJob(ctx context.Context, job domain.Job) error {
+	if err := s.insertApplication(ctx); err != nil {
+		return err
+	}
+	return s.Store.UpdateJob(ctx, job)
+}
+
+func (s *applicationBeforeUpdateStore) UpdateJobRubricIfNoApplications(ctx context.Context, job domain.Job) error {
+	if err := s.insertApplication(ctx); err != nil {
+		return err
+	}
+	return s.Store.UpdateJobRubricIfNoApplications(ctx, job)
+}
+
+func TestUpdateJobRubricLockIsAtomic(t *testing.T) {
+	base := store.NewMemory()
+	job := domain.Job{
+		ID:          "7c9e6679-0000-4000-8000-000000000083",
+		Title:       "Senior Frontend Engineer",
+		Description: manageDescription,
+		Rubric:      manageRubric(),
+		Status:      domain.JobStatusOpen,
+	}
+	if err := base.CreateJob(context.Background(), job); err != nil {
+		t.Fatalf("seed job: %v", err)
+	}
+	st := &applicationBeforeUpdateStore{
+		Store: base,
+		app: domain.Application{
+			ID:     "7c9e6679-0000-4000-8000-000000000084",
+			JobID:  job.ID,
+			Name:   "Budi",
+			Email:  "budi@example.com",
+			Status: domain.ApplicationStatusApplied,
+		},
+	}
+	h := newManageJobs(st, nil)
+
+	changed := manageRubric()
+	changed[0].Label = "Backend depth"
+	body, err := json.Marshal(map[string]any{"rubric": changed})
+	if err != nil {
+		t.Fatalf("marshal rubric patch: %v", err)
+	}
+	rec := serveBody(h.Update, http.MethodPatch, "/api/v1/jobs/"+job.ID, string(body), job.ID)
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("rubric patch status = %d, want 409 (body: %s)", rec.Code, rec.Body.String())
+	}
+	code, _, _ := decodeError(t, rec)
+	if code != "invalid_state" {
+		t.Errorf("code = %q, want invalid_state", code)
+	}
+
+	stored, err := base.GetJob(context.Background(), job.ID)
+	if err != nil {
+		t.Fatalf("get job: %v", err)
+	}
+	if !reflect.DeepEqual(stored.Rubric, job.Rubric) {
+		t.Errorf("stored rubric = %+v, want unchanged %+v", stored.Rubric, job.Rubric)
 	}
 }
 

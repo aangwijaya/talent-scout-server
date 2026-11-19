@@ -103,6 +103,40 @@ func (p *Postgres) UpdateJob(ctx context.Context, job domain.Job) error {
 	return nil
 }
 
+// UpdateJobRubricIfNoApplications applies the update only while no application
+// references the job. The NOT EXISTS check runs in the same statement as the
+// update, so the count and the rubric write are not separated by a request
+// round trip where another application could slip in.
+func (p *Postgres) UpdateJobRubricIfNoApplications(ctx context.Context, job domain.Job) error {
+	defaultJobStatus(&job)
+	rubric, err := json.Marshal(job.Rubric)
+	if err != nil {
+		return fmt.Errorf("marshal rubric: %w", err)
+	}
+	updatedAt := job.UpdatedAt
+	if updatedAt.IsZero() {
+		updatedAt = time.Now().UTC()
+	}
+	tag, err := p.pool.Exec(ctx, `
+		UPDATE jobs SET title = $2, description = $3, rubric = $4, status = $5, updated_at = $6
+		WHERE id = $1 AND NOT EXISTS (SELECT 1 FROM applications WHERE job_id = $1)`,
+		job.ID, job.Title, job.Description, string(rubric), job.Status, updatedAt)
+	if err != nil {
+		return mapError(err)
+	}
+	if tag.RowsAffected() > 0 {
+		return nil
+	}
+	var exists bool
+	if err := p.pool.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM jobs WHERE id = $1)`, job.ID).Scan(&exists); err != nil {
+		return mapError(err)
+	}
+	if exists {
+		return ErrConflict
+	}
+	return ErrNotFound
+}
+
 func (p *Postgres) CountJobs(ctx context.Context) (int, error) {
 	var count int
 	if err := p.pool.QueryRow(ctx, `SELECT count(*) FROM jobs`).Scan(&count); err != nil {

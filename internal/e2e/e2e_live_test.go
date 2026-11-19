@@ -58,6 +58,30 @@ func TestLiveEndToEnd(t *testing.T) {
 
 			result := live.Run(t, cv, answers, 5*time.Minute)
 
+			assistantTurns := 0
+			for _, message := range result.Messages {
+				if message.Role != domain.MessageRoleAssistant {
+					continue
+				}
+				assistantTurns++
+				if problems := interviewerTurnProblems(message.Content); len(problems) > 0 {
+					t.Errorf("interviewer turn %d %s: %q", assistantTurns, strings.Join(problems, ", "), message.Content)
+				}
+			}
+			for _, event := range result.Events {
+				if event.Type != graph.EventNodeFailed || event.NodeID == nil || *event.NodeID != "interviewer" {
+					continue
+				}
+				var failed graph.NodeFailed
+				if json.Unmarshal(event.Payload, &failed) == nil && failed.Error == "timeout" {
+					attempt := 0
+					if event.Attempt != nil {
+						attempt = *event.Attempt
+					}
+					t.Errorf("interviewer attempt %d timed out in run %s", attempt, result.RunID)
+				}
+			}
+
 			valid := 0
 			for _, score := range result.Scores {
 				if score.Status == domain.ScoreStatusValid {

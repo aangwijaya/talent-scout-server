@@ -43,7 +43,7 @@
 | Supabase Free (Postgres 500 MB, Storage 1 GB) | $0 |
 | Gmail API (optional) | $0 (within the free Google quota) |
 | Custom domain (optional, for `apply.` subdomain or branded links) | ~$10–15/year, optional |
-| LLM per session (estimate, see §8) | ~$0.003–0.008 |
+| LLM per session (measured, see §8) | ~$0.007–0.012 |
 | 100 demo sessions | < $1 |
 | OpenCode (coding agent, separate key) | capped by credit limit, e.g. $3 |
 
@@ -136,13 +136,13 @@ Config shape (contract, not implementation):
 ```yaml
 default:
   temperature: 0.3
-  timeout_seconds: 30
+  timeout_seconds: 60
   max_retries_on_http_error: 1   # retry the same model, no fallback
 nodes:
-  planner:     { model: deepseek/deepseek-v4.1-flash, temperature: 0.2, max_tokens: 800 }
-  interviewer: { model: z-ai/glm-5.3-flash,           temperature: 0.6, max_tokens: 300, stream: true }
-  judge:       { model: deepseek/deepseek-v4.1-flash, temperature: 0.0, max_tokens: 200 }
-  scorer:      { model: deepseek/deepseek-v4.1-flash, temperature: 0.0, max_tokens: 1200 }
+  planner:     { model: deepseek/deepseek-v4.1-flash, temperature: 0.2, max_tokens: 3000 }
+  interviewer: { model: z-ai/glm-5.3-flash,           temperature: 0.6, max_tokens: 4000, stream: true, reasoning: { effort: low } }
+  judge:       { model: deepseek/deepseek-v4.1-flash, temperature: 0.0, max_tokens: 1200 }
+  scorer:      { model: deepseek/deepseek-v4.1-flash, temperature: 0.0, max_tokens: 4000 }
 ```
 
-Note: model prices & availability can change — recheck at openrouter.ai/models before deploy. Estimate per session: ~25–35 LLM calls, ~60k input tokens, ~8k output tokens → ~$0.005.
+Note: model prices & availability can change — recheck at openrouter.ai/models before deploy. Measured live sessions on 2026-11-13 with the seed job and three sample CVs: normal runs cost `$0.006772` (26,882 in / 7,909 out) and `$0.008021` (36,380 in / 8,068 out); the retry-heavy one-word-answer run cost `$0.012421` (37,192 in / 17,599 out). Budget about `$0.013` per session; the earlier `~$0.005` estimate was low. The interviewer's 60 s timeout and 4000-token cap (with `reasoning: { effort: low }`) come from a recorded reply of 1827 completion tokens in 26.2 s and a 30 s timeout on a later turn.

@@ -23,6 +23,30 @@ Rules:
 
 ## Entries
 
+### 2026-11-20 — #63 The answer-choice check flagged "pick one real example"
+- **Context:** The second live gate (e030e35, three sessions) had no two-part turns and no timeouts, but each session failed once on "offers answer choices".
+- **Problem:** The flagged turns asked the applicant to "pick one interaction where users felt lag … How did you capture it?". That is an open question about their own work, not multiple choice.
+- **Cause:** The checker (and the prompt) banned bare "pick one", "choose one", "which one" and "select one", which also match open requests for one concrete example.
+- **Lesson:** Flag only choices the interviewer supplies: option letters, "Option A", "one of these three", "just the letter". Say in the prompt that asking for one real example of their own is fine. Check a live-gate failure's text before tightening the model further; the checker can be the bug.
+- **Follow-up:** `internal/e2e/questions_test.go` keeps both sides (the live "pick one interaction" turn passes, "pick one of these three: …" fails); `internal/graph/interviewer_test.go` now proves the 120-word stop ends the stream and that a `?` after word 120 cannot lengthen the reply.
+- **Repeated?:** no
+
+### 2026-11-20 — #63 A prompt alone did not stop two-part questions; cut at the first `?`
+- **Context:** The human live gate for #63 ran three sessions on `z-ai/glm-5.3-flash` with the new prompt: 0 interviewer timeouts (every call `finish_reason="stop"`, longest 412 completion tokens) and no answer choices, but 9 of ~36 interviewer turns still held 2+ question marks and all three sessions failed the one-question check. Costs were `$0.006874`, `$0.005392` and `$0.007097` per session.
+- **Problem:** The failures were always a question followed by a second one ("…? And …?", "…? Could you walk me through…?"). Negative instructions ("never ask a second question") did not hold on this model.
+- **Cause:** The prompt asked for compliance with no deterministic backstop, so any model turn that ignored the rule reached the applicant and the transcript.
+- **Lesson:** For a hard reply-shape rule, pair the prompt with a streaming guard: stop at the first `?` exactly like the 120-word stop, keep the deltas already sent, and store only that prefix. Add the exact wrong pattern ("…? And …?") to the prompt and require exactly one `?`, at the last character. Keep the 60 s timeout and `max_tokens: 4000` with `reasoning: { effort: low }`; the gate saw no timeouts and ≤412 completion tokens, and live costs fit the `~$0.013` per-session budget.
+- **Follow-up:** tests in `internal/graph/interviewer_test.go` (two questions stream only the first, a single question is unchanged) and `internal/prompts/prompts_test.go`; live E2E `interviewerTurnProblems` still checks the stored turns
+- **Repeated?:** same as entry 2026-11-18 (prompt-only rule was not enough)
+
+### 2026-11-18 — #63 Interviewer asks one open question; size the timeout from recorded latency
+- **Context:** Following #14, live runs still produced multiple-choice and two-part interviewer turns, a 30 s timeout sat close to a recorded 26.2 s reply, and TECH-STACK §8 still carried the old `~$0.005` estimate.
+- **Problem:** The prompt said "one focused question" but did not ban option letters, "which one", "pick one", or a follow-on request, so the model still returned "(a)/(b)/(c)" turns. `config/models.yaml` had one shared 30 s timeout for every node; the recorded fixture contains an interviewer reply of 1827 completion tokens in 26,179 ms and a later `node.failed` (`timeout`) on the same node.
+- **Cause:** Negative instructions were too generic and left the exact choice formats open, and the timeout was not re-sized after raising the interviewer to `max_tokens: 4000` with reasoning.
+- **Lesson:** In the interviewer system prompt, require exactly one open-ended question per turn, at most 80 words, ending with a single question mark, and explicitly forbid a second question, answer choices, option letters, "which one", "pick one", "choose one", "select one", and "just the letter"; keep the runtime 120-word stop unchanged. Size the shared request timeout from recorded latency: 60 s (the OpenRouter client cap) leaves room over the 26.2 s reply; keep `max_tokens: 4000` and `reasoning: { effort: low }`. Measured cost from the #14 runs: normal sessions `$0.006772` (26,882 in / 7,909 out) and `$0.008021` (36,380 in / 8,068 out), retry-heavy `$0.012421` (37,192 in / 17,599 out), so budget about `$0.013` per session rather than `$0.005`.
+- **Follow-up:** offline prompt test in `internal/prompts/prompts_test.go`, question-form checker in `internal/e2e/questions_test.go` used by the live E2E, and the config guard in `internal/e2e/models_config_test.go`. Fresh live sessions were not possible in this node because `OPENROUTER_API_KEY` was not in the process environment; re-run the live E2E when the key is available.
+- **Repeated?:** first time
+
 ### 2026-11-16 — #31 Boot reconciliation must close every started node and fail orphaned runs
 - **Context:** Reconciling runs left `running` after a restart, plus three review findings (abandoned app state, cancelled-ctx node terminals, planner outage with no topics).
 - **Problem:** A running run kept its application in `scoring` forever, and a failure persisted with the caller's cancelled context left `node.started` with no terminal event. On boot there is no runner to resume, so finishing such sessions as `abandoned` and scoring them is not possible. EVENTS.md listed no error value for "closed because the server restarted" (server#66 added `server_restart`).

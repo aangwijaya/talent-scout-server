@@ -18,8 +18,9 @@ import (
 const maxInterviewerWords = 120
 
 var (
-	errWordLimit  = errors.New("interviewer word limit reached")
-	errEmptyReply = errors.New("empty interviewer reply")
+	errWordLimit    = errors.New("interviewer word limit reached")
+	errQuestionDone = errors.New("interviewer first question complete")
+	errEmptyReply   = errors.New("empty interviewer reply")
 )
 
 // interviewerUser builds the interviewer's user message. The planner wrote the
@@ -68,8 +69,8 @@ func interviewerMessages(topic domain.Topic, transcript []domain.Message, kind d
 	return messages
 }
 
-// wordLimiter forwards at most limit whole words and remembers exactly what was
-// forwarded.
+// wordLimiter forwards at most limit whole words and stops at the first
+// question mark; it remembers exactly what was forwarded.
 type wordLimiter struct {
 	limit int
 	raw   strings.Builder
@@ -80,27 +81,52 @@ func newWordLimiter(limit int) *wordLimiter {
 	return &wordLimiter{limit: limit}
 }
 
-// Add appends a delta and returns the part to emit plus whether the reply went
-// beyond the limit (the caller then stops the stream).
-func (l *wordLimiter) Add(delta string) (string, bool) {
+// Add appends a delta and returns the part to emit. A non-nil error means the
+// reply is complete (word limit or first question mark) and the caller stops the
+// stream.
+func (l *wordLimiter) Add(delta string) (string, error) {
 	l.raw.WriteString(delta)
-	allowed := prefixWords(l.raw.String(), l.limit)
+	allowed, stop := l.allowed()
 	if len(allowed) > l.sent {
 		out := allowed[l.sent:]
 		l.sent = len(allowed)
-		return out, len(allowed) < len(l.raw.String())
+		return out, stop
 	}
-	return "", len(allowed) < len(l.raw.String())
+	return "", stop
 }
 
 // Text returns exactly the text that was forwarded to the client.
 func (l *wordLimiter) Text() string {
-	return prefixWords(l.raw.String(), l.limit)
+	allowed, _ := l.allowed()
+	return allowed
 }
 
 func (l *wordLimiter) Reset() {
 	l.raw.Reset()
 	l.sent = 0
+}
+
+// allowed returns the longest prefix of the raw reply that may be emitted and
+// why the reply is complete, if it is.
+func (l *wordLimiter) allowed() (string, error) {
+	raw := l.raw.String()
+	allowed := prefixWords(raw, l.limit)
+	if question := prefixThroughQuestion(raw); len(question) < len(allowed) {
+		return question, errQuestionDone
+	}
+	if len(allowed) < len(raw) {
+		return allowed, errWordLimit
+	}
+	return allowed, nil
+}
+
+// prefixThroughQuestion keeps the text through the first question mark, which
+// ends a complete interviewer question.
+func prefixThroughQuestion(s string) string {
+	if i := strings.IndexByte(s, '?'); i >= 0 {
+		return s[:i+1]
+	}
+	return s
 }
 
 func prefixWords(s string, limit int) string {
@@ -131,8 +157,9 @@ type streamResult struct {
 }
 
 // streamInterviewer runs one streaming interviewer attempt with the same
-// transport-retry choreography as RunLLMNode, but treats truncation and the
-// 120-word stop as a finished reply (the deltas already sent are real text).
+// transport-retry choreography as RunLLMNode, but treats truncation, the
+// 120-word stop and the first question mark as a finished reply (the deltas
+// already sent are real text).
 func (r *Runner) streamInterviewer(ctx context.Context, attempt int, messages []llm.Message, inputSummary, messageID string, limiter *wordLimiter) (streamResult, error) {
 	node, err := r.models.Node("interviewer")
 	if err != nil {
@@ -170,7 +197,7 @@ func (r *Runner) streamInterviewer(ctx context.Context, attempt int, messages []
 	}
 
 	onDelta := func(delta string) error {
-		out, stopped := limiter.Add(delta)
+		out, stopErr := limiter.Add(delta)
 		if out != "" {
 			if _, err := r.bus.Emit(ctx, r.runID, Event{
 				NodeID:  domain.StrPtr("interviewer"),
@@ -181,14 +208,11 @@ func (r *Runner) streamInterviewer(ctx context.Context, attempt int, messages []
 				return err
 			}
 		}
-		if stopped {
-			return errWordLimit
-		}
-		return nil
+		return stopErr
 	}
 
 	resp, err := r.llm.Stream(ctx, req, onDelta)
-	if err != nil && !errors.Is(err, errWordLimit) && !errors.Is(err, llm.ErrTruncated) {
+	if err != nil && !errors.Is(err, errWordLimit) && !errors.Is(err, errQuestionDone) && !errors.Is(err, llm.ErrTruncated) {
 		r.logNodeFailed("interviewer", currentAttempt, err)
 		_ = r.emitNodeFailed(ctx, "interviewer", currentAttempt, &model, nodeFailedCode(err), false)
 		return streamResult{Attempt: currentAttempt, Model: model, StartedAt: start}, err

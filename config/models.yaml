@@ -1,6 +1,6 @@
 default:
   temperature: 0.3
-  timeout_seconds: 30
+  timeout_seconds: 60
   max_retries_on_http_error: 1   # retry the same model, no fallback
 nodes:
   planner:     { model: deepseek/deepseek-v4.1-flash, temperature: 0.2, max_tokens: 3000 }

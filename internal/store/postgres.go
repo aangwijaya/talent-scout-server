@@ -300,6 +300,25 @@ func (p *Postgres) SetApplicationDecision(ctx context.Context, id string, status
 	return app, nil
 }
 
+func (p *Postgres) SetApplicationAuthenticity(ctx context.Context, id string, authenticity *domain.Authenticity) error {
+	var payload any
+	if authenticity != nil {
+		encoded, err := json.Marshal(authenticity)
+		if err != nil {
+			return fmt.Errorf("marshal authenticity: %w", err)
+		}
+		payload = string(encoded)
+	}
+	tag, err := p.pool.Exec(ctx, `UPDATE applications SET authenticity = $2 WHERE id = $1`, id, payload)
+	if err != nil {
+		return mapError(err)
+	}
+	if tag.RowsAffected() == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
 func (p *Postgres) CreateSession(ctx context.Context, session domain.Session) error {
 	defaultSessionStatus(&session)
 	if session.CreatedAt.IsZero() {
@@ -619,10 +638,18 @@ func (p *Postgres) CreateMessage(ctx context.Context, message domain.Message) er
 	if message.CreatedAt.IsZero() {
 		message.CreatedAt = time.Now().UTC()
 	}
+	var entry any
+	if message.Entry != nil {
+		encoded, err := json.Marshal(message.Entry)
+		if err != nil {
+			return fmt.Errorf("marshal message entry: %w", err)
+		}
+		entry = string(encoded)
+	}
 	_, err := p.pool.Exec(ctx, `
-		INSERT INTO messages (id, session_id, topic_id, role, kind, content, created_at)
-		VALUES ($1, $2, $3, $4, $5, $6, $7)`,
-		message.ID, message.SessionID, message.TopicID, message.Role, message.Kind, message.Content, message.CreatedAt)
+		INSERT INTO messages (id, session_id, topic_id, role, kind, content, entry, created_at)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
+		message.ID, message.SessionID, message.TopicID, message.Role, message.Kind, message.Content, entry, message.CreatedAt)
 	return mapError(err)
 }
 
@@ -837,10 +864,10 @@ func (p *Postgres) ListNodeEvents(ctx context.Context, runID string, sinceSeq in
 
 const (
 	jobColumns         = `id, title, description, rubric, status, created_at, updated_at`
-	applicationColumns = `id, job_id, name, email, cv_object_path, cv_text, status, decision_note, decided_at, created_at`
+	applicationColumns = `id, job_id, name, email, cv_object_path, cv_text, status, decision_note, decided_at, authenticity, created_at`
 	sessionColumns     = `id, application_id, token_hash, status, expires_at, started_at, ended_at, finish_reason, question_count, created_at`
 	topicColumns       = `id, session_id, position, title, goal, rubric_keys, seed_question, status, follow_up_count`
-	messageColumns     = `id, session_id, topic_id, role, kind, content, created_at`
+	messageColumns     = `id, session_id, topic_id, role, kind, content, entry, created_at`
 	scoreColumns       = `id, application_id, rubric_key, score, rationale, evidence, status, attempts, created_at`
 	graphRunColumns    = `id, session_id, status, started_at, ended_at, total_tokens_in, total_tokens_out, cost_usd::double precision, error`
 	nodeEventColumns   = `id, run_id, seq, node_id, type, attempt, model, tokens_in, tokens_out, duration_ms, payload, created_at`
@@ -864,9 +891,17 @@ func scanJob(row rowScanner) (domain.Job, error) {
 
 func scanApplication(row rowScanner) (domain.Application, error) {
 	var app domain.Application
+	var authenticity []byte
 	if err := row.Scan(&app.ID, &app.JobID, &app.Name, &app.Email, &app.CVObjectPath, &app.CVText,
-		&app.Status, &app.DecisionNote, &app.DecidedAt, &app.CreatedAt); err != nil {
+		&app.Status, &app.DecisionNote, &app.DecidedAt, &authenticity, &app.CreatedAt); err != nil {
 		return domain.Application{}, err
+	}
+	if len(authenticity) > 0 {
+		var auth domain.Authenticity
+		if err := json.Unmarshal(authenticity, &auth); err != nil {
+			return domain.Application{}, fmt.Errorf("unmarshal authenticity: %w", err)
+		}
+		app.Authenticity = &auth
 	}
 	return app, nil
 }
@@ -900,9 +935,17 @@ func scanTopic(row rowScanner) (domain.Topic, error) {
 
 func scanMessage(row rowScanner) (domain.Message, error) {
 	var message domain.Message
+	var entry []byte
 	if err := row.Scan(&message.ID, &message.SessionID, &message.TopicID, &message.Role, &message.Kind,
-		&message.Content, &message.CreatedAt); err != nil {
+		&message.Content, &entry, &message.CreatedAt); err != nil {
 		return domain.Message{}, err
+	}
+	if len(entry) > 0 {
+		var signals domain.MessageEntry
+		if err := json.Unmarshal(entry, &signals); err != nil {
+			return domain.Message{}, fmt.Errorf("unmarshal message entry: %w", err)
+		}
+		message.Entry = &signals
 	}
 	return message, nil
 }

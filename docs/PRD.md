@@ -49,6 +49,7 @@ One web app, routed by path: recruiter at `/dashboard/...`, apply form at `/appl
 | FR-12 | The recruiter submits a `shortlist`/`reject` decision; the final status is stored. |
 | FR-13 | The recruiter can get a new invite link ("Get invite link": new token, old token revoked) while the session has not started or after the application failed; in `EMAIL_MODE=log` the link is shown in the dashboard for copying. |
 | FR-14 | If an AI step fails with a retryable error, the applicant can retry the failed step (`POST /sessions/{token}/retry`). If it still fails, the session ends with `finish_reason=failed`, the application becomes `failed`, and the recruiter can issue a new invite. |
+| FR-15 | The recruiter sees an advisory answer-authenticity warning (`none`/`possible`/`likely` with short reasons) built from the client's typing/paste signals and an LLM judgement. It never rejects an applicant and never changes a score. The applicant is told on the intro screen that typing and pasting are noted and that a person reviews it: "We note whether answers were typed or pasted. A person reviews this." |
 
 ## 5. Non-Functional
 

@@ -115,6 +115,7 @@ type Application struct {
 	Status       ApplicationStatus `json:"status"`
 	DecisionNote string            `json:"decision_note"`
 	DecidedAt    *time.Time        `json:"decided_at"`
+	Authenticity *Authenticity     `json:"authenticity"`
 	CreatedAt    time.Time         `json:"created_at"`
 }
 
@@ -144,13 +145,39 @@ type Topic struct {
 }
 
 type Message struct {
-	ID        string      `json:"id"`
-	SessionID string      `json:"session_id"`
-	TopicID   *string     `json:"topic_id"`
-	Role      MessageRole `json:"role"`
-	Kind      MessageKind `json:"kind"`
-	Content   string      `json:"content"`
-	CreatedAt time.Time   `json:"created_at"`
+	ID        string        `json:"id"`
+	SessionID string        `json:"session_id"`
+	TopicID   *string       `json:"topic_id"`
+	Role      MessageRole   `json:"role"`
+	Kind      MessageKind   `json:"kind"`
+	Content   string        `json:"content"`
+	Entry     *MessageEntry `json:"entry,omitempty"`
+	CreatedAt time.Time     `json:"created_at"`
+}
+
+// MessageEntry holds the client-recorded typing/paste signals for an applicant
+// answer. It is advisory: the authenticity node only explains it to the
+// recruiter and never changes the interview flow or a score.
+type MessageEntry struct {
+	PastedChars int `json:"pasted_chars"`
+	TypedChars  int `json:"typed_chars"`
+	DurationMS  int `json:"duration_ms"`
+}
+
+type AuthenticityLevel string
+
+const (
+	AuthenticityLevelNone     AuthenticityLevel = "none"
+	AuthenticityLevelPossible AuthenticityLevel = "possible"
+	AuthenticityLevelLikely   AuthenticityLevel = "likely"
+)
+
+// Authenticity is the advisory answer-authenticity assessment shown to the
+// recruiter. It is null until the authenticity node has run successfully.
+type Authenticity struct {
+	Level      AuthenticityLevel `json:"level"`
+	Reasons    []string          `json:"reasons"`
+	AssessedAt time.Time         `json:"assessed_at"`
 }
 
 type ScoreEvidence struct {

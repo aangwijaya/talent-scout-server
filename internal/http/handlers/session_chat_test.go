@@ -24,10 +24,11 @@ func chatModels() config.ModelsConfig {
 	return config.ModelsConfig{
 		Default: config.Defaults{Temperature: 0.3, TimeoutSeconds: 30, MaxRetriesOnHTTPError: 1},
 		Nodes: map[string]config.Node{
-			"planner":     {Model: "deepseek/deepseek-v4.1-flash", MaxTokens: 800},
-			"interviewer": {Model: "z-ai/glm-5.3-flash", MaxTokens: 300, Stream: true},
-			"judge":       {Model: "deepseek/deepseek-v4.1-flash", MaxTokens: 200},
-			"scorer":      {Model: "deepseek/deepseek-v4.1-flash", MaxTokens: 1200},
+			"planner":      {Model: "deepseek/deepseek-v4.1-flash", MaxTokens: 800},
+			"interviewer":  {Model: "z-ai/glm-5.3-flash", MaxTokens: 300, Stream: true},
+			"judge":        {Model: "deepseek/deepseek-v4.1-flash", MaxTokens: 200},
+			"scorer":       {Model: "deepseek/deepseek-v4.1-flash", MaxTokens: 1200},
+			"authenticity": {Model: "deepseek/deepseek-v4.1-flash", MaxTokens: 1200},
 		},
 		Prices: map[string]config.Price{
 			"deepseek/deepseek-v4.1-flash": {In: 0.045, Out: 0.5},

@@ -23,6 +23,14 @@ Rules:
 
 ## Entries
 
+### 2026-11-20 — #81 Planner truncated at max_tokens after the job context grew
+- **Context:** The server#81 live gate (3 sessions) failed one session before the opening question: the planner hit `finish_reason=length` at `max_tokens: 3000` (1,536 prompt tokens). Its other calls used 1,585–2,030. The scorer reached 5,852 of 8,000; the new authenticity node used 347–390 of 2,000.
+- **Problem:** Since #79 the planner reads the full job and must tag each topic's `source`, so the reasoning model has less headroom; an occasional long reasoning pass truncates and the applicant never gets a question.
+- **Cause:** The 3000 cap was sized before the job context and sources were added.
+- **Lesson:** Recheck every reasoning node's cap whenever its prompt grows; size from the largest live completion with about 2x headroom. Planner is now `6000`. The live test's call log must label every LLM node (authenticity was logged as `unknown`) so its truncation check covers it.
+- **Follow-up:** `TestJudgeAndScorerHaveRoomForReasoning` now covers the planner; `nodeFromRequest` labels authenticity and checks it for truncation.
+- **Repeated?:** yes, same as the 2026-11-20 #79 judge/scorer entry
+
 ### 2026-11-20 — #79 Judge and scorer were truncated at max_tokens
 - **Context:** The server#79 live gate (richer seed job, 3 sessions) failed two sessions on `finish_reason=length`: the judge at `max_tokens: 1200` on the second answer, and the scorer at `max_tokens: 4000` with 3,779 prompt tokens after a full 15-question interview. The applicant ended without a score.
 - **Problem:** `deepseek/deepseek-v4.1-flash` spends part of its output on reasoning, so caps sized for the visible JSON leave no headroom when the prompt grows.

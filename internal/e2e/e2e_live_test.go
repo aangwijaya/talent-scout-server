@@ -349,7 +349,7 @@ func reportLLMCalls(t *testing.T, recorder *recordingTransport) {
 		resp := parseResponse(call.response.bytes())
 		t.Logf("call %d node=%s model=%s max_tokens=%d stream=%v finish_reason=%q prompt_tokens=%d completion_tokens=%d",
 			i, node, req.Model, req.MaxTokens, req.Stream, resp.FinishReason, resp.PromptTokens, resp.CompletionTokens)
-		if node == "planner" || node == "judge" || node == "scorer" {
+		if node == "planner" || node == "judge" || node == "scorer" || node == "authenticity" {
 			if resp.FinishReason == "length" {
 				t.Errorf("call %d %s hit finish_reason=length at max_tokens=%d", i, node, req.MaxTokens)
 			}
@@ -374,6 +374,8 @@ func nodeFromRequest(req llmRequestInfo) string {
 			return "judge"
 		case strings.Contains(message.Content, "You are the scorer"):
 			return "scorer"
+		case strings.Contains(message.Content, "You are the authenticity reviewer"):
+			return "authenticity"
 		}
 	}
 	return "unknown"

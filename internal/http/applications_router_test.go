@@ -725,3 +725,84 @@ func TestResendInviteExpiredInvitation(t *testing.T) {
 		t.Errorf("latest session = %s/%s, want the untouched expired invite %s", latest.ID, latest.Status, expired.ID)
 	}
 }
+
+// The recruiter's application detail exposes the applicant's client signals per
+// message and the advisory authenticity result; interviewer messages carry a
+// null entry.
+func TestApplicationDetailReturnsEntryAndAuthenticity(t *testing.T) {
+	f := newApplicationsFixture(t, "log")
+	validator := conformance.New(t)
+	ctx := context.Background()
+
+	app := f.seedApplication(t, "signals@example.com", domain.ApplicationStatusReview)
+	sess, _ := f.seedSession(t, app, domain.SessionStatusCompleted)
+
+	assistant := domain.Message{ID: domain.NewID(), SessionID: sess.ID, Role: domain.MessageRoleAssistant, Kind: domain.MessageKindQuestion, Content: "How do you manage state?"}
+	applicant := domain.Message{
+		ID: domain.NewID(), SessionID: sess.ID, Role: domain.MessageRoleApplicant, Kind: domain.MessageKindAnswer,
+		Content: "I moved state into a separate store.",
+		Entry:   &domain.MessageEntry{PastedChars: 32, TypedChars: 4, DurationMS: 900},
+	}
+	for _, message := range []domain.Message{assistant, applicant} {
+		if err := f.store.CreateMessage(ctx, message); err != nil {
+			t.Fatalf("seed message: %v", err)
+		}
+	}
+	auth := domain.Authenticity{
+		Level:      domain.AuthenticityLevelPossible,
+		Reasons:    []string{"1 of 1 answers were pasted in full"},
+		AssessedAt: time.Now().UTC().Truncate(time.Microsecond),
+	}
+	if err := f.store.SetApplicationAuthenticity(ctx, app.ID, &auth); err != nil {
+		t.Fatalf("SetApplicationAuthenticity: %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/applications/"+app.ID, nil)
+	req.Header.Set("Authorization", "Bearer "+f.token)
+	rec := httptest.NewRecorder()
+	f.router.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200 (body: %s)", rec.Code, rec.Body.String())
+	}
+	validator.ValidateResponse(t, req, rec.Result())
+
+	var got struct {
+		Authenticity *struct {
+			Level      string    `json:"level"`
+			Reasons    []string  `json:"reasons"`
+			AssessedAt time.Time `json:"assessed_at"`
+		} `json:"authenticity"`
+		Messages []struct {
+			Role  string `json:"role"`
+			Entry *struct {
+				PastedChars int `json:"pasted_chars"`
+				TypedChars  int `json:"typed_chars"`
+				DurationMS  int `json:"duration_ms"`
+			} `json:"entry"`
+		} `json:"messages"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if got.Authenticity == nil || got.Authenticity.Level != "possible" || len(got.Authenticity.Reasons) != 1 {
+		t.Fatalf("authenticity = %+v, want possible with its reason", got.Authenticity)
+	}
+	var applicantEntry, assistantEntry bool
+	for _, message := range got.Messages {
+		switch message.Role {
+		case "applicant":
+			if message.Entry == nil || message.Entry.PastedChars != 32 || message.Entry.TypedChars != 4 || message.Entry.DurationMS != 900 {
+				t.Errorf("applicant entry = %+v, want the stored signals", message.Entry)
+			}
+			applicantEntry = true
+		case "assistant":
+			if message.Entry != nil {
+				t.Errorf("interviewer entry = %+v, want null", message.Entry)
+			}
+			assistantEntry = true
+		}
+	}
+	if !applicantEntry || !assistantEntry {
+		t.Errorf("messages = %+v, want both roles", got.Messages)
+	}
+}

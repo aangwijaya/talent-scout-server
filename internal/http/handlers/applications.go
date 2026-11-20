@@ -84,15 +84,46 @@ type graphRunSummary struct {
 }
 
 type applicationDetail struct {
-	Application applicationSummary `json:"application"`
-	Job         applicationJob     `json:"job"`
-	CVText      string             `json:"cv_text"`
-	Decision    *decisionResponse  `json:"decision"`
-	Session     *sessionSummary    `json:"session"`
-	GraphRun    *graphRunSummary   `json:"graph_run"`
-	Topics      []domain.Topic     `json:"topics"`
-	Messages    []domain.Message   `json:"messages"`
-	Scores      []domain.Score     `json:"scores"`
+	Application  applicationSummary   `json:"application"`
+	Job          applicationJob       `json:"job"`
+	CVText       string               `json:"cv_text"`
+	Decision     *decisionResponse    `json:"decision"`
+	Session      *sessionSummary      `json:"session"`
+	GraphRun     *graphRunSummary     `json:"graph_run"`
+	Topics       []domain.Topic       `json:"topics"`
+	Messages     []recruiterMessage   `json:"messages"`
+	Scores       []domain.Score       `json:"scores"`
+	Authenticity *domain.Authenticity `json:"authenticity"`
+}
+
+// recruiterMessage is the recruiter's Message view: the applicant entry signals
+// are always present as an object or null.
+type recruiterMessage struct {
+	ID        string               `json:"id"`
+	SessionID string               `json:"session_id"`
+	TopicID   *string              `json:"topic_id"`
+	Role      domain.MessageRole   `json:"role"`
+	Kind      domain.MessageKind   `json:"kind"`
+	Content   string               `json:"content"`
+	Entry     *domain.MessageEntry `json:"entry"`
+	CreatedAt time.Time            `json:"created_at"`
+}
+
+func recruiterMessages(messages []domain.Message) []recruiterMessage {
+	out := make([]recruiterMessage, 0, len(messages))
+	for _, message := range messages {
+		out = append(out, recruiterMessage{
+			ID:        message.ID,
+			SessionID: message.SessionID,
+			TopicID:   message.TopicID,
+			Role:      message.Role,
+			Kind:      message.Kind,
+			Content:   message.Content,
+			Entry:     message.Entry,
+			CreatedAt: message.CreatedAt,
+		})
+	}
+	return out
 }
 
 type decisionRequest struct {
@@ -180,11 +211,12 @@ func (h *Applications) Get(w http.ResponseWriter, r *http.Request) {
 	}
 
 	detail := applicationDetail{
-		Job:      applicationJob{ID: job.ID, Title: job.Title, Rubric: append([]domain.RubricCriterion{}, job.Rubric...)},
-		CVText:   app.CVText,
-		Topics:   []domain.Topic{},
-		Messages: []domain.Message{},
-		Scores:   []domain.Score{},
+		Job:          applicationJob{ID: job.ID, Title: job.Title, Rubric: append([]domain.RubricCriterion{}, job.Rubric...)},
+		CVText:       app.CVText,
+		Topics:       []domain.Topic{},
+		Messages:     []recruiterMessage{},
+		Scores:       []domain.Score{},
+		Authenticity: app.Authenticity,
 	}
 
 	scores, err := h.store.ListScoresByApplication(ctx, app.ID)
@@ -223,7 +255,7 @@ func (h *Applications) Get(w http.ResponseWriter, r *http.Request) {
 			apierror.Write(w, http.StatusInternalServerError, apierror.CodeInternalError, "could not load transcript", nil)
 			return
 		}
-		detail.Messages = messages
+		detail.Messages = recruiterMessages(messages)
 		run, err := h.store.GetGraphRunBySession(ctx, sess.ID)
 		switch {
 		case err == nil:

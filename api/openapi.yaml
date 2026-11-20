@@ -337,7 +337,7 @@ paths:
     get:
       tags: [applications]
       operationId: getApplication
-      summary: Applicant detail with session, transcript, and scores
+      summary: Applicant detail with session, transcript, scores, and authenticity
       security:
         - bearerAuth: []
       parameters:
@@ -1032,6 +1032,23 @@ components:
           type: string
           format: date-time
 
+    MessageEntry:
+      type: object
+      required: [pasted_chars, typed_chars, duration_ms]
+      properties:
+        pasted_chars:
+          type: integer
+          minimum: 0
+          maximum: 10000000
+        typed_chars:
+          type: integer
+          minimum: 0
+          maximum: 10000000
+        duration_ms:
+          type: integer
+          minimum: 0
+          maximum: 10000000
+
     Message:
       type: object
       required: [id, role, kind, topic_id, content, created_at]
@@ -1051,6 +1068,32 @@ components:
         content:
           type: string
         created_at:
+          type: string
+          format: date-time
+
+    RecruiterMessage:
+      allOf:
+        - $ref: "#/components/schemas/Message"
+        - type: object
+          required: [entry]
+          properties:
+            entry:
+              oneOf:
+                - $ref: "#/components/schemas/MessageEntry"
+                - type: "null"
+
+    Authenticity:
+      type: object
+      required: [level, reasons, assessed_at]
+      properties:
+        level:
+          type: string
+          enum: [none, possible, likely]
+        reasons:
+          type: array
+          items:
+            type: string
+        assessed_at:
           type: string
           format: date-time
 
@@ -1187,6 +1230,7 @@ components:
         - topics
         - messages
         - scores
+        - authenticity
       properties:
         application:
           $ref: "#/components/schemas/ApplicationSummary"
@@ -1224,11 +1268,15 @@ components:
         messages:
           type: array
           items:
-            $ref: "#/components/schemas/Message"
+            $ref: "#/components/schemas/RecruiterMessage"
         scores:
           type: array
           items:
             $ref: "#/components/schemas/Score"
+        authenticity:
+          oneOf:
+            - $ref: "#/components/schemas/Authenticity"
+            - type: "null"
 
     ApplyResponse:
       type: object
@@ -1335,6 +1383,8 @@ components:
           type: string
           minLength: 1
           maxLength: 2000
+        entry:
+          $ref: "#/components/schemas/MessageEntry"
 
     SendMessageResponse:
       type: object
@@ -1411,6 +1461,7 @@ components:
             - guard
             - scorer
             - evidence_check
+            - authenticity
             - recruiter_gate
         type:
           type: string

@@ -71,6 +71,7 @@ type Store interface {
 	CountApplicationsByJob(ctx context.Context, jobID string) (int, error)
 	UpdateApplicationStatus(ctx context.Context, id string, status domain.ApplicationStatus) error
 	SetApplicationDecision(ctx context.Context, id string, status domain.ApplicationStatus, note string, decidedAt time.Time) (domain.Application, error)
+	SetApplicationAuthenticity(ctx context.Context, id string, authenticity *domain.Authenticity) error
 
 	CreateSession(ctx context.Context, session domain.Session) error
 	GetSession(ctx context.Context, id string) (domain.Session, error)

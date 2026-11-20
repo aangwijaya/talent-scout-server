@@ -1,6 +1,7 @@
 package graph
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 
@@ -9,9 +10,9 @@ import (
 
 func validPlan() Plan {
 	return Plan{Topics: []PlannedTopic{
-		{Title: "A", Goal: "goal a", RubricKeys: []string{"a"}, SeedQuestion: "question a", Source: "job"},
-		{Title: "B", Goal: "goal b", RubricKeys: []string{"b"}, SeedQuestion: "question b", Source: "job"},
-		{Title: "C", Goal: "goal c", RubricKeys: []string{"c"}, SeedQuestion: "question c", Source: "job"},
+		{Title: "A", Goal: "goal a", RubricKeys: []string{"a"}, SeedQuestion: "question a"},
+		{Title: "B", Goal: "goal b", RubricKeys: []string{"b"}, SeedQuestion: "question b"},
+		{Title: "C", Goal: "goal c", RubricKeys: []string{"c"}, SeedQuestion: "question c"},
 	}}
 }
 
@@ -19,41 +20,41 @@ func planRubric() []domain.RubricCriterion {
 	return []domain.RubricCriterion{{Key: "a"}, {Key: "b"}, {Key: "c"}}
 }
 
-func sourcedPlan(sources ...string) Plan {
+func sourcedPlanJSON(sources ...string) string {
 	keys := []string{"a", "b", "c", "d"}
-	topics := make([]PlannedTopic, len(sources))
+	topics := make([]string, len(sources))
 	for i, source := range sources {
-		topics[i] = PlannedTopic{
-			Title:        "topic",
-			Goal:         "goal",
-			RubricKeys:   []string{keys[i]},
-			SeedQuestion: "question",
-			Source:       source,
-		}
+		topics[i] = fmt.Sprintf(`{"title":"topic","goal":"goal","rubric_keys":[%q],"seed_question":"question","source":%q}`, keys[i], source)
 	}
-	return Plan{Topics: topics}
+	return `{"topics":[` + strings.Join(topics, ",") + `]}`
 }
 
-func fourKeyRubric() []domain.RubricCriterion {
-	return []domain.RubricCriterion{{Key: "a"}, {Key: "b"}, {Key: "c"}, {Key: "d"}}
-}
-
-func TestCheckPlanRequiresAtLeastHalfJobTopics(t *testing.T) {
-	if errs := CheckPlan(sourcedPlan("cv", "cv", "cv", "job"), fourKeyRubric()); len(errs) == 0 {
-		t.Error("CheckPlan(1 job of 4) accepted the plan, want a rejection")
+func TestParsePlanRequiresAtLeastHalfJobTopics(t *testing.T) {
+	if _, err := parsePlan(sourcedPlanJSON("cv", "cv", "cv", "job")); err == nil {
+		t.Error("parsePlan(1 job of 4) accepted the plan, want a rejection")
 	}
-	if errs := CheckPlan(sourcedPlan("job", "job", "cv", "cv"), fourKeyRubric()); len(errs) != 0 {
-		t.Errorf("CheckPlan(2 job of 4) = %v, want no errors", errs)
+	plan, err := parsePlan(sourcedPlanJSON("job", "job", "cv", "cv"))
+	if err != nil {
+		t.Fatalf("parsePlan(2 job of 4) = %v, want no error", err)
+	}
+	if len(plan.Topics) != 4 {
+		t.Errorf("parsePlan kept %d topics, want 4", len(plan.Topics))
 	}
 }
 
-func TestCheckPlanRejectsMissingOrUnknownTopicSource(t *testing.T) {
-	for _, source := range []string{"", "role", "JOB"} {
-		plan := validPlan()
-		plan.Topics[0].Source = source
-		if errs := CheckPlan(plan, planRubric()); len(errs) == 0 {
-			t.Errorf("CheckPlan(source %q) accepted the plan, want a rejection", source)
-		}
+func TestParsePlanRejectsUnknownTopicSource(t *testing.T) {
+	if _, err := parsePlan(sourcedPlanJSON("role", "job", "job", "job")); err == nil {
+		t.Error(`parsePlan(source "role") accepted the plan, want a rejection`)
+	}
+}
+
+func TestParsePlanDropsInternalSource(t *testing.T) {
+	plan, err := parsePlan(sourcedPlanJSON("job", "job", "cv", "cv"))
+	if err != nil {
+		t.Fatalf("parsePlan: %v", err)
+	}
+	if plan.Topics[0].Title != "topic" || plan.Topics[0].SeedQuestion != "question" {
+		t.Errorf("parsePlan lost topic fields: %+v", plan.Topics[0])
 	}
 }
 

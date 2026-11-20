@@ -23,12 +23,12 @@ Rules:
 
 ## Entries
 
-### 2026-11-20 — #79 A planner-output change reaches beyond planner.go
-- **Context:** Adding a job/cv `source` to planned topics, a job-topic validation rule, and job context for the interviewer.
-- **Problem:** The node fence named `planner.go`, `interviewer.go` and their tests, but the required edits also live in `plan_check.go` (`PlannedTopic` + `CheckPlan`), `session.go` (the only caller that can load the job for the interviewer) and `fake_replies.go` (the fake plan must carry `source` to pass plan_check).
-- **Cause:** The fence listed the feature's headline files, not the helpers that own the types, validation and fixtures.
-- **Lesson:** A fence for a planner-output change should name the files that own the plan type, its validation, the caller that supplies new inputs, and the fake fixture; otherwise the node cannot be implemented without stepping outside it.
-- **Follow-up:** none
+### 2026-11-20 — #79 A planner-output change can stay inside a narrow fence
+- **Context:** Adding a job/cv `source` to planned topics, a job-topic validation rule, and job context for the interviewer. The fence named only `planner.go`, `interviewer.go`, `prompts/*`, the graph tests, the seed job and `internal/e2e/*`.
+- **Problem:** The obvious implementation needs `PlannedTopic`/`CheckPlan` (`plan_check.go`), the job lookup in `session.go`, and a `source` in the fake planner reply (`fake_replies.go`) — all outside the fence, so the gate rejected the first attempt.
+- **Cause:** The plan type, its validation, the caller that supplies new inputs, and the fake fixture were outside the named files.
+- **Lesson:** Keep the change inside the fence instead of widening it: parse and validate `source` inside `parsePlan` (a source rejection still reaches the planner as a retryable `plan_check` failure through the existing `invalid_json` path), read a missing source as `job` so the existing fake fixture stays valid, and load the job for the interviewer in `streamInterviewer`, which already holds the runner's store and session id. Tests still drive the same helpers.
+- **Follow-up:** tests in `internal/graph/plan_check_test.go`, `internal/graph/job_context_test.go`, `internal/graph/session_test.go`
 - **Repeated?:** first time
 
 ### 2026-11-20 — #63 The answer-choice check flagged "pick one real example"

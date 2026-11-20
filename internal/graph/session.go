@@ -578,11 +578,6 @@ func (m *SessionManager) handlePlannerError(ctx context.Context, sess domain.Ses
 }
 
 func (m *SessionManager) runInterviewer(ctx context.Context, sess domain.Session, st *liveSession, topic domain.Topic, kind domain.MessageKind, attempt int, feedback *JudgeVerdict) {
-	job, _, err := m.loadPlannerInputs(ctx, sess)
-	if err != nil {
-		m.failRun(ctx, sess, st, "load_job_failed")
-		return
-	}
 	transcript, err := m.store.ListMessagesBySession(ctx, sess.ID, false)
 	if err != nil {
 		m.failRun(ctx, sess, st, "load_transcript_failed")
@@ -592,9 +587,9 @@ func (m *SessionManager) runInterviewer(ctx context.Context, sess domain.Session
 	inputSummary := topic.Title + " (" + string(kind) + ")"
 	messageID := domain.NewID()
 	limiter := newWordLimiter(maxInterviewerWords)
-	res, err := st.runner.streamInterviewer(ctx, attempt, interviewerMessages(job, topic, transcript, kind, feedback), inputSummary, messageID, limiter)
+	res, err := st.runner.streamInterviewer(ctx, attempt, interviewerMessages(topic, transcript, kind, feedback), inputSummary, messageID, limiter)
 	if err != nil {
-		m.handleInterviewerError(ctx, sess, st, job, topic, kind, feedback, res.Attempt, err, false)
+		m.handleInterviewerError(ctx, sess, st, topic, kind, feedback, res.Attempt, err, false)
 		return
 	}
 
@@ -632,7 +627,7 @@ func (m *SessionManager) runInterviewer(ctx context.Context, sess domain.Session
 // interviewer step. alreadyRetried is true when this failure is the retry of
 // the same step, so a second failure ends the session instead of offering
 // another retry; a later turn starts with a fresh budget.
-func (m *SessionManager) handleInterviewerError(ctx context.Context, sess domain.Session, st *liveSession, job domain.Job, topic domain.Topic, kind domain.MessageKind, feedback *JudgeVerdict, lastAttempt int, err error, alreadyRetried bool) {
+func (m *SessionManager) handleInterviewerError(ctx context.Context, sess domain.Session, st *liveSession, topic domain.Topic, kind domain.MessageKind, feedback *JudgeVerdict, lastAttempt int, err error, alreadyRetried bool) {
 	m.logger.Error("interviewer step failed", "session_id", sess.ID, "attempt", lastAttempt, "error", err)
 	m.mu.Lock()
 	canRetry := errors.Is(err, llm.ErrUnavailable) && !alreadyRetried && !st.done
@@ -656,9 +651,9 @@ func (m *SessionManager) handleInterviewerError(ctx context.Context, sess domain
 			inputSummary := topic.Title + " (" + string(kind) + ")"
 			messageID := domain.NewID()
 			limiter := newWordLimiter(maxInterviewerWords)
-			res, streamErr := st.runner.streamInterviewer(retryCtx, nextAttempt, interviewerMessages(job, topic, transcript, kind, feedback), inputSummary, messageID, limiter)
+			res, streamErr := st.runner.streamInterviewer(retryCtx, nextAttempt, interviewerMessages(topic, transcript, kind, feedback), inputSummary, messageID, limiter)
 			if streamErr != nil {
-				m.handleInterviewerError(retryCtx, sess, st, job, topic, kind, feedback, res.Attempt, streamErr, true)
+				m.handleInterviewerError(retryCtx, sess, st, topic, kind, feedback, res.Attempt, streamErr, true)
 				return
 			}
 			message := domain.Message{

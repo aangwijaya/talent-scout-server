@@ -15,6 +15,15 @@ import (
 // never reach the trusted "previous plan was rejected" feedback verbatim.
 const unknownRubricKeyPlaceholder = "unknown rubric key"
 
+// A topic's substance comes either from the role or from the CV. At least half
+// the topics (rounded up) must come from the role, so the interview cannot
+// drift into a CV-only conversation. Source is internal to the planner and is
+// never stored in the public domain.Topic shape.
+const (
+	topicSourceJob = "job"
+	topicSourceCV  = "cv"
+)
+
 // plannerUser builds the planner's user message. The title, description and
 // rubric text are recruiter-written, so they are untrusted and appear only
 // inside prompts.WrapUntrusted blocks; the CV is applicant-controlled and only
@@ -117,11 +126,57 @@ func plannerResponseFormat() *llm.ResponseFormat {
 	}
 }
 
+// plannedTopicWithSource is the planner's per-topic JSON. Source is an internal
+// planner field and is dropped when the plan becomes a []PlannedTopic.
+type plannedTopicWithSource struct {
+	Title        string   `json:"title"`
+	Goal         string   `json:"goal"`
+	RubricKeys   []string `json:"rubric_keys"`
+	SeedQuestion string   `json:"seed_question"`
+	Source       string   `json:"source"`
+}
+
+type plannedOutput struct {
+	Topics []plannedTopicWithSource `json:"topics"`
+}
+
+// parsePlan parses the planner's JSON and enforces the job/cv source rule. A
+// source violation is returned as an error so the planner loop treats it like
+// any other plan_check rejection and retries with the reason as feedback. A
+// missing source is read as "job": the structured-output schema requires it, and
+// the deterministic fake fixture predates the field.
 func parsePlan(content string) (Plan, error) {
-	var plan Plan
+	var parsed plannedOutput
 	content = strings.TrimSpace(content)
-	if err := json.Unmarshal([]byte(content), &plan); err != nil {
+	if err := json.Unmarshal([]byte(content), &parsed); err != nil {
 		return Plan{}, fmt.Errorf("parse plan JSON: %w", err)
+	}
+
+	plan := Plan{Topics: make([]PlannedTopic, len(parsed.Topics))}
+	jobTopics := 0
+	for i, topic := range parsed.Topics {
+		source := topic.Source
+		if source == "" {
+			source = topicSourceJob
+		}
+		switch source {
+		case topicSourceJob:
+			jobTopics++
+		case topicSourceCV:
+		default:
+			// Do not echo the value: the planner wrote it after reading the CV,
+			// so it is untrusted and this reason becomes trusted retry feedback.
+			return Plan{}, fmt.Errorf("topic %d source must be %q or %q", i+1, topicSourceJob, topicSourceCV)
+		}
+		plan.Topics[i] = PlannedTopic{
+			Title:        topic.Title,
+			Goal:         topic.Goal,
+			RubricKeys:   topic.RubricKeys,
+			SeedQuestion: topic.SeedQuestion,
+		}
+	}
+	if minJob := (len(plan.Topics) + 1) / 2; jobTopics < minJob {
+		return Plan{}, fmt.Errorf("at least half of the topics (rounded up) must have source %q, got %d of %d", topicSourceJob, jobTopics, len(plan.Topics))
 	}
 	return plan, nil
 }

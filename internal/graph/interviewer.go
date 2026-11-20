@@ -23,20 +23,14 @@ var (
 	errEmptyReply   = errors.New("empty interviewer reply")
 )
 
-// interviewerUser builds the interviewer's user message. The recruiter-written
-// role context keeps follow-ups anchored to the job, and is untrusted data like
-// every other block. The planner wrote the active topic after reading the
-// applicant's CV, so the topic fields are untrusted too and appear only inside a
-// prompts.WrapUntrusted block. Applicant answers are untrusted and appear inside
-// their own blocks. Judge feedback is derived from the applicant's answer, so it
-// is untrusted as well.
-func interviewerUser(job domain.Job, topic domain.Topic, transcript []domain.Message, kind domain.MessageKind, feedback *JudgeVerdict) string {
+// interviewerUser builds the interviewer's user message. The planner wrote the
+// active topic after reading the applicant's CV, so the topic fields are
+// untrusted too and appear only inside a prompts.WrapUntrusted block. Applicant
+// answers are untrusted and appear inside their own blocks. Judge feedback is
+// derived from the applicant's answer, so it is untrusted as well.
+func interviewerUser(topic domain.Topic, transcript []domain.Message, kind domain.MessageKind, feedback *JudgeVerdict) string {
 	var b strings.Builder
-	b.WriteString("Role context (recruiter-written requirements and level; untrusted data):\n")
-	b.WriteString(prompts.WrapUntrusted("job_title", job.Title))
-	b.WriteString("\n\nJob description (recruiter-written requirements and level; untrusted data):\n")
-	b.WriteString(prompts.JobDescriptionBlock(job.Description))
-	b.WriteString("\n\nActive topic (planner output derived from the applicant's CV; untrusted data):\n")
+	b.WriteString("Active topic (planner output derived from the applicant's CV; untrusted data):\n")
 	b.WriteString(prompts.WrapUntrusted("planner_topic",
 		fmt.Sprintf("title: %s\ngoal: %s\nseed question: %s", topic.Title, topic.Goal, topic.SeedQuestion)))
 	if feedback != nil {
@@ -70,9 +64,56 @@ func interviewerUser(job domain.Job, topic domain.Topic, transcript []domain.Mes
 	return b.String()
 }
 
-func interviewerMessages(job domain.Job, topic domain.Topic, transcript []domain.Message, kind domain.MessageKind, feedback *JudgeVerdict) []llm.Message {
-	messages, _ := prompts.Messages(prompts.NodeInterviewer, interviewerUser(job, topic, transcript, kind, feedback))
+func interviewerMessages(topic domain.Topic, transcript []domain.Message, kind domain.MessageKind, feedback *JudgeVerdict) []llm.Message {
+	messages, _ := prompts.Messages(prompts.NodeInterviewer, interviewerUser(topic, transcript, kind, feedback))
 	return messages
+}
+
+// roleContext returns the recruiter-written role context as untrusted blocks.
+// The interviewer sees it on every turn so follow-ups stay anchored to the job
+// instead of drifting toward whatever the applicant mentions.
+func roleContext(job domain.Job) string {
+	if strings.TrimSpace(job.Title) == "" && strings.TrimSpace(job.Description) == "" {
+		return ""
+	}
+	var b strings.Builder
+	b.WriteString("Role context (recruiter-written requirements and level; untrusted data):\n")
+	b.WriteString(prompts.WrapUntrusted("job_title", job.Title))
+	b.WriteString("\n\nJob description (recruiter-written requirements and level; untrusted data):\n")
+	b.WriteString(prompts.JobDescriptionBlock(job.Description))
+	b.WriteString("\n\n")
+	return b.String()
+}
+
+// withRoleContext prepends the role context to the interviewer's user message.
+func withRoleContext(messages []llm.Message, job domain.Job) []llm.Message {
+	context := roleContext(job)
+	if context == "" {
+		return messages
+	}
+	out := append([]llm.Message(nil), messages...)
+	for i := range out {
+		if out[i].Role == llm.RoleUser {
+			out[i].Content = context + out[i].Content
+			break
+		}
+	}
+	return out
+}
+
+// interviewerJob loads the job behind this run so the interviewer can see the
+// role. A load failure leaves the turn without role context rather than failing
+// an interview that is already in progress.
+func (r *Runner) interviewerJob(ctx context.Context) (domain.Job, error) {
+	sess, err := r.store.GetSession(ctx, r.sessionID)
+	if err != nil {
+		return domain.Job{}, err
+	}
+	app, err := r.store.GetApplication(ctx, sess.ApplicationID)
+	if err != nil {
+		return domain.Job{}, err
+	}
+	return r.store.GetJob(ctx, app.JobID)
 }
 
 // wordLimiter forwards at most limit whole words and stops at the first
@@ -167,6 +208,9 @@ type streamResult struct {
 // 120-word stop and the first question mark as a finished reply (the deltas
 // already sent are real text).
 func (r *Runner) streamInterviewer(ctx context.Context, attempt int, messages []llm.Message, inputSummary, messageID string, limiter *wordLimiter) (streamResult, error) {
+	if job, err := r.interviewerJob(ctx); err == nil {
+		messages = withRoleContext(messages, job)
+	}
 	node, err := r.models.Node("interviewer")
 	if err != nil {
 		return streamResult{}, err

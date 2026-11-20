@@ -141,8 +141,8 @@ default:
 nodes:
   planner:     { model: deepseek/deepseek-v4.1-flash, temperature: 0.2, max_tokens: 3000 }
   interviewer: { model: z-ai/glm-5.3-flash,           temperature: 0.6, max_tokens: 4000, stream: true, reasoning: { effort: low } }
-  judge:       { model: deepseek/deepseek-v4.1-flash, temperature: 0.0, max_tokens: 1200 }
-  scorer:      { model: deepseek/deepseek-v4.1-flash, temperature: 0.0, max_tokens: 4000 }
+  judge:       { model: deepseek/deepseek-v4.1-flash, temperature: 0.0, max_tokens: 2400 }
+  scorer:      { model: deepseek/deepseek-v4.1-flash, temperature: 0.0, max_tokens: 8000 }
 ```
 
 Note: model prices & availability can change — recheck at openrouter.ai/models before deploy. Measured live sessions on 2026-11-13 with the seed job and three sample CVs: normal runs cost `$0.006772` (26,882 in / 7,909 out) and `$0.008021` (36,380 in / 8,068 out); the retry-heavy one-word-answer run cost `$0.012421` (37,192 in / 17,599 out). Budget about `$0.013` per session; the earlier `~$0.005` estimate was low. The interviewer's 60 s timeout and 4000-token cap (with `reasoning: { effort: low }`) come from a recorded reply of 1827 completion tokens in 26.2 s and a 30 s timeout on a later turn.

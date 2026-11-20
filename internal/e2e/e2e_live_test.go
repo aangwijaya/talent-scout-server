@@ -57,6 +57,7 @@ func TestLiveEndToEnd(t *testing.T) {
 			})
 
 			result := live.Run(t, cv, answers, 5*time.Minute)
+			logPlannedTopics(t, recorder)
 
 			assistantTurns := 0
 			for _, message := range result.Messages {
@@ -282,6 +283,54 @@ type llmResponseInfo struct {
 	FinishReason     string
 	PromptTokens     int
 	CompletionTokens int
+}
+
+type llmChatResponse struct {
+	Choices []struct {
+		Message struct {
+			Content string `json:"content"`
+		} `json:"message"`
+	} `json:"choices"`
+}
+
+type plannedTopicInfo struct {
+	Title        string `json:"title"`
+	Source       string `json:"source"`
+	SeedQuestion string `json:"seed_question"`
+}
+
+// logPlannedTopics prints the planner's topics with their internal source and
+// first question, so a live run's PR body can show where each topic came from.
+func logPlannedTopics(t *testing.T, recorder *recordingTransport) {
+	t.Helper()
+	recorder.mu.Lock()
+	calls := append([]recordedCall(nil), recorder.calls...)
+	recorder.mu.Unlock()
+
+	for _, call := range calls {
+		var req llmRequestInfo
+		if err := json.Unmarshal(call.request, &req); err != nil {
+			continue
+		}
+		if nodeFromRequest(req) != "planner" {
+			continue
+		}
+		var body llmChatResponse
+		if err := json.Unmarshal(bytes.TrimSpace(call.response.bytes()), &body); err != nil || len(body.Choices) == 0 {
+			continue
+		}
+		var plan struct {
+			Topics []plannedTopicInfo `json:"topics"`
+		}
+		if err := json.Unmarshal([]byte(body.Choices[0].Message.Content), &plan); err != nil {
+			t.Logf("could not parse planner output: %v", err)
+			continue
+		}
+		for i, topic := range plan.Topics {
+			t.Logf("planned topic %d: source=%s title=%q first_question=%q",
+				i+1, topic.Source, topic.Title, topic.SeedQuestion)
+		}
+	}
 }
 
 func reportLLMCalls(t *testing.T, recorder *recordingTransport) {

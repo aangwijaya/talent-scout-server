@@ -609,6 +609,12 @@ func TestPlannerAndInterviewerUseUntrustedBlocks(t *testing.T) {
 		t.Error("interviewer system prompt changed")
 	}
 	interviewerUser := interviewerCall.Messages[1].Content
+	if !strings.Contains(interviewerUser, prompts.WrapUntrusted("job_title", job.Title)) {
+		t.Errorf("interviewer prompt has no job_title block for the role:\n%s", interviewerUser)
+	}
+	if !strings.Contains(interviewerUser, prompts.JobDescriptionBlock(job.Description)) {
+		t.Errorf("interviewer prompt has no job_description block for the role:\n%s", interviewerUser)
+	}
 	if strings.Count(interviewerUser, "<<<UNTRUSTED_DATA name=\"answer\">>>") != 1 {
 		t.Errorf("answer block count = %d, want 1", strings.Count(interviewerUser, "<<<UNTRUSTED_DATA name=\"answer\">>>"))
 	}

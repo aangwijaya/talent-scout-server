@@ -23,6 +23,22 @@ Rules:
 
 ## Entries
 
+### 2026-11-20 — #79 Judge and scorer were truncated at max_tokens
+- **Context:** The server#79 live gate (richer seed job, 3 sessions) failed two sessions on `finish_reason=length`: the judge at `max_tokens: 1200` on the second answer, and the scorer at `max_tokens: 4000` with 3,779 prompt tokens after a full 15-question interview. The applicant ended without a score.
+- **Problem:** `deepseek/deepseek-v4.1-flash` spends part of its output on reasoning, so caps sized for the visible JSON leave no headroom when the prompt grows.
+- **Cause:** The caps were set before the job description reached the prompts; a longer job means more reasoning.
+- **Lesson:** Size reasoning-model caps from the live gate, not from the expected JSON: judge `2400`, scorer `8000`. The scorer produced 4,000 tokens in under ~17 s, so 8,000 still fits the 60 s timeout. A cap only costs what is actually generated.
+- **Follow-up:** `TestJudgeAndScorerHaveRoomForReasoning` in `internal/e2e/models_config_test.go`.
+- **Repeated?:** same family as the 2026-11-18 interviewer timeout/max_tokens entry
+
+### 2026-11-20 — #79 A planner-output change can stay inside a narrow fence
+- **Context:** Adding a job/cv `source` to planned topics, a job-topic validation rule, and job context for the interviewer. The fence named only `planner.go`, `interviewer.go`, `prompts/*`, the graph tests, the seed job and `internal/e2e/*`.
+- **Problem:** The obvious implementation needs `PlannedTopic`/`CheckPlan` (`plan_check.go`), the job lookup in `session.go`, and a `source` in the fake planner reply (`fake_replies.go`) — all outside the fence, so the gate rejected the first attempt.
+- **Cause:** The plan type, its validation, the caller that supplies new inputs, and the fake fixture were outside the named files.
+- **Lesson:** Keep the change inside the fence instead of widening it: parse and validate `source` inside `parsePlan` (a source rejection still reaches the planner as a retryable `plan_check` failure through the existing `invalid_json` path), read a missing source as `job` so the existing fake fixture stays valid, and load the job for the interviewer in `streamInterviewer`, which already holds the runner's store and session id. Tests still drive the same helpers.
+- **Follow-up:** tests in `internal/graph/plan_check_test.go`, `internal/graph/job_context_test.go`, `internal/graph/session_test.go`
+- **Repeated?:** first time
+
 ### 2026-11-20 — #63 The answer-choice check flagged "pick one real example"
 - **Context:** The second live gate (e030e35, three sessions) had no two-part turns and no timeouts, but each session failed once on "offers answer choices".
 - **Problem:** The flagged turns asked the applicant to "pick one interaction where users felt lag … How did you capture it?". That is an open question about their own work, not multiple choice.

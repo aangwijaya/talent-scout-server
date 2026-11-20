@@ -5,8 +5,8 @@ default:
 nodes:
   planner:     { model: deepseek/deepseek-v4.1-flash, temperature: 0.2, max_tokens: 3000 }
   interviewer: { model: z-ai/glm-5.3-flash,           temperature: 0.6, max_tokens: 4000, stream: true, reasoning: { effort: low } }
-  judge:       { model: deepseek/deepseek-v4.1-flash, temperature: 0.0, max_tokens: 1200 }
-  scorer:      { model: deepseek/deepseek-v4.1-flash, temperature: 0.0, max_tokens: 4000 }
+  judge:       { model: deepseek/deepseek-v4.1-flash, temperature: 0.0, max_tokens: 2400 }
+  scorer:      { model: deepseek/deepseek-v4.1-flash, temperature: 0.0, max_tokens: 8000 }
   rubric_suggester: { model: deepseek/deepseek-v4.1-flash, temperature: 0.3, max_tokens: 3000 }
 prices:
   deepseek/deepseek-v4.1-flash: { in: 0.045, out: 0.5 }

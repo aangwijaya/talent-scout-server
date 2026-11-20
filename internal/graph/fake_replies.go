@@ -14,8 +14,9 @@ var FakeReplies = map[string]string{
 		{"title":"System design","goal":"Assess component boundaries, data flow, API contracts and trade-offs.","rubric_keys":["system_design"],"seed_question":"How would you split a complex page into components and decide what state belongs where?"},
 		{"title":"Testing, quality and communication","goal":"Assess testing, accessibility, attention to detail and clarity of explanation.","rubric_keys":["testing_quality","communication"],"seed_question":"Tell me how you test an interactive UI, including accessibility, and how you explain trade-offs to teammates."}
 	]}`,
-	"interviewer": "Tell me about a frontend performance problem you solved. What did you measure before and after, and what trade-offs did you accept?",
-	"judge":       `{"verdict":"follow_up","reason":"The answer needs a concrete example with measured outcomes.","missing":["specific project","before/after metrics"]}`,
+	"interviewer":  "Tell me about a frontend performance problem you solved. What did you measure before and after, and what trade-offs did you accept?",
+	"judge":        `{"verdict":"follow_up","reason":"The answer needs a concrete example with measured outcomes.","missing":["specific project","before/after metrics"]}`,
+	"authenticity": `{"level":"likely","reasons":["4 of 6 answers were pasted in full","answers read as generic and template-like, with no first-hand detail"]}`,
 	"scorer": `{"scores":[
 		{"rubric_key":"frontend_depth","score":4,"rationale":"Moved shared state into a store with a concrete reason.","evidence":[{"message_id":"m1","quote":"I moved the state into a separate store"}]},
 		{"rubric_key":"system_design","score":3,"rationale":"Reduced prop drilling after naming the layers.","evidence":[{"message_id":"m2","quote":"Props were crossing four layers"}]},

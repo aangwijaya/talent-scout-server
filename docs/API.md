@@ -46,7 +46,7 @@
 | GET | `/jobs/{jobId}/public` | — | Job info for the apply page |
 | POST | `/jobs/{jobId}/applications` | — | Apply (multipart) |
 | GET | `/jobs/{jobId}/applications` | recruiter | List applicants per job |
-| GET | `/applications/{applicationId}` | recruiter | Applicant detail + session + transcript + scores |
+| GET | `/applications/{applicationId}` | recruiter | Applicant detail + session + transcript + scores + authenticity |
 | GET | `/applications/{applicationId}/cv` | recruiter | Download CV (PDF) |
 | POST | `/applications/{applicationId}/decision` | recruiter | Shortlist / reject |
 | POST | `/applications/{applicationId}/resend-invite` | recruiter | New invite link (new token; `invited` sessions or `failed` applications); in `EMAIL_MODE=log` the link is returned for display in the dashboard |
@@ -86,6 +86,12 @@ Validation errors use 400 `validation_failed` with `details.field`, for example 
 // Message
 { "id": "7c9e6679-…", "role": "assistant", "kind": "question", "topic_id": "7c9e6679-…", "content": "...", "created_at": "..." }
 
+// MessageEntry
+{ "pasted_chars": 120, "typed_chars": 300, "duration_ms": 4500 }
+
+// Authenticity
+{ "level": "none" | "possible" | "likely", "reasons": ["..."], "assessed_at": "..." }
+
 // Topic
 { "id": "7c9e6679-…", "position": 1, "title": "State management", "goal": "...", "rubric_keys": ["frontend_depth"],
   "status": "done", "follow_up_count": 1 }
@@ -98,6 +104,8 @@ Validation errors use 400 `validation_failed` with `details.field`, for example 
 Enum: `Application.status` = `applied|invited|in_session|scoring|review|shortlisted|rejected|failed`; `Session.status` = `invited|active|completed|expired|revoked`; `finish_reason` = `completed|time_limit|question_limit|abandoned|failed`; `Score.status` = `valid|needs_manual` (when `needs_manual`, `score` = `null`).
 
 `ApplicationSummary.overall_score` is the weighted average of the criteria scores (`score × rubric weight`), counting only `Score.status = valid`; `needs_manual` criteria are excluded. It is `null` when no criterion has a valid score.
+
+`Message.entry` holds the applicant client's signals for one answer. It is returned only in the recruiter's `GET /applications/{applicationId}`: `null` for interviewer messages and when the applicant sent no entry. `GET /sessions/{token}/messages` never returns it.
 
 ## Endpoint Details
 
@@ -161,10 +169,11 @@ Error: 400 `validation_failed`/`invalid_file` (not a PDF / text cannot be extrac
   "graph_run": { "id": "7c9e6679-…", "status": "succeeded", "cost_usd": 0.0041 },
   "topics": [Topic],
   "messages": [Message],
-  "scores": [Score]
+  "scores": [Score],
+  "authenticity": Authenticity | null
 }
 ```
-`decision` = `null` if not decided yet. `graph_run` = `null` if the session has not started. The raw token is never returned here (the DB stores only the hash).
+`decision` = `null` if not decided yet. `graph_run` = `null` if the session has not started. `authenticity` is the advisory answer-authenticity assessment, or `null` when the run has not finished or the check failed. It never rejects an applicant and never changes a score. The raw token is never returned here (the DB stores only the hash).
 
 ### `GET /applications/{applicationId}/cv` → 200 `application/pdf`
 The server fetches the file from Supabase Storage (private bucket) and streams it to the recruiter. No Storage URL/signed URL is sent to the client.
@@ -189,14 +198,14 @@ Error: 404 `session_not_found`, 410 `session_expired`, 410 `session_completed` (
 The AI opening message is sent via SSE (`message.delta` → `message.completed`). The client opens `GET /sessions/{token}/events` **before** calling `start` so no deltas are lost (the stream accepts `invited` sessions). 409 `session_already_started`, 410 `session_expired`/`session_completed`.
 
 ### `GET /sessions/{token}/messages` → 200 `{ "items": [Message] }`
-Only `assistant` and `applicant` messages (no `system`). For resuming after a refresh.
+Only `assistant` and `applicant` messages (no `system`). For resuming after a refresh. The applicant's `entry` signals are never returned here.
 
 ### `POST /sessions/{token}/messages`
-Req `{ "content": "..." }` (1–2000 char) → 202
+Req `{ "content": "...", "entry"?: MessageEntry }` (`content` 1–2000 char; each `entry` counter is an integer from 0 to 10,000,000) → 202
 ```json
 { "message": Message, "awaiting": "assistant" }
 ```
-The AI reply arrives via SSE. 409 `invalid_state` if the AI has not finished replying (the applicant must wait for `message.completed`) or if the session is waiting for `POST /sessions/{token}/retry`; 410 if the session is finished/time is up; 429 `rate_limited` (max 20 messages/session/10 minutes; `Retry-After` in seconds).
+`entry` is optional so older clients keep working; a malformed `entry` is 400 `validation_failed` with `details.field`. It never changes the interview flow: it is stored with the applicant message and only reported to the recruiter. The AI reply arrives via SSE. 409 `invalid_state` if the AI has not finished replying (the applicant must wait for `message.completed`) or if the session is waiting for `POST /sessions/{token}/retry`; 410 if the session is finished/time is up; 429 `rate_limited` (max 20 messages/session/10 minutes; `Retry-After` in seconds).
 
 ### `POST /sessions/{token}/retry` → 202
 ```json
@@ -216,7 +225,7 @@ Accepts sessions in `invited` and `active` status. The client opens it before `P
   "last_seq": 42, "total_tokens_in": 12000, "total_tokens_out": 1800, "cost_usd": 0.0021
 }
 ```
-`nodes[].id` ∈ `planner|plan_check|interviewer|judge|guard|scorer|evidence_check|recruiter_gate`; `type` ∈ `splitter|worker|gate|code|human_gate`; `status` ∈ `pending|running|succeeded|failed|skipped`.
+`nodes[].id` ∈ `planner|plan_check|interviewer|judge|guard|scorer|evidence_check|authenticity|recruiter_gate`; `type` ∈ `splitter|worker|gate|code|human_gate`; `status` ∈ `pending|running|succeeded|failed|skipped`.
 
 ### `GET /graph-runs/{runId}/events?sse_token=...&since_seq=0` → `text/event-stream` (see EVENTS.md §4)
 Missing/invalid/expired `sse_token`, wrong `aud`, or a `run_id` mismatch → 401 `unauthorized`. `?access_token=` is no longer accepted.

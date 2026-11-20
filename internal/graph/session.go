@@ -211,6 +211,13 @@ func (m *SessionManager) runStep(st *liveSession, fn func()) {
 // stepMu, so the applicant event and the next step never touch the runner while
 // the previous step is still using it.
 func (m *SessionManager) SubmitAnswer(ctx context.Context, sess domain.Session, content string) (domain.Message, error) {
+	return m.SubmitAnswerWithEntry(ctx, sess, content, nil)
+}
+
+// SubmitAnswerWithEntry is SubmitAnswer plus the optional client entry signals.
+// The entry is stored with the answer for the recruiter only and never changes
+// the interview flow.
+func (m *SessionManager) SubmitAnswerWithEntry(ctx context.Context, sess domain.Session, content string, entry *domain.MessageEntry) (domain.Message, error) {
 	m.mu.Lock()
 	st, ok := m.states[sess.ID]
 	if !ok {
@@ -258,7 +265,7 @@ func (m *SessionManager) SubmitAnswer(ctx context.Context, sess domain.Session, 
 	// for the whole continueAfterAnswer step.
 	m.registry.Add(sess.ID)
 
-	answer, topic, err := m.storeApplicantAnswer(ctx, sess, st, content)
+	answer, topic, err := m.storeApplicantAnswer(ctx, sess, st, content, entry)
 	if err != nil {
 		m.mu.Lock()
 		st.busy = false
@@ -276,7 +283,7 @@ func (m *SessionManager) SubmitAnswer(ctx context.Context, sess domain.Session, 
 
 // storeApplicantAnswer persists the answer and publishes its message.completed
 // while the caller holds stepMu.
-func (m *SessionManager) storeApplicantAnswer(ctx context.Context, sess domain.Session, st *liveSession, content string) (domain.Message, *domain.Topic, error) {
+func (m *SessionManager) storeApplicantAnswer(ctx context.Context, sess domain.Session, st *liveSession, content string, entry *domain.MessageEntry) (domain.Message, *domain.Topic, error) {
 	topic, err := m.activeTopic(ctx, sess.ID)
 	if err != nil {
 		return domain.Message{}, nil, err
@@ -288,6 +295,7 @@ func (m *SessionManager) storeApplicantAnswer(ctx context.Context, sess domain.S
 		Role:      domain.MessageRoleApplicant,
 		Kind:      domain.MessageKindAnswer,
 		Content:   content,
+		Entry:     entry,
 		CreatedAt: time.Now().UTC().Truncate(time.Microsecond),
 	}); err != nil {
 		return domain.Message{}, nil, err
@@ -890,8 +898,10 @@ func (m *SessionManager) abortExternalTurn(st *liveSession) {
 // ended, so only the run and application state change here.
 func (m *SessionManager) failScoring(ctx context.Context, sess domain.Session, st *liveSession, err error) {
 	m.logger.Error("scoring failed", "session_id", sess.ID, "error", err)
-	if !st.executed["evidence_check"] {
-		_ = st.runner.EmitNodeSkipped(ctx, "evidence_check", "run_failed")
+	for _, nodeID := range []string{"evidence_check", "authenticity"} {
+		if !st.executed[nodeID] {
+			_ = st.runner.EmitNodeSkipped(ctx, nodeID, "run_failed")
+		}
 	}
 	_ = st.runner.Fail(ctx, "scoring_failed")
 	if app, appErr := m.store.GetApplication(ctx, sess.ApplicationID); appErr == nil && app.Status == domain.ApplicationStatusScoring {

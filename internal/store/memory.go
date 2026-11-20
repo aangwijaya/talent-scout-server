@@ -216,7 +216,7 @@ func (m *Memory) GetApplication(_ context.Context, id string) (domain.Applicatio
 	if !ok {
 		return domain.Application{}, ErrNotFound
 	}
-	return app, nil
+	return cloneApplication(app), nil
 }
 
 func (m *Memory) GetApplicationByJobEmail(_ context.Context, jobID, email string) (domain.Application, error) {
@@ -292,7 +292,20 @@ func (m *Memory) SetApplicationDecision(_ context.Context, id string, status dom
 	app.DecisionNote = note
 	app.DecidedAt = &decidedAt
 	m.applications[id] = app
-	return app, nil
+	return cloneApplication(app), nil
+}
+
+func (m *Memory) SetApplicationAuthenticity(_ context.Context, id string, authenticity *domain.Authenticity) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	app, ok := m.applications[id]
+	if !ok {
+		return ErrNotFound
+	}
+	app.Authenticity = cloneAuthenticity(authenticity)
+	m.applications[id] = app
+	return nil
 }
 
 func (m *Memory) CreateSession(_ context.Context, session domain.Session) error {
@@ -602,7 +615,7 @@ func (m *Memory) CreateMessage(_ context.Context, message domain.Message) error 
 	if message.CreatedAt.IsZero() {
 		message.CreatedAt = time.Now().UTC()
 	}
-	m.messages[message.ID] = message
+	m.messages[message.ID] = cloneMessage(message)
 	return nil
 }
 
@@ -618,7 +631,7 @@ func (m *Memory) ListMessagesBySession(_ context.Context, sessionID string, incl
 		if !includeSystem && message.Role == domain.MessageRoleSystem {
 			continue
 		}
-		messages = append(messages, message)
+		messages = append(messages, cloneMessage(message))
 	}
 	sort.Slice(messages, func(i, j int) bool {
 		if messages[i].CreatedAt.Equal(messages[j].CreatedAt) {
@@ -807,6 +820,28 @@ func cloneJob(job domain.Job) domain.Job {
 func cloneTopic(topic domain.Topic) domain.Topic {
 	topic.RubricKeys = append([]string(nil), topic.RubricKeys...)
 	return topic
+}
+
+func cloneApplication(app domain.Application) domain.Application {
+	app.Authenticity = cloneAuthenticity(app.Authenticity)
+	return app
+}
+
+func cloneAuthenticity(auth *domain.Authenticity) *domain.Authenticity {
+	if auth == nil {
+		return nil
+	}
+	clone := *auth
+	clone.Reasons = append([]string(nil), auth.Reasons...)
+	return &clone
+}
+
+func cloneMessage(message domain.Message) domain.Message {
+	if message.Entry != nil {
+		entry := *message.Entry
+		message.Entry = &entry
+	}
+	return message
 }
 
 func cloneScore(score domain.Score) domain.Score {

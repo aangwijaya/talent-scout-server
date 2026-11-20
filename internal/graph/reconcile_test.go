@@ -284,29 +284,30 @@ func TestReconcileFailsScoringApplicationAfterAbandonedSession(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ListNodeEvents: %v", err)
 	}
-	// Boot-appended tail: node.failed(scorer) → node.skipped(evidence_check) → run.failed.
+	// Boot-appended tail: node.failed(scorer) → node.skipped(evidence_check) →
+	// node.skipped(authenticity) → run.failed.
 	var tail []string
-	for _, event := range events[len(events)-3:] {
+	for _, event := range events[len(events)-4:] {
 		node := "-"
 		if event.NodeID != nil {
 			node = *event.NodeID
 		}
 		tail = append(tail, event.Type+":"+node)
 	}
-	want := []string{EventNodeFailed + ":scorer", EventNodeSkipped + ":evidence_check", EventRunFailed + ":-"}
+	want := []string{EventNodeFailed + ":scorer", EventNodeSkipped + ":evidence_check", EventNodeSkipped + ":authenticity", EventRunFailed + ":-"}
 	for i := range want {
 		if tail[i] != want[i] {
 			t.Fatalf("boot events = %v, want %v", tail, want)
 		}
 	}
 	var failed NodeFailed
-	if err := json.Unmarshal(events[len(events)-3].Payload, &failed); err != nil {
+	if err := json.Unmarshal(events[len(events)-4].Payload, &failed); err != nil {
 		t.Fatalf("unmarshal node.failed: %v", err)
 	}
 	if failed.Error != restartFailureReason || failed.WillRetry {
 		t.Errorf("node.failed = %+v, want server_restart/will_retry=false", failed)
 	}
-	if a := events[len(events)-3].Attempt; a == nil || *a != 1 {
+	if a := events[len(events)-4].Attempt; a == nil || *a != 1 {
 		t.Errorf("node.failed attempt = %v, want 1", a)
 	}
 	var skipped NodeSkipped

@@ -370,6 +370,7 @@ func TestPostgresStore(t *testing.T) {
 		Role:      domain.MessageRoleApplicant,
 		Kind:      domain.MessageKindAnswer,
 		Content:   "I moved state into a separate store.",
+		Entry:     &domain.MessageEntry{PastedChars: 120, TypedChars: 300, DurationMS: 4500},
 	}
 	if err := s.CreateMessage(ctx, message); err != nil {
 		t.Fatalf("CreateMessage: %v", err)
@@ -377,6 +378,29 @@ func TestPostgresStore(t *testing.T) {
 	messages, err := s.ListMessagesBySession(ctx, session.ID, false)
 	if err != nil || len(messages) != 1 {
 		t.Fatalf("ListMessagesBySession = %+v, %v", messages, err)
+	}
+	if messages[0].Entry == nil || *messages[0].Entry != *message.Entry {
+		t.Fatalf("stored entry = %+v, want %+v", messages[0].Entry, message.Entry)
+	}
+
+	assessedAt := time.Now().UTC().Truncate(time.Microsecond)
+	auth := domain.Authenticity{
+		Level:      domain.AuthenticityLevelPossible,
+		Reasons:    []string{"1 answer was pasted in full"},
+		AssessedAt: assessedAt,
+	}
+	if err := s.SetApplicationAuthenticity(ctx, app.ID, &auth); err != nil {
+		t.Fatalf("SetApplicationAuthenticity: %v", err)
+	}
+	assessed, err := s.GetApplication(ctx, app.ID)
+	if err != nil {
+		t.Fatalf("GetApplication after authenticity: %v", err)
+	}
+	if assessed.Authenticity == nil || assessed.Authenticity.Level != domain.AuthenticityLevelPossible || len(assessed.Authenticity.Reasons) != 1 {
+		t.Fatalf("stored authenticity = %+v, want the possible assessment", assessed.Authenticity)
+	}
+	if !assessed.Authenticity.AssessedAt.Equal(assessedAt) {
+		t.Fatalf("assessed_at = %s, want %s", assessed.Authenticity.AssessedAt, assessedAt)
 	}
 
 	scoreValue := 4

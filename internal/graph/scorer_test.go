@@ -177,7 +177,7 @@ func TestScorerEvidenceRetryThenSuccess(t *testing.T) {
 			if payload.From == "evidence_check" && payload.To == "scorer" && payload.Label == "retry" {
 				retryEdge++
 			}
-			if payload.From == "evidence_check" && payload.To == "recruiter_gate" && payload.Label == "scored" {
+			if payload.From == "authenticity" && payload.To == "recruiter_gate" && payload.Label == "scored" {
 				recruiterEdge++
 			}
 		}

@@ -21,10 +21,11 @@ func testModels() config.ModelsConfig {
 	return config.ModelsConfig{
 		Default: config.Defaults{Temperature: 0.3, TimeoutSeconds: 30, MaxRetriesOnHTTPError: 1},
 		Nodes: map[string]config.Node{
-			"planner":     {Model: "deepseek/deepseek-v4.1-flash", Temperature: f64(0.2), MaxTokens: 800},
-			"interviewer": {Model: "z-ai/glm-5.3-flash", MaxTokens: 300, Stream: true},
-			"judge":       {Model: "deepseek/deepseek-v4.1-flash", MaxTokens: 200},
-			"scorer":      {Model: "deepseek/deepseek-v4.1-flash", MaxTokens: 1200},
+			"planner":      {Model: "deepseek/deepseek-v4.1-flash", Temperature: f64(0.2), MaxTokens: 800},
+			"interviewer":  {Model: "z-ai/glm-5.3-flash", MaxTokens: 300, Stream: true},
+			"judge":        {Model: "deepseek/deepseek-v4.1-flash", MaxTokens: 200},
+			"scorer":       {Model: "deepseek/deepseek-v4.1-flash", MaxTokens: 1200},
+			"authenticity": {Model: "deepseek/deepseek-v4.1-flash", MaxTokens: 1200},
 		},
 		Prices: map[string]config.Price{
 			"deepseek/deepseek-v4.1-flash": {In: 0.045, Out: 0.5},
@@ -149,8 +150,8 @@ func TestRunStartedPayload(t *testing.T) {
 	if payload.SessionID == "" {
 		t.Error("run.started session_id is empty")
 	}
-	if len(payload.Nodes) != 8 {
-		t.Errorf("nodes = %d, want 8", len(payload.Nodes))
+	if len(payload.Nodes) != len(NodeIDs) {
+		t.Errorf("nodes = %d, want %d", len(payload.Nodes), len(NodeIDs))
 	}
 	if payload.Nodes[0].ID != "planner" || payload.Nodes[0].Type != "splitter" {
 		t.Errorf("nodes[0] = %+v, want planner/splitter", payload.Nodes[0])

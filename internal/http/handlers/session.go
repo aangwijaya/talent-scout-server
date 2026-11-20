@@ -208,11 +208,50 @@ func (h *Sessions) Messages(w http.ResponseWriter, r *http.Request) {
 	if messages == nil {
 		messages = []domain.Message{}
 	}
+	// Entry signals are recruiter-only; the applicant's transcript never
+	// carries them.
+	for i := range messages {
+		messages[i].Entry = nil
+	}
 	apierror.JSON(w, http.StatusOK, map[string]any{"items": messages})
 }
 
 type sendMessageRequest struct {
-	Content string `json:"content"`
+	Content string            `json:"content"`
+	Entry   *sendMessageEntry `json:"entry"`
+}
+
+// sendMessageEntry uses pointers so a present object must carry all three
+// counters; a missing counter is malformed rather than a silent zero.
+type sendMessageEntry struct {
+	PastedChars *int64 `json:"pasted_chars"`
+	TypedChars  *int64 `json:"typed_chars"`
+	DurationMS  *int64 `json:"duration_ms"`
+}
+
+const maxEntryCounter = 10_000_000
+
+func (e *sendMessageEntry) validate() (*domain.MessageEntry, map[string]string) {
+	if e == nil {
+		return nil, nil
+	}
+	for field, value := range map[string]*int64{
+		"entry.pasted_chars": e.PastedChars,
+		"entry.typed_chars":  e.TypedChars,
+		"entry.duration_ms":  e.DurationMS,
+	} {
+		if value == nil {
+			return nil, map[string]string{"field": field}
+		}
+		if *value < 0 || *value > maxEntryCounter {
+			return nil, map[string]string{"field": field}
+		}
+	}
+	return &domain.MessageEntry{
+		PastedChars: int(*e.PastedChars),
+		TypedChars:  int(*e.TypedChars),
+		DurationMS:  int(*e.DurationMS),
+	}, nil
 }
 
 type sendMessageResponse struct {
@@ -248,13 +287,18 @@ func (h *Sessions) SendMessage(w http.ResponseWriter, r *http.Request) {
 		apierror.Write(w, http.StatusBadRequest, apierror.CodeValidationFailed, "content must be 1-2000 characters", map[string]string{"field": "content"})
 		return
 	}
+	entry, details := req.Entry.validate()
+	if details != nil {
+		apierror.Write(w, http.StatusBadRequest, apierror.CodeValidationFailed, "entry must contain non-negative counters up to 10000000", details)
+		return
+	}
 
 	if ok, retryAfter := h.messageLimiter.AllowWithRetry(sess.ID); !ok {
 		apierror.WriteRateLimited(w, retryAfter)
 		return
 	}
 
-	message, err := h.manager.SubmitAnswer(r.Context(), sess, content)
+	message, err := h.manager.SubmitAnswerWithEntry(r.Context(), sess, content, entry)
 	if err != nil {
 		if errors.Is(err, graph.ErrInvalidState) {
 			apierror.Write(w, http.StatusConflict, apierror.CodeInvalidState, "the assistant is still replying", nil)
@@ -267,7 +311,31 @@ func (h *Sessions) SendMessage(w http.ResponseWriter, r *http.Request) {
 		apierror.Write(w, http.StatusInternalServerError, apierror.CodeInternalError, "could not store the answer", nil)
 		return
 	}
-	apierror.JSON(w, http.StatusAccepted, sendMessageResponse{Message: message, Awaiting: "assistant"})
+	apierror.JSON(w, http.StatusAccepted, sendMessageResponse{Message: applicantMessage(message), Awaiting: "assistant"})
+}
+
+// applicantMessage hides the recruiter-only entry signals from an applicant
+// response. The stored message keeps them.
+func applicantMessage(message domain.Message) domain.Message {
+	message.Entry = nil
+	return message
+}
+
+func sessionEventForApplicant(event domain.NodeEvent) domain.NodeEvent {
+	if event.Type != graph.EventMessageCompleted {
+		return event
+	}
+	var payload graph.MessageCompleted
+	if err := json.Unmarshal(event.Payload, &payload); err != nil || payload.Message.Entry == nil {
+		return event
+	}
+	payload.Message = applicantMessage(payload.Message)
+	encoded, err := json.Marshal(payload)
+	if err != nil {
+		return event
+	}
+	event.Payload = encoded
+	return event
 }
 
 // Retry re-runs the step waiting for a retry (after a retryable error event).
@@ -324,7 +392,7 @@ func (h *Sessions) Events(w http.ResponseWriter, r *http.Request) {
 			if !sse.IsSessionEvent(event.Type) || event.Seq <= lastSeq {
 				continue
 			}
-			if err := writer.WriteEvent(event); err != nil {
+			if err := writer.WriteEvent(sessionEventForApplicant(event)); err != nil {
 				return
 			}
 			lastSeq = event.Seq
@@ -355,7 +423,7 @@ func (h *Sessions) Events(w http.ResponseWriter, r *http.Request) {
 			if event.Type != graph.EventMessageDelta && event.Seq > 0 && event.Seq <= lastSeq {
 				continue
 			}
-			if err := writer.WriteEvent(event); err != nil {
+			if err := writer.WriteEvent(sessionEventForApplicant(event)); err != nil {
 				return
 			}
 			if event.Seq > lastSeq {

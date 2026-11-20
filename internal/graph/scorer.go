@@ -272,9 +272,6 @@ func (m *SessionManager) runScoring(ctx context.Context, sess domain.Session, st
 			if err := st.runner.EmitCheckPassed(ctx, "evidence_check", attempt, evidenceCheckName, map[string]any{}); err != nil {
 				return err
 			}
-			if err := st.runner.EmitEdge(ctx, "evidence_check", "recruiter_gate", "scored"); err != nil {
-				return err
-			}
 			break
 		}
 
@@ -286,9 +283,6 @@ func (m *SessionManager) runScoring(ctx context.Context, sess domain.Session, st
 			return err
 		}
 		if attempt == maxScorerAttempts {
-			if err := st.runner.EmitEdge(ctx, "evidence_check", "recruiter_gate", "scored"); err != nil {
-				return err
-			}
 			break
 		}
 
@@ -310,6 +304,13 @@ func (m *SessionManager) runScoring(ctx context.Context, sess domain.Session, st
 		if err := m.emitNoScorableEvaluation(ctx, st); err != nil {
 			return err
 		}
+	}
+	if err := st.runner.EmitEdge(ctx, "evidence_check", "authenticity", "scored"); err != nil {
+		return err
+	}
+	m.runAuthenticity(ctx, sess, st, messages)
+	if err := st.runner.EmitEdge(ctx, "authenticity", "recruiter_gate", "scored"); err != nil {
+		return err
 	}
 
 	final := make([]domain.Score, 0, len(job.Rubric))
@@ -385,7 +386,7 @@ func (m *SessionManager) emitNoScorableEvaluation(ctx context.Context, st *liveS
 	}); err != nil {
 		return err
 	}
-	return st.runner.EmitEdge(ctx, "evidence_check", "recruiter_gate", "scored")
+	return nil
 }
 
 func evidenceFeedback(issues []evidenceIssue) string {

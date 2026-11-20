@@ -117,6 +117,10 @@ func authenticityResponseFormat() *llm.ResponseFormat {
 // scoring path still completes the run.
 func (m *SessionManager) runAuthenticity(ctx context.Context, sess domain.Session, st *liveSession, messages []domain.Message) {
 	st.executed["authenticity"] = true
+	// Clear an earlier assessment first, so a failed check on a rescore leaves null.
+	if err := m.store.SetApplicationAuthenticity(ctx, sess.ApplicationID, nil); err != nil {
+		m.logger.Error("clear authenticity failed", "session_id", sess.ID, "error", err)
+	}
 	var output AuthenticityOutput
 	var parseErr error
 	_, _, err := st.runner.runLLMNodeWithSummary(ctx, "authenticity", 1, llm.Request{

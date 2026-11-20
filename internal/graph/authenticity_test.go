@@ -6,9 +6,11 @@ import (
 	"errors"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/aangwijaya/talent-scout-server/internal/domain"
 	"github.com/aangwijaya/talent-scout-server/internal/llm"
+	"github.com/aangwijaya/talent-scout-server/internal/prompts"
 	"github.com/aangwijaya/talent-scout-server/internal/store"
 )
 
@@ -26,7 +28,17 @@ type authenticityScenario struct {
 // reply and failure are injected per test.
 func runAuthenticityScenario(t *testing.T, answers []string, entries []*domain.MessageEntry, reply string, authErr error) authenticityScenario {
 	t.Helper()
+	return runAuthenticityScenarioAfter(t, answers, entries, reply, authErr, nil)
+}
+
+// runAuthenticityScenarioAfter is runAuthenticityScenario with a hook that runs on
+// the seeded store before the interview starts.
+func runAuthenticityScenarioAfter(t *testing.T, answers []string, entries []*domain.MessageEntry, reply string, authErr error, before func(*store.Memory, domain.Session)) authenticityScenario {
+	t.Helper()
 	st, sess := seedGraphSession(t)
+	if before != nil {
+		before(st, sess)
+	}
 	client := &stubClient{
 		stream: func(req llm.Request, onDelta func(string) error) (llm.Response, error) {
 			content := FakeReplies[req.Node]
@@ -111,6 +123,11 @@ func TestAuthenticityNodeCarriesEntrySignalsAndStoresLikely(t *testing.T) {
 	for _, want := range []string{"pasted_chars: 900", "typed_chars: 0", "duration_ms: 500", "paste_ratio: 1.00", "chars_per_second: 0.00"} {
 		if !strings.Contains(input, want) {
 			t.Errorf("authenticity input lacks %q:\n%s", want, input)
+		}
+	}
+	for _, answer := range answers {
+		if !strings.Contains(input, prompts.WrapUntrusted("answer", answer)) {
+			t.Errorf("authenticity input does not wrap answer %q as untrusted data:\n%s", answer, input)
 		}
 	}
 	if !strings.Contains(input, "<<<UNTRUSTED_DATA") {
@@ -295,5 +312,25 @@ func assertAuthenticityEventOrder(t *testing.T, events []domain.NodeEvent) {
 	}
 	if !(evidenceToAuth < authStart && authStart < authDone && authDone < authToGate && authToGate < completed) {
 		t.Errorf("authenticity events out of order: %v", names)
+	}
+}
+
+// A rescore (e.g. after resend-invite) whose authenticity check fails must not
+// leave an earlier assessment on the application.
+func TestAuthenticityFailureClearsAnEarlierAssessment(t *testing.T) {
+	answers := []string{"answer one", "answer two", "answer three"}
+	stale := &domain.Authenticity{Level: domain.AuthenticityLevelLikely, Reasons: []string{"stale"}, AssessedAt: time.Now().UTC()}
+	scenario := runAuthenticityScenarioAfter(t, answers, nil, "", errors.New("authenticity transport failed"),
+		func(st *store.Memory, sess domain.Session) {
+			if err := st.SetApplicationAuthenticity(context.Background(), sess.ApplicationID, stale); err != nil {
+				t.Fatalf("seed stale authenticity: %v", err)
+			}
+		})
+	app, err := scenario.store.GetApplication(context.Background(), scenario.session.ApplicationID)
+	if err != nil {
+		t.Fatalf("GetApplication: %v", err)
+	}
+	if app.Authenticity != nil {
+		t.Errorf("authenticity = %+v, want null: the earlier assessment must be cleared", app.Authenticity)
 	}
 }

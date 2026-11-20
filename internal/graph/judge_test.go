@@ -103,7 +103,7 @@ func TestInterviewerPromptWrapsEarlierQuestions(t *testing.T) {
 	fake := llm.NewFake(map[string]string{"interviewer": "next question"})
 	if _, err := fake.Chat(context.Background(), llm.Request{
 		Node:     "interviewer",
-		Messages: interviewerMessages(topic, transcript, domain.MessageKindFollowUp, nil),
+		Messages: interviewerMessages(domain.Job{}, topic, transcript, domain.MessageKindFollowUp, nil),
 	}); err != nil {
 		t.Fatalf("fake Chat: %v", err)
 	}
@@ -165,7 +165,7 @@ func TestFollowUpPromptWrapsJudgeFeedback(t *testing.T) {
 	fake := llm.NewFake(map[string]string{"interviewer": "next question"})
 	if _, err := fake.Chat(context.Background(), llm.Request{
 		Node:     "interviewer",
-		Messages: interviewerMessages(topic, nil, domain.MessageKindFollowUp, &verdict),
+		Messages: interviewerMessages(domain.Job{}, topic, nil, domain.MessageKindFollowUp, &verdict),
 	}); err != nil {
 		t.Fatalf("fake Chat: %v", err)
 	}

@@ -23,6 +23,14 @@ Rules:
 
 ## Entries
 
+### 2026-11-20 — #79 A planner-output change reaches beyond planner.go
+- **Context:** Adding a job/cv `source` to planned topics, a job-topic validation rule, and job context for the interviewer.
+- **Problem:** The node fence named `planner.go`, `interviewer.go` and their tests, but the required edits also live in `plan_check.go` (`PlannedTopic` + `CheckPlan`), `session.go` (the only caller that can load the job for the interviewer) and `fake_replies.go` (the fake plan must carry `source` to pass plan_check).
+- **Cause:** The fence listed the feature's headline files, not the helpers that own the types, validation and fixtures.
+- **Lesson:** A fence for a planner-output change should name the files that own the plan type, its validation, the caller that supplies new inputs, and the fake fixture; otherwise the node cannot be implemented without stepping outside it.
+- **Follow-up:** none
+- **Repeated?:** first time
+
 ### 2026-11-20 — #63 The answer-choice check flagged "pick one real example"
 - **Context:** The second live gate (e030e35, three sessions) had no two-part turns and no timeouts, but each session failed once on "offers answer choices".
 - **Problem:** The flagged turns asked the applicant to "pick one interaction where users felt lag … How did you capture it?". That is an open question about their own work, not multiple choice.

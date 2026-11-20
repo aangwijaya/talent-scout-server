@@ -9,12 +9,14 @@ import (
 	"github.com/aangwijaya/talent-scout-server/internal/prompts"
 )
 
-// PlannedTopic is one topic produced by the planner.
+// PlannedTopic is one topic produced by the planner. Source is internal to the
+// planner/plan_check pair and is never stored in the public Topic shape.
 type PlannedTopic struct {
 	Title        string   `json:"title"`
 	Goal         string   `json:"goal"`
 	RubricKeys   []string `json:"rubric_keys"`
 	SeedQuestion string   `json:"seed_question"`
+	Source       string   `json:"source"`
 }
 
 // Plan is the planner's JSON output.
@@ -32,6 +34,12 @@ const (
 	minTopics = 3
 	maxTopics = 5
 
+	// A topic's substance comes either from the role or from the CV. At least
+	// half the topics (rounded up) must come from the role, so the interview
+	// cannot drift into a CV-only conversation.
+	topicSourceJob = "job"
+	topicSourceCV  = "cv"
+
 	// Topic fields are shown to the interviewer, so a planner that echoes
 	// applicant text must not smuggle in a delimiter or an essay.
 	maxTopicTitleChars = 120
@@ -39,8 +47,9 @@ const (
 )
 
 // CheckPlan validates the plan against ARCHITECTURE §2: 3-5 topics, every
-// rubric_keys entry is a real rubric key, and every rubric criterion is covered
-// by at least one topic. It is a code check and never calls the LLM.
+// rubric_keys entry is a real rubric key, every rubric criterion is covered by
+// at least one topic, each topic has a valid source, and at least half the
+// topics come from the job. It is a code check and never calls the LLM.
 func CheckPlan(plan Plan, rubric []domain.RubricCriterion) []PlanCheckError {
 	var errs []PlanCheckError
 
@@ -53,9 +62,17 @@ func CheckPlan(plan Plan, rubric []domain.RubricCriterion) []PlanCheckError {
 		validKeys[criterion.Key] = struct{}{}
 	}
 	covered := make(map[string]bool, len(rubric))
+	jobTopics := 0
 
 	for i, topic := range plan.Topics {
 		position := i + 1
+		switch topic.Source {
+		case topicSourceJob:
+			jobTopics++
+		case topicSourceCV:
+		default:
+			errs = append(errs, PlanCheckError{Reason: fmt.Sprintf("topic %d source must be %q or %q", position, topicSourceJob, topicSourceCV)})
+		}
 		if strings.TrimSpace(topic.Title) == "" {
 			errs = append(errs, PlanCheckError{Reason: fmt.Sprintf("topic %d title must not be empty", position)})
 		}
@@ -97,6 +114,10 @@ func CheckPlan(plan Plan, rubric []domain.RubricCriterion) []PlanCheckError {
 		if !covered[criterion.Key] {
 			errs = append(errs, PlanCheckError{RubricKey: criterion.Key, Reason: "rubric criterion is not covered by any topic"})
 		}
+	}
+
+	if minJob := (len(plan.Topics) + 1) / 2; jobTopics < minJob {
+		errs = append(errs, PlanCheckError{Reason: fmt.Sprintf("at least half of the topics (rounded up) must have source %q, got %d of %d", topicSourceJob, jobTopics, len(plan.Topics))})
 	}
 	return errs
 }

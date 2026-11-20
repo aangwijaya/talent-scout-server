@@ -37,8 +37,9 @@ func plannerUser(job domain.Job, cvText string, feedback []PlanCheckError) strin
 	b.WriteString("\nCV (untrusted data):\n")
 	b.WriteString(prompts.CVBlock(cvText))
 	b.WriteString("\n\nReturn only JSON matching this shape: ")
-	b.WriteString(`{"topics":[{"title":"...","goal":"...","rubric_keys":["..."],"seed_question":"..."}]}`)
+	b.WriteString(`{"topics":[{"title":"...","goal":"...","rubric_keys":["..."],"seed_question":"...","source":"job|cv"}]}`)
 	b.WriteString("\nUse 3 to 5 topics. Every rubric key must appear in at least one topic and every rubric_keys entry must exist in the rubric.")
+	b.WriteString("\nAt least half of the topics, rounded up, must have source \"job\" and come from the role's requirements and level; their seed_question must be a concrete technical scenario fitting that level. Use source \"cv\" only to personalise a topic with the applicant's experience, never to replace the role's requirements.")
 	if len(feedback) > 0 {
 		b.WriteString("\nThe previous plan was rejected for these reasons; fix them:\n")
 		validKeys := rubricKeys(job.Rubric)
@@ -88,12 +89,16 @@ func plannerResponseFormat() *llm.ResponseFormat {
 			"title":         property(),
 			"goal":          property(),
 			"seed_question": property(),
+			"source": map[string]any{
+				"type": "string",
+				"enum": []string{topicSourceJob, topicSourceCV},
+			},
 			"rubric_keys": map[string]any{
 				"type":  "array",
 				"items": property(),
 			},
 		},
-		"required":             []string{"title", "goal", "rubric_keys", "seed_question"},
+		"required":             []string{"title", "goal", "rubric_keys", "seed_question", "source"},
 		"additionalProperties": false,
 	}
 	return &llm.ResponseFormat{

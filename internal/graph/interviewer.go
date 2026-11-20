@@ -23,14 +23,20 @@ var (
 	errEmptyReply   = errors.New("empty interviewer reply")
 )
 
-// interviewerUser builds the interviewer's user message. The planner wrote the
-// active topic after reading the applicant's CV, so the topic fields are
-// untrusted too and appear only inside a prompts.WrapUntrusted block. Applicant
-// answers are untrusted and appear inside their own blocks. Judge feedback is
-// derived from the applicant's answer, so it is untrusted as well.
-func interviewerUser(topic domain.Topic, transcript []domain.Message, kind domain.MessageKind, feedback *JudgeVerdict) string {
+// interviewerUser builds the interviewer's user message. The recruiter-written
+// role context keeps follow-ups anchored to the job, and is untrusted data like
+// every other block. The planner wrote the active topic after reading the
+// applicant's CV, so the topic fields are untrusted too and appear only inside a
+// prompts.WrapUntrusted block. Applicant answers are untrusted and appear inside
+// their own blocks. Judge feedback is derived from the applicant's answer, so it
+// is untrusted as well.
+func interviewerUser(job domain.Job, topic domain.Topic, transcript []domain.Message, kind domain.MessageKind, feedback *JudgeVerdict) string {
 	var b strings.Builder
-	b.WriteString("Active topic (planner output derived from the applicant's CV; untrusted data):\n")
+	b.WriteString("Role context (recruiter-written requirements and level; untrusted data):\n")
+	b.WriteString(prompts.WrapUntrusted("job_title", job.Title))
+	b.WriteString("\n\nJob description (recruiter-written requirements and level; untrusted data):\n")
+	b.WriteString(prompts.JobDescriptionBlock(job.Description))
+	b.WriteString("\n\nActive topic (planner output derived from the applicant's CV; untrusted data):\n")
 	b.WriteString(prompts.WrapUntrusted("planner_topic",
 		fmt.Sprintf("title: %s\ngoal: %s\nseed question: %s", topic.Title, topic.Goal, topic.SeedQuestion)))
 	if feedback != nil {
@@ -64,8 +70,8 @@ func interviewerUser(topic domain.Topic, transcript []domain.Message, kind domai
 	return b.String()
 }
 
-func interviewerMessages(topic domain.Topic, transcript []domain.Message, kind domain.MessageKind, feedback *JudgeVerdict) []llm.Message {
-	messages, _ := prompts.Messages(prompts.NodeInterviewer, interviewerUser(topic, transcript, kind, feedback))
+func interviewerMessages(job domain.Job, topic domain.Topic, transcript []domain.Message, kind domain.MessageKind, feedback *JudgeVerdict) []llm.Message {
+	messages, _ := prompts.Messages(prompts.NodeInterviewer, interviewerUser(job, topic, transcript, kind, feedback))
 	return messages
 }
 

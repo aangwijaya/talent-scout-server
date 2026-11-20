@@ -29,6 +29,16 @@ func sourcedPlanJSON(sources ...string) string {
 	return `{"topics":[` + strings.Join(topics, ",") + `]}`
 }
 
+// "At least half" rounds up: with an odd topic count, job topics must be the majority.
+func TestParsePlanRoundsJobMinimumUp(t *testing.T) {
+	if _, err := parsePlan(sourcedPlanJSON("job", "cv", "cv")); err == nil {
+		t.Error("parsePlan(1 job of 3) accepted the plan, want a rejection")
+	}
+	if _, err := parsePlan(sourcedPlanJSON("job", "job", "cv")); err != nil {
+		t.Errorf("parsePlan(2 job of 3) = %v, want no error", err)
+	}
+}
+
 func TestParsePlanRequiresAtLeastHalfJobTopics(t *testing.T) {
 	if _, err := parsePlan(sourcedPlanJSON("cv", "cv", "cv", "job")); err == nil {
 		t.Error("parsePlan(1 job of 4) accepted the plan, want a rejection")

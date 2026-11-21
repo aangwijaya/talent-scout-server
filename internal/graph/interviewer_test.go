@@ -73,6 +73,50 @@ func TestInterviewerReplyEndsAtFirstQuestion(t *testing.T) {
 	}
 }
 
+// A reply stopped by the first-question guard is a complete interviewer turn:
+// the usage the client read before stopping must reach node.completed and the
+// run totals instead of being recorded as zero tokens.
+func TestStoppedInterviewerReplyRecordsUsage(t *testing.T) {
+	st, sess := seedGraphSession(t)
+	want := llm.Usage{PromptTokens: 11, CompletionTokens: 7}
+	client := &stubClient{stream: func(req llm.Request, onDelta func(string) error) (llm.Response, error) {
+		if req.Node != "interviewer" {
+			return llm.Response{Content: FakeReplies[req.Node]}, nil
+		}
+		if err := onDelta("Tell me about a project? And then what happened?"); err != nil {
+			return llm.Response{Content: "Tell me about a project?", Usage: want}, err
+		}
+		return llm.Response{Content: "Tell me about a project? And then what happened?", Usage: want}, nil
+	}}
+	manager, _ := newTestManager(t, st, client)
+
+	if err := manager.Start(context.Background(), sess); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	waitIdle(t, manager, sess.ID)
+
+	var completed *NodeCompleted
+	for _, event := range sessionEvents(t, st, sess.ID) {
+		if event.Type != EventNodeCompleted || event.NodeID == nil || *event.NodeID != "interviewer" {
+			continue
+		}
+		var payload NodeCompleted
+		if err := json.Unmarshal(event.Payload, &payload); err != nil {
+			t.Fatalf("decode node.completed: %v", err)
+		}
+		completed = &payload
+	}
+	if completed == nil {
+		t.Fatal("no interviewer node.completed event")
+	}
+	if completed.TokensIn != want.PromptTokens || completed.TokensOut != want.CompletionTokens {
+		t.Errorf("interviewer tokens = %d/%d, want %d/%d", completed.TokensIn, completed.TokensOut, want.PromptTokens, want.CompletionTokens)
+	}
+	if completed.CostUSD <= 0 {
+		t.Errorf("interviewer cost = %v, want positive", completed.CostUSD)
+	}
+}
+
 func collectedInterviewerDeltas(t *testing.T, events <-chan domain.NodeEvent) string {
 	t.Helper()
 	var b strings.Builder

@@ -23,6 +23,14 @@ Rules:
 
 ## Entries
 
+### 2026-11-21 — #86 Early stream stops lost usage and cost
+- **Context:** The interviewer stops the SSE stream at the first `?` (and at 120 words) by returning an error from `onDelta`. The run then recorded zero interviewer tokens and `$0` for that call.
+- **Problem:** `parseStream` returned immediately on the stop error, so it never read OpenRouter's trailing usage chunk (and `OpenRouter.call` discarded the partial `Response` on any non-retryable error, so even a returned usage would have been dropped).
+- **Cause:** The stream parser treated "the reply is complete" as "stop reading", but usage arrives after the last content delta.
+- **Lesson:** Once a reply is complete (guard stop or `finish_reason: "length"`), stop forwarding deltas but keep draining the stream to `[DONE]` so the usage chunk is captured; return the forwarded content, usage, and the stop error, and pass that `Response` through the retry wrapper. If the provider closes without a usage chunk, keep zero usage rather than estimating.
+- **Follow-up:** `TestOpenRouterStreamStoppedEarlyKeepsUsageAndForwardedText`, `TestOpenRouterStreamTruncatedKeepsUsage`, and `TestStoppedInterviewerReplyRecordsUsage` in `internal/graph/interviewer_test.go`.
+- **Repeated?:** first time
+
 ### 2026-11-20 — #81 Planner truncated at max_tokens after the job context grew
 - **Context:** The server#81 live gate (3 sessions) failed one session before the opening question: the planner hit `finish_reason=length` at `max_tokens: 3000` (1,536 prompt tokens). Its other calls used 1,585–2,030. The scorer reached 5,852 of 8,000; the new authenticity node used 347–390 of 2,000.
 - **Problem:** Since #79 the planner reads the full job and must tag each topic's `source`, so the reasoning model has less headroom; an occasional long reasoning pass truncates and the applicant never gets a question.

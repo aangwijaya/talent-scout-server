@@ -44,12 +44,13 @@ func (f *Fake) Chat(_ context.Context, req Request) (Response, error) {
 func (f *Fake) Stream(_ context.Context, req Request, onDelta func(string) error) (Response, error) {
 	f.record(req)
 	content := f.content(req)
+	resp := Response{Content: content, Usage: fakeUsage(req, content)}
 	if onDelta != nil {
 		if err := onDelta(content); err != nil {
-			return Response{}, err
+			return resp, err
 		}
 	}
-	return Response{Content: content, Usage: fakeUsage(req, content)}, nil
+	return resp, nil
 }
 
 // content returns the canned reply for the node (first), then the model, or a

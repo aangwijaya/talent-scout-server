@@ -223,6 +223,143 @@ func TestOpenRouterStream(t *testing.T) {
 	}
 }
 
+var errStopReply = errors.New("stop the reply")
+
+// When a guard stops a streamed reply (the first question mark or the 120-word
+// limit), OpenRouter still sends the usage chunk afterwards. The client must read
+// it and return the usage together with the stop error, and it must not forward
+// any delta that arrives after the stop.
+func TestOpenRouterStreamStoppedEarlyKeepsUsageAndForwardedText(t *testing.T) {
+	tests := []struct {
+		name    string
+		deltas  []string
+		stopAt  int
+		forward string
+		wantTok Usage
+	}{
+		{
+			name:    "first question mark",
+			deltas:  []string{"Tell me about a project?", " And then what happened?"},
+			stopAt:  1,
+			forward: "Tell me about a project?",
+			wantTok: Usage{PromptTokens: 11, CompletionTokens: 7},
+		},
+		{
+			name:    "word limit",
+			deltas:  []string{wordsForTest(120), " and more words after the limit?"},
+			stopAt:  1,
+			forward: wordsForTest(120),
+			wantTok: Usage{PromptTokens: 11, CompletionTokens: 7},
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", "text/event-stream")
+				for _, delta := range tc.deltas {
+					chunk, _ := json.Marshal(map[string]any{
+						"choices": []any{map[string]any{"delta": map[string]any{"content": delta}}},
+					})
+					fmt.Fprintf(w, "data: %s\n\n", chunk)
+				}
+				fmt.Fprint(w, "data: {\"choices\":[],\"usage\":{\"prompt_tokens\":11,\"completion_tokens\":7}}\n\n")
+				fmt.Fprint(w, "data: [DONE]\n\n")
+			}))
+			defer srv.Close()
+
+			c := NewOpenRouter(srv.URL, "k", nil)
+			var forwarded strings.Builder
+			calls := 0
+			resp, err := c.Stream(context.Background(), Request{
+				Model:    "m",
+				Messages: []Message{{Role: RoleUser, Content: "hi"}},
+			}, func(delta string) error {
+				calls++
+				forwarded.WriteString(delta)
+				if calls == tc.stopAt {
+					return errStopReply
+				}
+				return nil
+			})
+			if !errors.Is(err, errStopReply) {
+				t.Fatalf("error = %v, want the stop error", err)
+			}
+			if got := forwarded.String(); got != tc.forward {
+				t.Errorf("forwarded = %q, want %q (nothing after the stop)", got, tc.forward)
+			}
+			if resp.Content != tc.forward {
+				t.Errorf("Content = %q, want the forwarded text %q", resp.Content, tc.forward)
+			}
+			if resp.Usage != tc.wantTok {
+				t.Errorf("Usage = %+v, want %+v", resp.Usage, tc.wantTok)
+			}
+		})
+	}
+}
+
+// A truncated stream must also keep reading for the trailing usage chunk before
+// returning ErrTruncated.
+func TestOpenRouterStreamTruncatedKeepsUsage(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		fmt.Fprint(w, "data: {\"choices\":[{\"delta\":{\"content\":\"partial\"}}]}\n\n")
+		fmt.Fprint(w, "data: {\"choices\":[{\"delta\":{},\"finish_reason\":\"length\"}]}\n\n")
+		fmt.Fprint(w, "data: {\"choices\":[],\"usage\":{\"prompt_tokens\":5,\"completion_tokens\":9}}\n\n")
+		fmt.Fprint(w, "data: [DONE]\n\n")
+	}))
+	defer srv.Close()
+
+	c := NewOpenRouter(srv.URL, "k", nil)
+	var forwarded strings.Builder
+	resp, err := c.Stream(context.Background(), Request{
+		Model:    "m",
+		Messages: []Message{{Role: RoleUser, Content: "hi"}},
+	}, func(delta string) error {
+		forwarded.WriteString(delta)
+		return nil
+	})
+	if !errors.Is(err, ErrTruncated) {
+		t.Fatalf("error = %v, want ErrTruncated", err)
+	}
+	if resp.Content != "partial" || forwarded.String() != "partial" {
+		t.Errorf("Content = %q, forwarded = %q, want partial", resp.Content, forwarded.String())
+	}
+	if want := (Usage{PromptTokens: 5, CompletionTokens: 9}); resp.Usage != want {
+		t.Errorf("Usage = %+v, want %+v", resp.Usage, want)
+	}
+}
+
+// A provider that closes without a usage chunk after a stop keeps today's
+// behaviour: the reply ends with the stop error and no usage.
+func TestOpenRouterStreamStopWithoutUsageChunk(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		fmt.Fprint(w, "data: {\"choices\":[{\"delta\":{\"content\":\"Question?\"}}]}\n\n")
+	}))
+	defer srv.Close()
+
+	c := NewOpenRouter(srv.URL, "k", nil)
+	resp, err := c.Stream(context.Background(), Request{
+		Model:    "m",
+		Messages: []Message{{Role: RoleUser, Content: "hi"}},
+	}, func(string) error { return errStopReply })
+	if !errors.Is(err, errStopReply) {
+		t.Fatalf("error = %v, want the stop error", err)
+	}
+	if resp.Usage != (Usage{}) {
+		t.Errorf("Usage = %+v, want zero when no usage chunk is sent", resp.Usage)
+	}
+}
+
+func wordsForTest(n int) string {
+	words := make([]string, n)
+	for i := range words {
+		words[i] = "word"
+	}
+	return strings.Join(words, " ")
+}
+
 func TestOpenRouterAlwaysSendsTemperature(t *testing.T) {
 	var gotBody []byte
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

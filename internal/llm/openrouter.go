@@ -120,7 +120,7 @@ func (c *OpenRouter) call(ctx context.Context, req Request, onDelta func(string)
 			return resp, nil
 		}
 		if !isRetryable(err) {
-			return Response{}, err
+			return resp, err
 		}
 		if attempt > maxRetries {
 			return Response{}, fmt.Errorf("%w: %v", ErrUnavailable, err)
@@ -192,9 +192,16 @@ func parseChat(r io.Reader) (Response, error) {
 	}, nil
 }
 
+// parseStream forwards deltas until onDelta stops the reply or the model reports
+// truncation. Either way it keeps reading the stream (bounded by the caller's
+// timeout/context) so OpenRouter's trailing usage chunk is not lost: the reply
+// is already complete, so dropping its tokens would undercount run cost. A
+// provider that closes without a usage chunk still returns no usage rather than
+// an estimate.
 func parseStream(r io.Reader, onDelta func(string) error) (Response, error) {
 	var full strings.Builder
 	var usage Usage
+	var stopErr error
 	scanner := bufio.NewScanner(r)
 	scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024)
 	for scanner.Scan() {
@@ -224,22 +231,27 @@ func parseStream(r io.Reader, onDelta func(string) error) (Response, error) {
 		if chunk.Usage != nil {
 			usage = Usage{PromptTokens: chunk.Usage.PromptTokens, CompletionTokens: chunk.Usage.CompletionTokens}
 		}
+		if stopErr != nil {
+			continue
+		}
 		for _, choice := range chunk.Choices {
 			if choice.FinishReason == "length" {
-				return Response{}, ErrTruncated
+				stopErr = ErrTruncated
+				break
 			}
 			if choice.Delta.Content != "" {
 				full.WriteString(choice.Delta.Content)
 				if err := onDelta(choice.Delta.Content); err != nil {
-					return Response{}, err
+					stopErr = err
+					break
 				}
 			}
 		}
 	}
-	if err := scanner.Err(); err != nil {
+	if err := scanner.Err(); err != nil && stopErr == nil {
 		return Response{}, &RetryableError{Err: err}
 	}
-	return Response{Content: full.String(), Usage: usage}, nil
+	return Response{Content: full.String(), Usage: usage}, stopErr
 }
 
 func isRetryable(err error) bool {

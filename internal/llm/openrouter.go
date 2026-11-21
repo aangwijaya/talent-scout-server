@@ -13,11 +13,17 @@ import (
 	"time"
 )
 
+// defaultDrainGrace is how long a stream stopped by a guard (or truncated) is
+// still read for its trailing usage chunk before the connection is closed.
+const defaultDrainGrace = 3 * time.Second
+
 // OpenRouter is the OpenAI-compatible client backed by OpenRouter.
 type OpenRouter struct {
 	baseURL string
 	apiKey  string
 	client  *http.Client
+	// drainGrace bounds how long a stopped stream is read for its usage chunk.
+	drainGrace time.Duration
 }
 
 // NewOpenRouter returns a client using the given base URL (e.g.
@@ -27,7 +33,7 @@ func NewOpenRouter(baseURL, apiKey string, client *http.Client) *OpenRouter {
 	if client == nil {
 		client = &http.Client{Timeout: 60 * time.Second}
 	}
-	return &OpenRouter{baseURL: strings.TrimRight(baseURL, "/"), apiKey: apiKey, client: client}
+	return &OpenRouter{baseURL: strings.TrimRight(baseURL, "/"), apiKey: apiKey, client: client, drainGrace: defaultDrainGrace}
 }
 
 type chatRequest struct {
@@ -143,6 +149,10 @@ func (c *OpenRouter) attempt(ctx context.Context, req Request, onDelta func(stri
 	}
 	callCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
+	// Cancelled drainGrace after a stop, so draining for usage cannot hold the
+	// reply open until the model finishes generating.
+	callCtx, stopDrain := context.WithCancel(callCtx)
+	defer stopDrain()
 
 	httpReq, err := http.NewRequestWithContext(callCtx, http.MethodPost, c.baseURL+"/chat/completions", bytes.NewReader(body))
 	if err != nil {
@@ -167,7 +177,15 @@ func (c *OpenRouter) attempt(ctx context.Context, req Request, onDelta func(stri
 	}
 
 	if onDelta != nil {
-		return parseStream(resp.Body, onDelta)
+		var drainTimer *time.Timer
+		defer func() {
+			if drainTimer != nil {
+				drainTimer.Stop()
+			}
+		}()
+		return parseStream(resp.Body, onDelta, func() {
+			drainTimer = time.AfterFunc(c.drainGrace, stopDrain)
+		})
 	}
 	return parseChat(resp.Body)
 }
@@ -193,12 +211,12 @@ func parseChat(r io.Reader) (Response, error) {
 }
 
 // parseStream forwards deltas until onDelta stops the reply or the model reports
-// truncation. Either way it keeps reading the stream (bounded by the caller's
-// timeout/context) so OpenRouter's trailing usage chunk is not lost: the reply
-// is already complete, so dropping its tokens would undercount run cost. A
-// provider that closes without a usage chunk still returns no usage rather than
-// an estimate.
-func parseStream(r io.Reader, onDelta func(string) error) (Response, error) {
+// truncation. Either way it calls onStop once and keeps reading the stream so
+// OpenRouter's trailing usage chunk is not lost: the reply is already complete,
+// so dropping its tokens would undercount run cost. onStop bounds that drain
+// (drainGrace), and a read error during it is ignored. A provider that closes,
+// or is cut off, without a usage chunk returns no usage rather than an estimate.
+func parseStream(r io.Reader, onDelta func(string) error, onStop func()) (Response, error) {
 	var full strings.Builder
 	var usage Usage
 	var stopErr error
@@ -246,6 +264,9 @@ func parseStream(r io.Reader, onDelta func(string) error) (Response, error) {
 					break
 				}
 			}
+		}
+		if stopErr != nil {
+			onStop()
 		}
 	}
 	if err := scanner.Err(); err != nil && stopErr == nil {

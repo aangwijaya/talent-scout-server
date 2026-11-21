@@ -10,6 +10,7 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
+	"time"
 )
 
 func TestOpenRouterChatParsesResponse(t *testing.T) {
@@ -539,5 +540,82 @@ func TestFakeStreamEmitsFullContent(t *testing.T) {
 	}
 	if resp.Content != "welcome!" || got.String() != "welcome!" {
 		t.Errorf("Content=%q onDelta=%q, want welcome! both", resp.Content, got.String())
+	}
+}
+
+// hangAfterQuestion streams one question delta, then keeps the connection open
+// without sending usage or [DONE] until the client goes away, like a model that
+// keeps generating after the guard stopped the reply.
+func hangAfterQuestion(hits *atomic.Int32) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		hits.Add(1)
+		w.Header().Set("Content-Type", "text/event-stream")
+		fmt.Fprint(w, "data: {\"choices\":[{\"delta\":{\"content\":\"Question?\"}}]}\n\n")
+		w.(http.Flusher).Flush()
+		<-r.Context().Done()
+	}
+}
+
+// A read error while draining after a guard stop (here the request timeout) must
+// not turn into a retry: the reply is already complete, and a retry would
+// re-stream it to the applicant.
+func TestOpenRouterStreamStopThenDrainTimeoutIsNotRetried(t *testing.T) {
+	var hits atomic.Int32
+	srv := httptest.NewServer(hangAfterQuestion(&hits))
+	defer srv.Close()
+
+	c := NewOpenRouter(srv.URL, "k", nil)
+	c.drainGrace = time.Hour
+	resp, err := c.Stream(context.Background(), Request{
+		Model:      "m",
+		Messages:   []Message{{Role: RoleUser, Content: "hi"}},
+		Timeout:    100 * time.Millisecond,
+		MaxRetries: 2,
+	}, func(string) error { return errStopReply })
+	if !errors.Is(err, errStopReply) {
+		t.Fatalf("error = %v, want the stop error", err)
+	}
+	if got := hits.Load(); got != 1 {
+		t.Errorf("upstream hits = %d, want 1 (no retry after a stop)", got)
+	}
+	if resp.Content != "Question?" {
+		t.Errorf("Content = %q, want %q", resp.Content, "Question?")
+	}
+}
+
+// After a guard stop the client waits for the usage chunk only for a short grace
+// period, so the applicant is not kept waiting while the model keeps generating.
+func TestOpenRouterStreamStopDrainIsBounded(t *testing.T) {
+	var hits atomic.Int32
+	srv := httptest.NewServer(hangAfterQuestion(&hits))
+	defer srv.Close()
+
+	c := NewOpenRouter(srv.URL, "k", nil)
+	c.drainGrace = 50 * time.Millisecond
+	start := time.Now()
+	resp, err := c.Stream(context.Background(), Request{
+		Model:      "m",
+		Messages:   []Message{{Role: RoleUser, Content: "hi"}},
+		Timeout:    5 * time.Second,
+		MaxRetries: 2,
+	}, func(string) error { return errStopReply })
+	elapsed := time.Since(start)
+	if !errors.Is(err, errStopReply) {
+		t.Fatalf("error = %v, want the stop error", err)
+	}
+	if elapsed > 2*time.Second {
+		t.Errorf("Stream returned after %v, want about the 50ms grace, not the 5s timeout", elapsed)
+	}
+	if got := hits.Load(); got != 1 {
+		t.Errorf("upstream hits = %d, want 1", got)
+	}
+	if resp.Content != "Question?" || resp.Usage != (Usage{}) {
+		t.Errorf("resp = %+v, want the forwarded text and no usage", resp)
+	}
+}
+
+func TestNewOpenRouterDrainGraceDefault(t *testing.T) {
+	if got := NewOpenRouter("http://x", "k", nil).drainGrace; got != 3*time.Second {
+		t.Errorf("drainGrace = %v, want 3s", got)
 	}
 }

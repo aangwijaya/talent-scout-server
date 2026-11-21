@@ -23,6 +23,14 @@ Rules:
 
 ## Entries
 
+### 2026-11-21 — #88 A gap can describe wrapping the code does not have
+- **Context:** Closing the scorer role-context gap reported from server#79: the issue said `scorerUser` wraps `job_title`, `job_description` and `rubric_criterion` as untrusted data.
+- **Problem:** `scorerUser` only renders `rubric_criterion` blocks; it never included the job title or description (server#79 added those to the planner and interviewer only). The requested sentence would name blocks the scorer never receives.
+- **Cause:** The gap was written from the shared `SafetyRule` wording and the planner/interviewer change, not from the scorer's actual user message.
+- **Lesson:** Read the node's user-message builder and its wrapping tests before changing its system prompt; do not add job blocks the node does not use just to make the sentence literal, and keep the documented wrapping unchanged.
+- **Follow-up:** `TestPromptsTreatJobBlocksAsRoleContext` covers the scorer sentence; `TestScorerPromptTreatsRubricTextAsUntrusted` still guards the existing rubric wrapping.
+- **Repeated?:** first time
+
 ### 2026-11-21 — #86 Early stream stops lost usage and cost
 - **Context:** The interviewer stops the SSE stream at the first `?` (and at 120 words) by returning an error from `onDelta`. The run then recorded zero interviewer tokens and `$0` for that call.
 - **Problem:** `parseStream` returned immediately on the stop error, so it never read OpenRouter's trailing usage chunk (and `OpenRouter.call` discarded the partial `Response` on any non-retryable error, so even a returned usage would have been dropped).

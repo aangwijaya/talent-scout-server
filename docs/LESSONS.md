@@ -27,8 +27,8 @@ Rules:
 - **Context:** Closing the scorer role-context gap reported from server#79: the issue said `scorerUser` wraps `job_title`, `job_description` and `rubric_criterion` as untrusted data.
 - **Problem:** `scorerUser` only renders `rubric_criterion` blocks; it never included the job title or description (server#79 added those to the planner and interviewer only). The requested sentence would name blocks the scorer never receives.
 - **Cause:** The gap was written from the shared `SafetyRule` wording and the planner/interviewer change, not from the scorer's actual user message.
-- **Lesson:** Read the node's user-message builder and its wrapping tests before changing its system prompt; do not add job blocks the node does not use just to make the sentence literal, and keep the documented wrapping unchanged.
-- **Follow-up:** `TestPromptsTreatJobBlocksAsRoleContext` covers the scorer sentence; `TestScorerPromptTreatsRubricTextAsUntrusted` still guards the existing rubric wrapping.
+- **Lesson:** Read the node's user-message builder and its wrapping tests before changing its system prompt, and flag a prompt that names inputs the node never receives instead of shipping it. The human chose to send the role context: `scorerUser` now opens with `roleContext(job)` (wrapped title, capped `JobDescriptionBlock`), the same blocks the interviewer gets.
+- **Follow-up:** `TestScorerPromptIncludesJobAsUntrustedRoleContext` pins the job blocks, their wrapping and order; `TestPromptsTreatJobBlocksAsRoleContext` covers the scorer sentence; `TestScorerPromptTreatsRubricTextAsUntrusted` still guards the rubric wrapping.
 - **Repeated?:** first time
 
 ### 2026-11-21 — #86 Early stream stops lost usage and cost

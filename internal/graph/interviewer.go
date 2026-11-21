@@ -71,7 +71,8 @@ func interviewerMessages(topic domain.Topic, transcript []domain.Message, kind d
 
 // roleContext returns the recruiter-written role context as untrusted blocks.
 // The interviewer sees it on every turn so follow-ups stay anchored to the job
-// instead of drifting toward whatever the applicant mentions.
+// instead of drifting toward whatever the applicant mentions; the scorer sees
+// it so answers are scored against the role's requirements and level.
 func roleContext(job domain.Job) string {
 	if strings.TrimSpace(job.Title) == "" && strings.TrimSpace(job.Description) == "" {
 		return ""

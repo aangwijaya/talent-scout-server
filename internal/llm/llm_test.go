@@ -543,6 +543,30 @@ func TestFakeStreamEmitsFullContent(t *testing.T) {
 	}
 }
 
+// When onDelta stops a reply, the fake must keep the response it already built:
+// graph tests that record usage after a guard stop would otherwise silently see
+// zero tokens and cost.
+func TestFakeStreamStoppedEarlyKeepsContentAndUsage(t *testing.T) {
+	f := NewFake(map[string]string{"interviewer": "Tell me about a project?"})
+	var got strings.Builder
+	resp, err := f.Stream(context.Background(), Request{
+		Model:    "interviewer",
+		Messages: []Message{{Role: RoleUser, Content: "hi"}},
+	}, func(d string) error {
+		got.WriteString(d)
+		return errStopReply
+	})
+	if !errors.Is(err, errStopReply) {
+		t.Fatalf("error = %v, want the stop error", err)
+	}
+	if resp.Content != "Tell me about a project?" || got.String() != resp.Content {
+		t.Errorf("Content = %q, onDelta = %q, want the full reply both", resp.Content, got.String())
+	}
+	if resp.Usage.PromptTokens == 0 || resp.Usage.CompletionTokens == 0 {
+		t.Errorf("Usage = %+v, want non-zero prompt and completion tokens", resp.Usage)
+	}
+}
+
 // hangAfterQuestion streams one question delta, then keeps the connection open
 // without sending usage or [DONE] until the client goes away, like a model that
 // keeps generating after the guard stopped the reply.

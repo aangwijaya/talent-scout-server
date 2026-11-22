@@ -23,6 +23,14 @@ Rules:
 
 ## Entries
 
+### 2026-11-22 — #92 A fix without a sabotage check can leave a branch uncovered
+- **Context:** Verifying server#90 (stream stops keep usage) found one sabotage that no test caught: `Fake.Stream` could return `Response{}` with the stop error and every test still passed.
+- **Problem:** The new tests only exercised the real OpenRouter client; the fake used by graph tests had no test for the stopped-stream response, so fake-driven usage could silently drop to zero.
+- **Cause:** The behavior was added to the fake to mirror the real client but only the real client got a test.
+- **Lesson:** When a fix changes a fake to mirror production, test the fake too; prove the test guards the behavior by applying the sabotage (`return Response{}, err`) and watching it fail before reverting.
+- **Follow-up:** `TestFakeStreamStoppedEarlyKeepsContentAndUsage` in `internal/llm/llm_test.go`; fails on the sabotage, passes on the fix.
+- **Repeated?:** first time
+
 ### 2026-11-21 — #88 A gap can describe wrapping the code does not have
 - **Context:** Closing the scorer role-context gap reported from server#79: the issue said `scorerUser` wraps `job_title`, `job_description` and `rubric_criterion` as untrusted data.
 - **Problem:** `scorerUser` only renders `rubric_criterion` blocks; it never included the job title or description (server#79 added those to the planner and interviewer only). The requested sentence would name blocks the scorer never receives.

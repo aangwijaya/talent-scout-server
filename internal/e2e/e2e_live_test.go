@@ -269,22 +269,6 @@ func (t *teeBody) Read(p []byte) (int, error) {
 	return n, err
 }
 
-type llmRequestInfo struct {
-	Model     string `json:"model"`
-	MaxTokens int    `json:"max_tokens"`
-	Stream    bool   `json:"stream"`
-	Messages  []struct {
-		Role    string `json:"role"`
-		Content string `json:"content"`
-	} `json:"messages"`
-}
-
-type llmResponseInfo struct {
-	FinishReason     string
-	PromptTokens     int
-	CompletionTokens int
-}
-
 type llmChatResponse struct {
 	Choices []struct {
 		Message struct {
@@ -349,91 +333,10 @@ func reportLLMCalls(t *testing.T, recorder *recordingTransport) {
 		resp := parseResponse(call.response.bytes())
 		t.Logf("call %d node=%s model=%s max_tokens=%d stream=%v finish_reason=%q prompt_tokens=%d completion_tokens=%d",
 			i, node, req.Model, req.MaxTokens, req.Stream, resp.FinishReason, resp.PromptTokens, resp.CompletionTokens)
-		if node == "planner" || node == "judge" || node == "scorer" || node == "authenticity" {
-			if resp.FinishReason == "length" {
-				t.Errorf("call %d %s hit finish_reason=length at max_tokens=%d", i, node, req.MaxTokens)
-			}
-			if resp.CompletionTokens > req.MaxTokens {
-				t.Errorf("call %d %s completion_tokens=%d exceeds max_tokens=%d", i, node, resp.CompletionTokens, req.MaxTokens)
-			}
+		for _, problem := range truncationProblems(node, req, resp) {
+			t.Errorf("call %d %s", i, problem)
 		}
 	}
-}
-
-func nodeFromRequest(req llmRequestInfo) string {
-	for _, message := range req.Messages {
-		if message.Role != "system" {
-			continue
-		}
-		switch {
-		case strings.Contains(message.Content, "You are the planner"):
-			return "planner"
-		case strings.Contains(message.Content, "You are the interviewer"):
-			return "interviewer"
-		case strings.Contains(message.Content, "You are the judge"):
-			return "judge"
-		case strings.Contains(message.Content, "You are the scorer"):
-			return "scorer"
-		case strings.Contains(message.Content, "You are the authenticity reviewer"):
-			return "authenticity"
-		}
-	}
-	return "unknown"
-}
-
-func parseResponse(raw []byte) llmResponseInfo {
-	trimmed := bytes.TrimSpace(raw)
-	if len(trimmed) == 0 {
-		return llmResponseInfo{}
-	}
-	if trimmed[0] == '{' {
-		var body struct {
-			Choices []struct {
-				FinishReason string `json:"finish_reason"`
-			} `json:"choices"`
-			Usage struct {
-				PromptTokens     int `json:"prompt_tokens"`
-				CompletionTokens int `json:"completion_tokens"`
-			} `json:"usage"`
-		}
-		if err := json.Unmarshal(trimmed, &body); err == nil {
-			info := llmResponseInfo{PromptTokens: body.Usage.PromptTokens, CompletionTokens: body.Usage.CompletionTokens}
-			if len(body.Choices) > 0 {
-				info.FinishReason = body.Choices[0].FinishReason
-			}
-			return info
-		}
-	}
-
-	var info llmResponseInfo
-	for _, line := range strings.Split(string(raw), "\n") {
-		data := strings.TrimSpace(strings.TrimPrefix(line, "data:"))
-		if data == "" || data == "[DONE]" || !strings.HasPrefix(data, "{") {
-			continue
-		}
-		var chunk struct {
-			Choices []struct {
-				FinishReason string `json:"finish_reason"`
-			} `json:"choices"`
-			Usage *struct {
-				PromptTokens     int `json:"prompt_tokens"`
-				CompletionTokens int `json:"completion_tokens"`
-			} `json:"usage"`
-		}
-		if err := json.Unmarshal([]byte(data), &chunk); err != nil {
-			continue
-		}
-		if chunk.Usage != nil {
-			info.PromptTokens = chunk.Usage.PromptTokens
-			info.CompletionTokens = chunk.Usage.CompletionTokens
-		}
-		for _, choice := range chunk.Choices {
-			if choice.FinishReason != "" {
-				info.FinishReason = choice.FinishReason
-			}
-		}
-	}
-	return info
 }
 
 var uuidPattern = regexp.MustCompile(`^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$`)

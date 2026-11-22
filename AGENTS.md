@@ -39,7 +39,7 @@ talent-scout-server/
 ├── api/openapi.yaml              # generated on Day 1 from docs/API.md
 ├── testdata/                     # sample CV PDFs, fake LLM fixtures, example transcripts
 ├── docs/                         # PRD, TECH-STACK, ARCHITECTURE, API, EVENTS, LESSONS
-├── .opencode/skills/             # OpenCode skills: issue-workflow, add-endpoint-from-contract, migration-with-rls + review/CI: verify-this, deslop, thermo-nuclear-review, thermo-nuclear-code-quality-review, loop-on-ci, fix-ci, get-pr-comments + backend: supabase-postgres-best-practices, go-error-handling, go-context, go-concurrency, go-testing, systematic-debugging
+├── .opencode/skills/             # OpenCode skills: issue-workflow, add-endpoint-from-contract, migration-with-rls, llm-node-changes + review/CI: verify-this, deslop, thermo-nuclear-review, thermo-nuclear-code-quality-review, loop-on-ci, fix-ci, get-pr-comments + backend: supabase-postgres-best-practices, go-error-handling, go-context, go-concurrency, go-testing, systematic-debugging
 ├── .github/                      # ISSUE_TEMPLATE/task.md, pull_request_template.md, workflows/ci.yml
 ├── .env.example
 └── Dockerfile                    # multi-stage, static binary
@@ -52,6 +52,8 @@ talent-scout-server/
 - HTTP errors always use the format `{"error":{"code","message","details"}}` with codes from `docs/API.md`.
 - JSON fields `snake_case`, UUID IDs (`gen_random_uuid()`), times `timestamptz` → ISO-8601 UTC, structured data `jsonb`.
 - All LLM access goes through the interface in `internal/llm`; nodes never call HTTP directly.
+- **Reasoning-node caps:** size `max_tokens` from the largest live-gate completion with about 2x headroom, not from the expected output, and recheck it whenever the node's prompt or role context grows. Floors are enforced by `scripts/llm_gate_checks_test.go` (run by `go test ./...`); never lower a cap without a live gate. See `.opencode/skills/llm-node-changes`.
+- **Hard reply-shape rules** (one question per turn, first `?`) need a deterministic streaming guard *and* the prompt rule; prompt-only has failed twice. When the guard stops a reply, keep draining the stream so usage is captured. See `.opencode/skills/llm-node-changes`.
 - All email goes through the `internal/email` interface: `log` (default) or `gmail` (Gmail API, OAuth2 refresh token; no SMTP).
 - All graph events except `message.delta`: persist to `node_events` **first**, then publish to the bus.
 - Code nodes (`plan_check`, `guard`, `evidence_check`) **must not** call the LLM.
@@ -87,6 +89,6 @@ Work is scheduled by the control plane in `aangwijaya/talent-scout` (`WORKFLOW.m
 
 **Walls:** the runner pushes, opens PRs, and merges; these commands are denied to you. Don't edit contract documents without an approved `contract-change` issue. Don't use production credentials.
 
-**Skills:** `add-endpoint-from-contract`, `migration-with-rls`, and the backend reference skills when the task matches, `systematic-debugging` after a failed attempt, `verify-this` when claiming a fix, `deslop` before committing. The `thermo-nuclear-*` reviews run in a separate session, not by the author.
+**Skills:** `add-endpoint-from-contract`, `migration-with-rls`, `llm-node-changes` when touching a prompt/model/cap, and the backend reference skills when the task matches, `systematic-debugging` after a failed attempt, `verify-this` when claiming a fix, `deslop` before committing. The `thermo-nuclear-*` reviews run in a separate session, not by the author.
 
 **Learning:** add an entry to `docs/LESSONS.md` when there is a real lesson. Repeats become `skill-update` nodes through `ops/triage`. Prefer a test, lint rule, or CI check over text.

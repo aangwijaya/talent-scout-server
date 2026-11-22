@@ -145,4 +145,6 @@ nodes:
   scorer:      { model: deepseek/deepseek-v4.1-flash, temperature: 0.0, max_tokens: 8000 }
 ```
 
+**Sizing `max_tokens`.** Reasoning tokens count toward `max_tokens`, so size a cap from the largest completion observed in a 3-session live gate with about 2x headroom, never from the expected JSON or question. Recheck it whenever the node's prompt or role context grows. Live-gate floors: planner `6000`, interviewer `4000`, judge `2400`, scorer `8000`, authenticity `2000`, rubric_suggester `3000`. `scripts/llm_gate_checks_test.go` enforces these floors and requires every node in `config/models.yaml` to have one; see `.opencode/skills/llm-node-changes`.
+
 Note: model prices & availability can change — recheck at openrouter.ai/models before deploy. Measured live sessions on 2026-11-13 with the seed job and three sample CVs: normal runs cost `$0.006772` (26,882 in / 7,909 out) and `$0.008021` (36,380 in / 8,068 out); the retry-heavy one-word-answer run cost `$0.012421` (37,192 in / 17,599 out). Budget about `$0.013` per session; the earlier `~$0.005` estimate was low. The interviewer's 60 s timeout and 4000-token cap (with `reasoning: { effort: low }`) come from a recorded reply of 1827 completion tokens in 26.2 s and a 30 s timeout on a later turn.

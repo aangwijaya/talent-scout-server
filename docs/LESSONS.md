@@ -23,6 +23,14 @@ Rules:
 
 ## Entries
 
+### 2026-11-22 — #96 A live gate with a hand-picked node list misses new nodes
+- **Context:** Verifying server PR #95 found the live truncation gate checked only planner, judge, scorer and authenticity. The interviewer was labeled but never checked, and `rubric_suggester` was not labeled at all.
+- **Problem:** A guard-stopped interviewer stream can still end `finish_reason=length`, so it needs a different check; `rubric_suggester` was invisible because its prompt had no marker.
+- **Cause:** `reportLLMCalls` compared the node against a hand-written list instead of deriving checks from `nodeFromRequest`, and `nodeFromRequest` was not updated when the rubric suggester node was added.
+- **Lesson:** Derive live-gate checks from the node label set so a new prompt is covered by default; keep a node-specific exception only when a guard changes what `finish_reason` means, and explain it in the code.
+- **Follow-up:** `TestNodeFromRequestLabelsEverySystemPrompt` and `TestTruncationProblemsCoverEveryLabeledNode` in `internal/e2e/llm_calls_test.go`
+- **Repeated?:** same family as the 2026-11-20 #81 entry
+
 ### 2026-11-22 — #92 A fix without a sabotage check can leave a branch uncovered
 - **Context:** Verifying server#90 (stream stops keep usage) found one sabotage that no test caught: `Fake.Stream` could return `Response{}` with the stop error and every test still passed.
 - **Problem:** The new tests only exercised the real OpenRouter client; the fake used by graph tests had no test for the stopped-stream response, so fake-driven usage could silently drop to zero.

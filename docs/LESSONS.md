@@ -44,7 +44,7 @@ Rules:
 - **Problem:** Since #79 the planner reads the full job and must tag each topic's `source`, so the reasoning model has less headroom; an occasional long reasoning pass truncates and the applicant never gets a question.
 - **Cause:** The 3000 cap was sized before the job context and sources were added.
 - **Lesson:** Recheck every reasoning node's cap whenever its prompt grows; size from the largest live completion with about 2x headroom. Planner is now `6000`. The live test's call log must label every LLM node (authenticity was logged as `unknown`) so its truncation check covers it.
-- **Follow-up:** `TestJudgeAndScorerHaveRoomForReasoning` now covers the planner; `nodeFromRequest` labels authenticity and checks it for truncation. server#93 consolidates the floors into `scripts/llm_gate_checks_test.go` and `.opencode/skills/llm-node-changes`.
+- **Follow-up:** `TestJudgeAndScorerHaveRoomForReasoning` now covers the planner; `nodeFromRequest` labels authenticity and checks it for truncation. PR #95 consolidates the floors into `scripts/llm_gate_checks_test.go` and `.opencode/skills/llm-node-changes`.
 - **Repeated?:** yes, same as the 2026-11-20 #79 judge/scorer entry
 
 ### 2026-11-20 — #79 Judge and scorer were truncated at max_tokens
@@ -52,7 +52,7 @@ Rules:
 - **Problem:** `deepseek/deepseek-v4.1-flash` spends part of its output on reasoning, so caps sized for the visible JSON leave no headroom when the prompt grows.
 - **Cause:** The caps were set before the job description reached the prompts; a longer job means more reasoning.
 - **Lesson:** Size reasoning-model caps from the live gate, not from the expected JSON: judge `2400`, scorer `8000`. The scorer produced 4,000 tokens in under ~17 s, so 8,000 still fits the 60 s timeout. A cap only costs what is actually generated.
-- **Follow-up:** `TestJudgeAndScorerHaveRoomForReasoning` in `internal/e2e/models_config_test.go`. server#93 consolidates the floors into `scripts/llm_gate_checks_test.go` and `.opencode/skills/llm-node-changes`.
+- **Follow-up:** `TestJudgeAndScorerHaveRoomForReasoning` in `internal/e2e/models_config_test.go`. PR #95 consolidates the floors into `scripts/llm_gate_checks_test.go` and `.opencode/skills/llm-node-changes`.
 - **Repeated?:** same family as the 2026-11-18 interviewer timeout/max_tokens entry
 
 ### 2026-11-20 — #79 A planner-output change can stay inside a narrow fence
@@ -76,7 +76,7 @@ Rules:
 - **Problem:** The failures were always a question followed by a second one ("…? And …?", "…? Could you walk me through…?"). Negative instructions ("never ask a second question") did not hold on this model.
 - **Cause:** The prompt asked for compliance with no deterministic backstop, so any model turn that ignored the rule reached the applicant and the transcript.
 - **Lesson:** For a hard reply-shape rule, pair the prompt with a streaming guard: stop at the first `?` exactly like the 120-word stop, keep the deltas already sent, and store only that prefix. Add the exact wrong pattern ("…? And …?") to the prompt and require exactly one `?`, at the last character. Keep the 60 s timeout and `max_tokens: 4000` with `reasoning: { effort: low }`; the gate saw no timeouts and ≤412 completion tokens, and live costs fit the `~$0.013` per-session budget.
-- **Follow-up:** tests in `internal/graph/interviewer_test.go` (two questions stream only the first, a single question is unchanged) and `internal/prompts/prompts_test.go`; live E2E `interviewerTurnProblems` still checks the stored turns. server#93 captures the guard rule in `.opencode/skills/llm-node-changes` and `AGENTS.md`.
+- **Follow-up:** tests in `internal/graph/interviewer_test.go` (two questions stream only the first, a single question is unchanged) and `internal/prompts/prompts_test.go`; live E2E `interviewerTurnProblems` still checks the stored turns. PR #95 captures the guard rule in `.opencode/skills/llm-node-changes` and `AGENTS.md`.
 - **Repeated?:** same as entry 2026-11-18 (prompt-only rule was not enough)
 
 ### 2026-11-18 — #63 Interviewer asks one open question; size the timeout from recorded latency

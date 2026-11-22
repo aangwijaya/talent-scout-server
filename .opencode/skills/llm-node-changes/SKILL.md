@@ -26,9 +26,12 @@ as soon as the prompt grows.
   They are enforced by `scripts/llm_gate_checks_test.go`, which fails on a lower
   cap, on an LLM node missing from its floor table, and on an interviewer that
   stops streaming or loses `reasoning: { effort: low }`.
-- Every LLM node must be labeled by the live harness (`nodeFromRequest` in
-  `internal/e2e/e2e_live_test.go`) so `finish_reason=length` is fatal for it.
-  Authenticity was once logged as `unknown`, so its truncation was invisible.
+- The live harness (`nodeFromRequest` and `reportLLMCalls` in
+  `internal/e2e/e2e_live_test.go`) fails on `finish_reason=length` only for the
+  planner, judge, scorer and authenticity. The interviewer is labeled but not
+  checked, and `rubric_suggester` is not labeled at all (it is logged as
+  `unknown`), so read their `finish_reason` in the call log yourself.
+  Authenticity was once `unknown` too, and its truncation was invisible.
 
 ## 2. Pair a hard reply-shape rule with a deterministic guard
 
@@ -52,7 +55,9 @@ A prompt alone did not stop two-part interviewer questions on
 
 ## Checklist
 
-- [ ] Live gate run (3 sessions) and every LLM call labeled by `nodeFromRequest`.
+- [ ] Live gate run (3 sessions). Every LLM call that changed has its
+      `finish_reason` read in the call log, because the harness only fails on
+      length for the planner, judge, scorer and authenticity.
 - [ ] No call ends `finish_reason=length`; caps meet the floors and 2x the
       largest observed completion.
 - [ ] Prompt growth rechecked against `config/models.yaml` and

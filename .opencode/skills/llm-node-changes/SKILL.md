@@ -26,12 +26,17 @@ as soon as the prompt grows.
   They are enforced by `scripts/llm_gate_checks_test.go`, which fails on a lower
   cap, on an LLM node missing from its floor table, and on an interviewer that
   stops streaming or loses `reasoning: { effort: low }`.
-- The live harness (`nodeFromRequest` and `reportLLMCalls` in
-  `internal/e2e/e2e_live_test.go`) fails on `finish_reason=length` only for the
-  planner, judge, scorer and authenticity. The interviewer is labeled but not
-  checked, and `rubric_suggester` is not labeled at all (it is logged as
-  `unknown`), so read their `finish_reason` in the call log yourself.
-  Authenticity was once `unknown` too, and its truncation was invisible.
+- The live harness (`nodeFromRequest` and `reportLLMCalls`, with
+  `truncationProblems` in `internal/e2e/llm_calls.go`) labels every prompt in
+  `internal/prompts` (including `rubric_suggester`) and checks every labeled
+  node, so a new node is covered by default. Do not add a hand-picked node list
+  to `truncationProblems`.
+- The interviewer is the one exception for `finish_reason`: its stream is
+  stopped on purpose at the first `?` or 120 words and then drained for usage,
+  so the provider can still report `finish_reason=length` for content generated
+  after the guard stop. It is checked only against
+  `completion_tokens > max_tokens`. Authenticity was once `unknown`, and its
+  truncation was invisible.
 
 ## 2. Pair a hard reply-shape rule with a deterministic guard
 
@@ -55,9 +60,10 @@ A prompt alone did not stop two-part interviewer questions on
 
 ## Checklist
 
-- [ ] Live gate run (3 sessions). Every LLM call that changed has its
-      `finish_reason` read in the call log, because the harness only fails on
-      length for the planner, judge, scorer and authenticity.
+- [ ] Live gate run (3 sessions). The harness labels every node and fails on
+      truncation for every labeled node; only the interviewer relies on
+      `completion_tokens > max_tokens` because its reply is guard-stopped. Still
+      read each changed node's `finish_reason` in the call log.
 - [ ] No call ends `finish_reason=length`; caps meet the floors and 2x the
       largest observed completion.
 - [ ] Prompt growth rechecked against `config/models.yaml` and

@@ -156,8 +156,9 @@ paths:
       operationId: suggestJobRubric
       summary: Suggest a draft rubric for a job
       description: |
-        Asks the model for 3-6 rubric criteria. Nothing is stored; the recruiter
-        edits the draft before saving. The model output is retried once on
+        Asks the model for 3-6 rubric criteria and whether the job requires spoken
+        English, with a short reason. This is a suggestion only: nothing is stored,
+        and the recruiter sets the job field. The model output is retried once on
         invalid output, then the endpoint returns `llm_unavailable`.
       security:
         - bearerAuth: []
@@ -212,8 +213,10 @@ paths:
       operationId: updateJob
       summary: Edit a job
       description: |
-        Any subset of `title`, `description`, `rubric` and `status`. The rubric
-        cannot change once the job has any application.
+        Any subset of `title`, `description`, `rubric`, `status` and
+        `spoken_english_required`. The rubric cannot change once the job has any
+        application. Editing `spoken_english_required` only affects sessions
+        created after the edit.
       security:
         - bearerAuth: []
       parameters:
@@ -337,7 +340,7 @@ paths:
     get:
       tags: [applications]
       operationId: getApplication
-      summary: Applicant detail with session, transcript, scores, and authenticity
+      summary: Applicant detail with session, transcript, scores, authenticity, and fluency
       security:
         - bearerAuth: []
       parameters:

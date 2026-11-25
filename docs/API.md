@@ -24,11 +24,12 @@
 | 400 | `validation_failed`, `invalid_file` |
 | 401 | `unauthorized` |
 | 404 | `not_found`, `session_not_found` |
-| 409 | `already_applied`, `session_already_started`, `invalid_state` |
-| 410 | `session_expired`, `session_completed` |
+| 409 | `already_applied`, `session_already_started`, `invalid_state`, `audio_budget_exceeded` |
+| 410 | `session_expired`, `session_completed`, `recording_deleted` |
 | 413 | `file_too_large` |
+| 422 | `no_speech` |
 | 429 | `rate_limited` |
-| 500 / 502 | `internal_error`, `llm_unavailable` |
+| 500 / 502 | `internal_error`, `llm_unavailable`, `transcription_unavailable` |
 | 503 | `db_unavailable` |
 
 ## Endpoint Summary
@@ -46,14 +47,16 @@
 | GET | `/jobs/{jobId}/public` | — | Job info for the apply page |
 | POST | `/jobs/{jobId}/applications` | — | Apply (multipart) |
 | GET | `/jobs/{jobId}/applications` | recruiter | List applicants per job |
-| GET | `/applications/{applicationId}` | recruiter | Applicant detail + session + transcript + scores + authenticity |
+| GET | `/applications/{applicationId}` | recruiter | Applicant detail + session + transcript + scores + authenticity + fluency |
 | GET | `/applications/{applicationId}/cv` | recruiter | Download CV (PDF) |
+| GET | `/applications/{applicationId}/messages/{messageId}/audio` | recruiter | Stream a spoken answer recording |
 | POST | `/applications/{applicationId}/decision` | recruiter | Shortlist / reject |
 | POST | `/applications/{applicationId}/resend-invite` | recruiter | New invite link (new token; `invited` sessions or `failed` applications); in `EMAIL_MODE=log` the link is returned for display in the dashboard |
 | GET | `/sessions/{token}` | token | Session info for the applicant |
 | POST | `/sessions/{token}/start` | token | Start the session (once) |
+| POST | `/sessions/{token}/audio` | token | Upload a spoken answer recording (voice sessions) |
 | GET | `/sessions/{token}/messages` | token | Chat history (resume) |
-| POST | `/sessions/{token}/messages` | token | Send an answer |
+| POST | `/sessions/{token}/messages` | token | Send an answer (typed or spoken) |
 | POST | `/sessions/{token}/retry` | token | Re-run the failed graph step |
 | GET | `/sessions/{token}/events` | token | Chat SSE (see EVENTS.md) |
 | GET | `/graph-runs/{runId}` | recruiter | Graph run snapshot |
@@ -65,6 +68,7 @@
 - `description`: markdown, 50–12000 characters.
 - `rubric`: 3–6 criteria, unique `key` matching `^[a-z][a-z0-9_]{1,39}$`, `label` 2–60, `description` 10–300, `weight` integer 1–3.
 - `status`: `open` or `closed`.
+- `spoken_english_required`: boolean, default `false`. It is a job setting, not a rubric criterion.
 
 Validation errors use 400 `validation_failed` with `details.field`, for example `rubric[2].weight`.
 
@@ -76,7 +80,8 @@ Validation errors use 400 `validation_failed` with `details.field`, for example 
 
 // Job
 { "id": "7c9e6679-…", "title": "Senior Frontend Engineer", "description": "...", "rubric": [RubricCriterion],
-  "status": "open", "apply_url": "https://talentscout.vercel.app/apply/7c9e6679-…",
+  "status": "open", "spoken_english_required": false,
+  "apply_url": "https://talentscout.vercel.app/apply/7c9e6679-…",
   "application_count": 3, "created_at": "...", "updated_at": "..." }
 
 // ApplicationSummary
@@ -86,11 +91,24 @@ Validation errors use 400 `validation_failed` with `details.field`, for example 
 // Message
 { "id": "7c9e6679-…", "role": "assistant", "kind": "question", "topic_id": "7c9e6679-…", "content": "...", "created_at": "..." }
 
+// MessageAudio
+{ "duration_ms": 18000, "language": "en", "status": "available" | "deleted" | "not_stored" }
+
 // MessageEntry
-{ "pasted_chars": 120, "typed_chars": 300, "duration_ms": 4500 }
+{ "pasted_chars": 120, "typed_chars": 300, "duration_ms": 4500,
+  "mode": "typed" | "spoken",
+  "fallback_reason": "chose_text" | "declined_recording" | "microphone_unavailable" | "transcription_failed",
+  "start_latency_ms": 900, "speaking_ms": 17500, "rerecord_count": 0 }
 
 // Authenticity
 { "level": "none" | "possible" | "likely", "reasons": ["..."], "assessed_at": "..." }
+
+// VoiceSession
+{ "max_answer_seconds": 120, "max_total_seconds": 1200, "used_seconds": 0, "recording_consent": null | boolean }
+
+// Fluency
+{ "words_per_minute": 132.4, "pause_ratio": 0.18, "filler_rate": 0.03, "transcript_confidence": 0.94,
+  "languages": ["en"], "summary": "...", "spoken_answers": 6, "typed_answers": 1, "assessed_at": "..." }
 
 // Topic
 { "id": "7c9e6679-…", "position": 1, "title": "State management", "goal": "...", "rubric_keys": ["frontend_depth"],
@@ -105,7 +123,9 @@ Enum: `Application.status` = `applied|invited|in_session|scoring|review|shortlis
 
 `ApplicationSummary.overall_score` is the weighted average of the criteria scores (`score × rubric weight`), counting only `Score.status = valid`; `needs_manual` criteria are excluded. It is `null` when no criterion has a valid score.
 
-`Message.entry` holds the applicant client's signals for one answer. It is returned only in the recruiter's `GET /applications/{applicationId}`: `null` for interviewer messages and when the applicant sent no entry. `GET /sessions/{token}/messages` never returns it.
+`Message.entry` holds the applicant client's signals for one answer. It is returned only in the recruiter's `GET /applications/{applicationId}`: `null` for interviewer messages and when the applicant sent no entry. `GET /sessions/{token}/messages` never returns it. `mode` and `fallback_reason` describe how an answer was given; in a voice session a typed answer always carries a `fallback_reason`. `pasted_chars`, `typed_chars`, `duration_ms`, `start_latency_ms`, `speaking_ms` and `rerecord_count` are integers 0–10,000,000. The new fields are optional, so existing clients keep working unchanged.
+
+`Message.audio` is returned only in the recruiter's `GET /applications/{applicationId}`: `null` for typed answers and interviewer messages. `VoiceSession` is `null` for a text session. `Fluency` is advisory (ADR 0001): it is not an input to the scorer or `overall_score` and never rejects an applicant. It is `null` for a text session, when the run has not finished, or when the check failed.
 
 ## Endpoint Details
 
@@ -127,13 +147,13 @@ Auth: recruiter Bearer. Req `{ "run_id": "7c9e6679-…" }` → 200 `{ "sse_token
 All jobs, newest first.
 
 ### `POST /jobs` → 201 `Job`
-Auth: recruiter Bearer. Req `{ "title", "description", "rubric": [RubricCriterion], "status"? }`. `status` defaults to `open`. Validated with the job rules above. 400 `validation_failed` with `details.field`. 409 `invalid_state` when 20 jobs already exist (counting open and closed jobs and the seed).
+Auth: recruiter Bearer. Req `{ "title", "description", "rubric": [RubricCriterion], "status"?, "spoken_english_required"? }`. `status` defaults to `open`; `spoken_english_required` defaults to `false`. Validated with the job rules above. 400 `validation_failed` with `details.field`. 409 `invalid_state` when 20 jobs already exist (counting open and closed jobs and the seed).
 
 ### `PATCH /jobs/{jobId}` → 200 `Job`
-Auth: recruiter Bearer. Req: any subset of `title`, `description`, `rubric`, `status`. 400 `validation_failed` with `details.field`; 404 `not_found`. `rubric` can't change once the job has any application: 409 `invalid_state`, because existing scores reference its keys. Title, description and status stay editable. Closing a job doesn't touch running sessions; new applies get the existing 409 `invalid_state` (job closed).
+Auth: recruiter Bearer. Req: any subset of `title`, `description`, `rubric`, `status`, `spoken_english_required`. 400 `validation_failed` with `details.field`; 404 `not_found`. `rubric` can't change once the job has any application: 409 `invalid_state`, because existing scores reference its keys. Title, description, status and `spoken_english_required` stay editable. Closing a job doesn't touch running sessions; new applies get the existing 409 `invalid_state` (job closed). Editing `spoken_english_required` only affects sessions created after the edit: a session's mode is fixed when it is created (on apply or `resend-invite`).
 
-### `POST /jobs/rubric-suggestion` → 200 `{ "rubric": [RubricCriterion] }`
-Auth: recruiter Bearer. Req `{ "title", "description" }` with the same title and description limits as a job. The server validates the suggestion with the rubric rules above. It retries the model once on invalid output, then returns 502 `llm_unavailable`. Nothing is stored. 429 `rate_limited` when the 10-per-hour budget is spent (the limit is global, not per client IP, because the shared password carries no recruiter identity); `Retry-After` in seconds. A provider error (network or upstream failure) refunds the slot; invalid output after the retry does not, so it counts against the budget. The title and description go to the model as untrusted data blocks.
+### `POST /jobs/rubric-suggestion` → 200 `{ "rubric": [RubricCriterion], "spoken_english_required": boolean, "spoken_english_reason": string }`
+Auth: recruiter Bearer. Req `{ "title", "description" }` with the same title and description limits as a job. The server validates the suggestion with the rubric rules above and also suggests whether the job requires spoken English, with a short reason. This is a suggestion only: the recruiter sets the job field, and nothing is stored. It retries the model once on invalid output, then returns 502 `llm_unavailable`. 429 `rate_limited` when the 10-per-hour budget is spent (the limit is global, not per client IP, because the shared password carries no recruiter identity); `Retry-After` in seconds. A provider error (network or upstream failure) refunds the slot; invalid output after the retry does not, so it counts against the budget. The title and description go to the model as untrusted data blocks.
 
 ### Job Seed (not an endpoint)
 One demo job is created by `go run ./cmd/seed` from `config/seed-job.yaml` (idempotent: if the `id` already exists, it is not recreated). The seed uses the same validation as create/edit (see "Job validation" above) and sets `status` = `open`.
@@ -142,9 +162,9 @@ One demo job is created by `go run ./cmd/seed` from `config/seed-job.yaml` (idem
 
 ### `GET /jobs/{jobId}/public` → 200
 ```json
-{ "id": "7c9e6679-…", "title": "...", "description": "...", "status": "open" }
+{ "id": "7c9e6679-…", "title": "...", "description": "...", "status": "open", "spoken_english_required": false }
 ```
-404 if not found; a `closed` job still returns 200 with `status: "closed"` (the UI refuses to apply).
+404 if not found; a `closed` job still returns 200 with `status: "closed"` (the UI refuses to apply). The apply page uses `spoken_english_required` to say that the interview is spoken.
 
 ### `POST /jobs/{jobId}/applications` (multipart/form-data)
 Field: `name` (2–100), `email`, `cv` (`application/pdf` file, ≤ 2 MB).
@@ -170,13 +190,17 @@ Error: 400 `validation_failed`/`invalid_file` (not a PDF / text cannot be extrac
   "topics": [Topic],
   "messages": [Message],
   "scores": [Score],
-  "authenticity": Authenticity | null
+  "authenticity": Authenticity | null,
+  "fluency": Fluency | null
 }
 ```
-`decision` = `null` if not decided yet. `graph_run` = `null` if the session has not started. `authenticity` is the advisory answer-authenticity assessment, or `null` when the run has not finished or the check failed. It never rejects an applicant and never changes a score. The raw token is never returned here (the DB stores only the hash).
+`decision` = `null` if not decided yet. `graph_run` = `null` if the session has not started. `authenticity` is the advisory answer-authenticity assessment, or `null` when the run has not finished or the check failed. `fluency` is the advisory spoken-English assessment, or `null` for a text session, when the run has not finished, or when the check failed. Neither rejects an applicant or changes a score (ADR 0001). `graph_run.cost_usd` includes the transcriptions. The raw token is never returned here (the DB stores only the hash).
 
 ### `GET /applications/{applicationId}/cv` → 200 `application/pdf`
 The server fetches the file from Supabase Storage (private bucket) and streams it to the recruiter. No Storage URL/signed URL is sent to the client.
+
+### `GET /applications/{applicationId}/messages/{messageId}/audio` → 200 `audio/webm` | `audio/ogg` | `audio/mp4`
+The server fetches the spoken answer recording from the private `audio` bucket and streams it to the recruiter. No Storage URL/signed URL is sent to the client; the response `Content-Type` is the uploaded type. 404 `not_found` when the application or message is unknown, or the message is not a spoken answer. 410 `recording_deleted` when retention deleted the recording or it was not stored (`Message.audio.status` = `deleted` or `not_stored`).
 
 ### `POST /applications/{applicationId}/decision`
 Req `{ "decision": "shortlist" | "reject", "note": "optional, ≤ 1000" }` → 200 `ApplicationSummary` (status `shortlisted`/`rejected`). 409 `invalid_state` if the status is not `review` yet (may be changed again between `shortlisted`↔`rejected`).
@@ -189,19 +213,34 @@ Req `{ "decision": "shortlist" | "reject", "note": "optional, ≤ 1000" }` → 2
 { "status": "invited", "job_title": "Senior Frontend Engineer", "applicant_name": "Budi",
   "expires_at": "...", "started_at": null, "deadline_at": null,
   "max_minutes": 15, "topic_count": null,
-  "question_count": 0, "max_questions": 15, "current_topic": null }
+  "question_count": 0, "max_questions": 15, "current_topic": null,
+  "voice": VoiceSession | null }
 ```
-`deadline_at` = `started_at + 15 minutes` (when `active`). `current_topic` = `{ "position": 2, "title": "...", "total": 4 }` when `active`. `question_count`, `max_questions`, and `current_topic.total` are the same fields as `session.updated` (EVENTS.md §3).
+`max_minutes` comes from env `SESSION_MAX_MINUTES` (default 15) for every session, and `deadline_at` = `started_at + SESSION_MAX_MINUTES` (when `active`). `current_topic` = `{ "position": 2, "title": "...", "total": 4 }` when `active`. `question_count`, `max_questions`, and `current_topic.total` are the same fields as `session.updated` (EVENTS.md §3). `voice` is `null` for a text session; for a voice session it holds the recording budget and consent state. The mode is fixed when the session was created: editing the job only affects sessions created after the edit.
 Error: 404 `session_not_found`, 410 `session_expired`, 410 `session_completed` (including a session that ended with `finish_reason=failed`).
 
 ### `POST /sessions/{token}/start` → 200 (same shape as `GET /sessions/{token}`, status `active`)
+Req `{ "recording_consent"?: boolean }`. For a voice session the field is required (400 `validation_failed` when missing) and stored in `voice.recording_consent`. With `false` the session continues as a voice session: the interviewer is still read aloud, but every answer is a text fallback with `fallback_reason: "declined_recording"`. For a text session the field is ignored.
 The AI opening message is sent via SSE (`message.delta` → `message.completed`). The client opens `GET /sessions/{token}/events` **before** calling `start` so no deltas are lost (the stream accepts `invited` sessions). 409 `session_already_started`, 410 `session_expired`/`session_completed`.
+
+### `POST /sessions/{token}/audio` (multipart/form-data) → 200
+Field: `audio` (≤ 1 MB; `audio/webm`, `audio/ogg` or `audio/mp4`).
+```json
+{ "audio_id": "7c9e6679-…", "transcript": "...", "language": "en", "duration_ms": 18000, "stored": true }
+```
+The server transcribes the audio (language auto-detected) and stores the recording in the private `audio` bucket. This endpoint does not send an answer: send the returned `audio_id` with `POST /sessions/{token}/messages`. A re-record is a new upload.
+Errors: 409 `invalid_state` when the session is not a voice session, the recording consent is not `true`, or the AI is still replying; 400 `validation_failed` when the audio is empty or longer than `voice.max_answer_seconds`; 409 `audio_budget_exceeded` when `voice.used_seconds` would exceed `voice.max_total_seconds`; 413 `file_too_large` over 1 MB; 422 `no_speech` when the transcript is empty; 502 `transcription_unavailable` (retryable; the client re-sends the same recording); 410 when the session is finished; 429 `rate_limited` (60 uploads per session per 10 minutes).
+A storage failure is not an error: `stored` is `false` and the answer can still be sent. Unsent uploads are deleted 24 hours after upload, and sent recordings 30 days after upload, by the retention sweeper.
 
 ### `GET /sessions/{token}/messages` → 200 `{ "items": [Message] }`
 Only `assistant` and `applicant` messages (no `system`). For resuming after a refresh. The applicant's `entry` signals are never returned here.
 
 ### `POST /sessions/{token}/messages`
-Req `{ "content": "...", "entry"?: MessageEntry }` (`content` 1–2000 char; each `entry` counter is an integer from 0 to 10,000,000) → 202
+The request takes exactly one of:
+- `{ "content": "...", "entry"?: MessageEntry }` — a typed answer (`content` 1–2000 char; each `entry` counter is an integer from 0 to 10,000,000). In a voice session `entry.fallback_reason` is required (400 `validation_failed` when missing).
+- `{ "audio_id": "7c9e6679-…", "entry"?: MessageEntry }` — a spoken answer. The answer text is the server's stored transcript for that upload; the client never sends it. 400 `validation_failed` when the upload is unknown, from another session, or already sent.
+
+Both, or neither, is 400 `validation_failed`. → 202
 ```json
 { "message": Message, "awaiting": "assistant" }
 ```
@@ -225,7 +264,7 @@ Accepts sessions in `invited` and `active` status. The client opens it before `P
   "last_seq": 42, "total_tokens_in": 12000, "total_tokens_out": 1800, "cost_usd": 0.0021
 }
 ```
-`nodes[].id` ∈ `planner|plan_check|interviewer|judge|guard|scorer|evidence_check|authenticity|recruiter_gate`; `type` ∈ `splitter|worker|gate|code|human_gate`; `status` ∈ `pending|running|succeeded|failed|skipped`.
+`nodes[].id` ∈ `planner|plan_check|interviewer|judge|guard|scorer|evidence_check|authenticity|fluency|recruiter_gate`; `type` ∈ `splitter|worker|gate|code|human_gate`; `status` ∈ `pending|running|succeeded|failed|skipped`. `cost_usd` includes transcription cost.
 
 ### `GET /graph-runs/{runId}/events?sse_token=...&since_seq=0` → `text/event-stream` (see EVENTS.md §4)
 Missing/invalid/expired `sse_token`, wrong `aud`, or a `run_id` mismatch → 401 `unauthorized`. `?access_token=` is no longer accepted.

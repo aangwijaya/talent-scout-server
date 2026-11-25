@@ -1471,8 +1471,6 @@ components:
               type: array
               items:
                 $ref: "#/components/schemas/RubricCriterion"
-            spoken_english_required:
-              type: boolean
         cv_text:
           type: string
         decision:

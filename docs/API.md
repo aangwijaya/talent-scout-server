@@ -89,8 +89,7 @@ Validation errors use 400 `validation_failed` with `details.field`, for example 
   "status": "review", "session_status": "completed", "overall_score": 3.8, "created_at": "..." }
 
 // Message
-{ "id": "7c9e6679-…", "role": "assistant", "kind": "question", "topic_id": "7c9e6679-…", "content": "...",
-  "audio": MessageAudio | null, "created_at": "..." }
+{ "id": "7c9e6679-…", "role": "assistant", "kind": "question", "topic_id": "7c9e6679-…", "content": "...", "created_at": "..." }
 
 // MessageAudio
 { "duration_ms": 18000, "language": "en", "status": "available" | "deleted" | "not_stored" }

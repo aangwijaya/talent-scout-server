@@ -58,6 +58,20 @@ func TestLoadDefaults(t *testing.T) {
 	}
 }
 
+func TestLoadDefaultsPublicAppURL(t *testing.T) {
+	clearEnv(t)
+	t.Setenv("AUTH_TOKEN_SECRET", validAuthTokenSecret)
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+
+	if want := "https://talentscout-id.vercel.app"; cfg.PublicAppURL != want {
+		t.Errorf("PublicAppURL = %q, want %q", cfg.PublicAppURL, want)
+	}
+}
+
 func TestLoadFromEnv(t *testing.T) {
 	clearEnv(t)
 	t.Setenv("PORT", "9090")

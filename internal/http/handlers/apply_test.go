@@ -72,7 +72,7 @@ func newApplyWithMailer(t *testing.T, emailMode string, extract cv.Extractor, ma
 	st := store.NewMemory()
 	seedJob(t, st, domain.JobStatusOpen)
 	fakeStorage := storage.NewFake()
-	cfg := config.Config{EmailMode: emailMode, PublicAppURL: "https://talentscout.vercel.app", SessionTTLHours: 168}
+	cfg := config.Config{EmailMode: emailMode, PublicAppURL: "https://talentscout-id.vercel.app", SessionTTLHours: 168}
 	return handlers.NewApply(cfg, st, fakeStorage, extract, mailer), fakeStorage, st
 }
 
@@ -428,7 +428,7 @@ func TestApplyCreatesInvitedSessionAndSendsInvite(t *testing.T) {
 	if mailer.to != "budi@example.com" || mailer.name != "Budi" {
 		t.Errorf("mailer to/name = %q/%q", mailer.to, mailer.name)
 	}
-	if !strings.HasPrefix(mailer.link, "https://talentscout.vercel.app/s/") {
+	if !strings.HasPrefix(mailer.link, "https://talentscout-id.vercel.app/s/") {
 		t.Errorf("mailer link = %q", mailer.link)
 	}
 }
@@ -489,7 +489,7 @@ func TestApplySessionExpiresAtTTL(t *testing.T) {
 	const ttlHours = 24
 	st := store.NewMemory()
 	seedJob(t, st, domain.JobStatusOpen)
-	cfg := config.Config{EmailMode: "log", PublicAppURL: "https://talentscout.vercel.app", SessionTTLHours: ttlHours}
+	cfg := config.Config{EmailMode: "log", PublicAppURL: "https://talentscout-id.vercel.app", SessionTTLHours: ttlHours}
 	apply := handlers.NewApply(cfg, st, storage.NewFake(), fakeExtractor{text: "text"}, &fakeMailer{})
 
 	before := time.Now()

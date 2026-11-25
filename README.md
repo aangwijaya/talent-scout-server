@@ -115,7 +115,7 @@ are the code defaults in `internal/config/config.go`.
 | `SUPABASE_URL` | — | `https://<project_ref>.supabase.co` (Storage API). |
 | `SUPABASE_SERVICE_ROLE_KEY` | — | Server only; never expose to the client. Secret. |
 | `SUPABASE_STORAGE_BUCKET` | `cvs` | Private bucket for CV PDFs. |
-| `PUBLIC_APP_URL` | `https://talentscout.vercel.app` | Base for `/apply/{jobId}` and `/s/{token}` links. |
+| `PUBLIC_APP_URL` | `https://talentscout-id.vercel.app` | Base for `/apply/{jobId}` and `/s/{token}` links. |
 | `FRONTEND_ORIGIN` | — | Comma-separated CORS origins for the two SSE `GET` routes only, e.g. the Vercel URL plus `http://localhost:5173`. No wildcard. |
 | `BFF_SHARED_SECRET` | — | Must equal the client's value. Only when `X-BFF-Secret` matches is `X-Forwarded-For` trusted for the apply/client-IP rate limit. Secret. |
 | `RECRUITER_PASSWORD` | — | The single MVP recruiter password. Secret. |

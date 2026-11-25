@@ -61,7 +61,7 @@ func authRouter(t *testing.T) (http.Handler, config.Config) {
 		Version:           "0.1.0",
 		LLMMode:           "fake",
 		EmailMode:         "log",
-		PublicAppURL:      "https://talentscout.vercel.app",
+		PublicAppURL:      "https://talentscout-id.vercel.app",
 		RecruiterPassword: "correct horse",
 		AuthTokenSecret:   "0123456789abcdef0123456789abcdef",
 	}

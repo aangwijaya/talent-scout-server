@@ -6,7 +6,7 @@
 
 - Base URL: `{API_BASE_URL}/api/v1`. UTF-8 JSON, `snake_case` fields.
 - `id` = UUID string (v4, from Postgres `gen_random_uuid()`). Times = ISO-8601 UTC (`2026-11-04T06:30:00Z`).
-- Public URLs are built from the server env `PUBLIC_APP_URL` (default `https://talentscout.vercel.app`): `apply_url` = `${PUBLIC_APP_URL}/apply/{jobId}`, session link in email = `${PUBLIC_APP_URL}/s/{token}`. The API path (`/sessions/{token}`) differs from the page path (`/s/{token}`).
+- Public URLs are built from the server env `PUBLIC_APP_URL` (default `https://talentscout-id.vercel.app`): `apply_url` = `${PUBLIC_APP_URL}/apply/{jobId}`, session link in email = `${PUBLIC_APP_URL}/s/{token}`. The API path (`/sessions/{token}`) differs from the page path (`/s/{token}`).
 - **Callers.** The client is a server-side SvelteKit app (BFF, see client `docs/SERVER-SIDE.md`). All REST calls come from the SvelteKit server, never from the browser. The only browser → API calls are the two SSE streams.
 - Recruiter auth: header `Authorization: Bearer <access_token>`, sent only by the SvelteKit server. The browser never sees `access_token`. For the run SSE stream the browser uses a short-lived `sse_token` in the query instead (see `POST /auth/sse-token`).
 - Client IP forwarding: the SvelteKit server sends `X-Forwarded-For: <client ip>` (from `event.getClientAddress()`) plus `X-BFF-Secret: <BFF_SHARED_SECRET>`. The API trusts `X-Forwarded-For` **only** when `X-BFF-Secret` matches (constant-time); otherwise it uses the TCP remote address. The trusted IP is what the apply rate limit (5/IP/hour) and the recruiter login limit (5 failed attempts/IP/15 minutes) count.
@@ -81,7 +81,7 @@ Validation errors use 400 `validation_failed` with `details.field`, for example 
 // Job
 { "id": "7c9e6679-…", "title": "Senior Frontend Engineer", "description": "...", "rubric": [RubricCriterion],
   "status": "open", "spoken_english_required": false,
-  "apply_url": "https://talentscout.vercel.app/apply/7c9e6679-…",
+  "apply_url": "https://talentscout-id.vercel.app/apply/7c9e6679-…",
   "application_count": 3, "created_at": "...", "updated_at": "..." }
 
 // ApplicationSummary

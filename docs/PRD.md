@@ -19,14 +19,14 @@ One web app, routed by path: recruiter at `/dashboard/...`, apply form at `/appl
 ### Recruiter
 1. Open `/dashboard`, log in with the single password (env `RECRUITER_PASSWORD`) → get a bearer token.
 2. Create or edit a job (`title`, `description`, `rubric` with 3–6 criteria), optionally starting from an AI-suggested rubric the recruiter edits. The seeded demo job is also available, and jobs can be opened or closed.
-3. Share the public apply link `https://talentscout.vercel.app/apply/{jobId}`.
+3. Share the public apply link `https://talentscout-id.vercel.app/apply/{jobId}`.
 4. Open the applicant list → status of each. For applicants with status `invited`, click **Get invite link** → copy the session link and send it manually (default `EMAIL_MODE=log`).
 5. Open applicant detail: CV text, transcript, topics, per-criterion scores + evidence quotes, graph run (replay/live).
 6. Decide **shortlist** or **reject** (+ notes).
 
 ### Applicant
-1. Open `https://talentscout.vercel.app/apply/{jobId}` → enter name, email, upload CV (PDF ≤ 2 MB) → submit.
-2. Receive the link `https://talentscout.vercel.app/s/{token}` (valid for 7 days): by email when Gmail is enabled (optional), or from the recruiter who copies it from the dashboard (MVP default).
+1. Open `https://talentscout-id.vercel.app/apply/{jobId}` → enter name, email, upload CV (PDF ≤ 2 MB) → submit.
+2. Receive the link `https://talentscout-id.vercel.app/s/{token}` (valid for 7 days): by email when Gmail is enabled (optional), or from the recruiter who copies it from the dashboard (MVP default).
 3. Open the link → intro screen (duration, number of topics, rules) → **Start**.
 4. Chat with the AI: 3–5 topics, max 2 follow-ups per topic, time limit `SESSION_MAX_MINUTES` (default 15 minutes). A job that requires spoken English runs a voice interview (FR-16). If an AI step fails temporarily, the applicant can retry that step; if it fails permanently, the session ends as `failed` and the recruiter can issue a new invite.
 5. Session ends → "Thank you" screen. The link cannot be used again (a new invite can be issued by the recruiter).

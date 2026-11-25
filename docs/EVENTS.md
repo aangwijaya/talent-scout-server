@@ -44,15 +44,15 @@ The session stream does **not** send node/score events (applicants never see the
 
 **Auth & reconnect.** The browser connects directly to the API with a short-lived `sse_token` (60 s, `aud=sse`, bound to `run_id`; minted via `POST /auth/sse-token` by the SvelteKit server, see API.md). The token is checked only at connect time. Because a reconnect with the old URL fails once the token has expired (401 ends the `EventSource`), the client handles reconnects itself: on `error` → close the `EventSource` → fetch a fresh `sse_token` from its own SvelteKit endpoint → reopen with `since_seq=<last seq received>`. CORS: `GET` only, origins from `FRONTEND_ORIGIN`, no credentials.
 
-**Graph shape.** `run.started.edges` lists every transition the runner can traverse. It includes the two applicant-retry self-loops `planner → planner` and `interviewer → interviewer`; those fire only on a manual retry (`POST /sessions/{token}/retry`, §6.4). Automatic retries are not self-loops: `plan_check → planner` (`invalid`) and `evidence_check → scorer` (`retry`). The scoring path ends `evidence_check → authenticity → recruiter_gate` (`scored`): the advisory authenticity node runs after evidence checking and before `run.completed`.
+**Graph shape.** `run.started.edges` lists every transition the runner can traverse. It includes the two applicant-retry self-loops `planner → planner` and `interviewer → interviewer`; those fire only on a manual retry (`POST /sessions/{token}/retry`, §6.4). Automatic retries are not self-loops: `plan_check → planner` (`invalid`) and `evidence_check → scorer` (`retry`). The scoring path ends `evidence_check → authenticity → fluency → recruiter_gate` (`scored`): the advisory authenticity and fluency nodes run after evidence checking and before `run.completed`. The fluency node only runs in a voice session; in a text session it is skipped with reason `text_session`.
 
 | Event | `node_id` | Payload `data` |
 |---|---|---|
 | `run.started` | null | `{ "session_id": "7c9e6679-…", "nodes": [ {id,type} ], "edges": [ {from,to} ] }` |
 | `node.started` | node | `{ "model": "z-ai/glm-5.3-flash" \| null, "input_summary": "topic 2: State management" }` |
 | `node.completed` | node | `{ "output_summary": "verdict=follow_up", "tokens_in": 820, "tokens_out": 64, "duration_ms": 1430, "cost_usd": 0.00006 }` |
-| `node.failed` | node | `{ "error": "timeout", "will_retry": true }`. For LLM nodes (`planner`, `interviewer`, `judge`, `scorer`, `authenticity`) `error` is one of `timeout` (`context.DeadlineExceeded` on a single attempt; once the transport retries are exhausted the final failure is `llm_unavailable`), `llm_unavailable` (a retryable transport failure or `llm.ErrUnavailable`), `empty_reply` (the interviewer streamed no text), or `llm_error` (any other LLM failure, e.g. a non-retryable upstream status, a decode error, or empty choices); the raw transport/provider detail is never sent, it stays in the server log. Code nodes keep their own validation text. On any node type, `error: "server_restart"` with `will_retry: false` means a server restart interrupted that attempt and boot reconciliation closed it (see *Boot reconciliation* below). (`will_retry` is `true` only for the 1× HTTP retry on the same model; no model fallback in the MVP) |
-| `node.skipped` | node | `{ "reason": "run_failed" }` (the node was not executed because the run ended first) |
+| `node.failed` | node | `{ "error": "timeout", "will_retry": true }`. For LLM nodes (`planner`, `interviewer`, `judge`, `scorer`, `authenticity`, `fluency`) `error` is one of `timeout` (`context.DeadlineExceeded` on a single attempt; once the transport retries are exhausted the final failure is `llm_unavailable`), `llm_unavailable` (a retryable transport failure or `llm.ErrUnavailable`), `empty_reply` (the interviewer streamed no text), or `llm_error` (any other LLM failure, e.g. a non-retryable upstream status, a decode error, or empty choices); the raw transport/provider detail is never sent, it stays in the server log. Code nodes keep their own validation text. On any node type, `error: "server_restart"` with `will_retry: false` means a server restart interrupted that attempt and boot reconciliation closed it (see *Boot reconciliation* below). (`will_retry` is `true` only for the 1× HTTP retry on the same model; no model fallback in the MVP) |
+| `node.skipped` | node | `{ "reason": "run_failed" \| "text_session" }` (the node was not executed because the run ended first, or because `fluency` does not apply to a text session) |
 | `check.passed` | code node (`plan_check`/`guard`/`evidence_check`) or the checked node | `{ "check": "evidence_quotes", "details": {} }` |
 | `check.failed` | code node | `{ "check": "evidence_quotes", "errors": [ { "rubric_key": "frontend_depth", "reason": "quote_not_found", "quote": "..." } ] }` |
 | `loop.retry` | the retried node (`planner` / `interviewer` for an applicant manual retry; `planner` for an automatic plan_check retry; `scorer` for an automatic evidence-check retry) | `{ "attempt": 2, "max_attempts": 3, "reason": "quote_not_found", "feedback": "..." }`. `feedback` is the rejection or check feedback for `invalid_plan` and `quote_not_found`, and `""` for `llm_unavailable`. Reasons: `invalid_plan` (automatic planner retry after `plan_check` rejects the plan; `max_attempts` is the last planner attempt the 2 plan_check rounds allow, so 2 when no transport retry came before it and higher after one); `quote_not_found` (scorer, `max_attempts` 3); `llm_unavailable` (applicant manual retry of `planner` or `interviewer`, `max_attempts` = `attempt` + the HTTP retry count, i.e. 4 with the 1× retry) |
@@ -117,13 +117,17 @@ node.started(evidence_check, attempt=2) → node.completed(evidence_check, attem
 check.passed(evidence_check)
 edge.traversed(evidence_check→authenticity, scored)
 node.started(authenticity, attempt=1) → node.completed(authenticity, attempt=1, level=possible)
-edge.traversed(authenticity→recruiter_gate, scored)
+edge.traversed(authenticity→fluency, scored)
+node.started(fluency, attempt=1) → node.completed(fluency, attempt=1)
+edge.traversed(fluency→recruiter_gate, scored)
 run.completed
 ```
 
 When the guard activates the next topic, the order is `node.completed(guard, next_topic) → topic.changed(guard, topic N, active) → edge.traversed(guard→interviewer, next_topic)`.
 
-`authenticity` is advisory. If it fails after the 1× HTTP retry it emits `node.failed(authenticity, will_retry=false)`, the run still traverses `authenticity → recruiter_gate` and emits `run.completed`; the application's `authenticity` stays `null`. A successful assessment is not an input to the scorer and never changes a score.
+`authenticity` is advisory. If it fails after the 1× HTTP retry it emits `node.failed(authenticity, will_retry=false)`, the run still traverses `authenticity → fluency` and emits `run.completed`; the application's `authenticity` stays `null`. A successful assessment is not an input to the scorer and never changes a score.
+
+`fluency` is advisory and voice-only. In a text session the run traverses `authenticity → fluency`, emits `node.skipped(fluency, reason=text_session)`, then traverses `fluency → recruiter_gate` and emits `run.completed`; the application's `fluency` is `null`. If a voice session's fluency check fails after the 1× HTTP retry it emits `node.failed(fluency, will_retry=false)`, the run still traverses `fluency → recruiter_gate` and emits `run.completed`; the application's `fluency` stays `null`. A successful assessment is not an input to the scorer and never changes a score.
 
 ### 6.2 Planner failure after both attempts
 
@@ -139,7 +143,7 @@ node.started(planner, attempt=2) → node.completed(planner, attempt=2)
 edge.traversed(planner→plan_check, planned)
 node.started(plan_check, attempt=2) → node.completed(plan_check, attempt=2, invalid)
 check.failed(plan_check)
-node.skipped(interviewer, reason=run_failed) → node.skipped(judge, reason=run_failed) → node.skipped(guard, reason=run_failed) → node.skipped(scorer, reason=run_failed) → node.skipped(evidence_check, reason=run_failed) → node.skipped(authenticity, reason=run_failed)
+node.skipped(interviewer, reason=run_failed) → node.skipped(judge, reason=run_failed) → node.skipped(guard, reason=run_failed) → node.skipped(scorer, reason=run_failed) → node.skipped(evidence_check, reason=run_failed) → node.skipped(authenticity, reason=run_failed) → node.skipped(fluency, reason=run_failed)
 run.failed(error=planner_invalid_after_retries)
 ```
 
@@ -157,7 +161,8 @@ If the transport retry also fails (`will_retry=false`) or a node cannot continue
 - **`planner` / `interviewer`, model outage.** When the model is unavailable after the transport retry (`llm_unavailable`), the failure does **not** end the run. The session stream sends a retryable `error` (`code: "llm_unavailable"`, `retryable: true`) and the run waits for the applicant's manual retry (`POST /sessions/{token}/retry`), once per failed step; §6.4 shows the sequences. Only a failure of that manual retry ends the run: `node.failed` (and `node.skipped` for downstream machine nodes) → `run.failed`, `session.ended` with `finish_reason: "failed"`, and the application becomes `failed`. No further applicant retry is offered for that step.
 - **`planner` / `interviewer`, any other failure.** No manual retry is offered and the run ends at once, as in §6.2 (`planner_invalid_after_retries`) or when a message or event cannot be stored: `node.failed` (and `node.skipped` for downstream machine nodes) → `run.failed`, `session.ended` with `finish_reason: "failed"`, and the application becomes `failed`.
 - **`judge`.** It is the exception: a gate with the safe default `sufficient`, so a transport outage after the retry does not end the run. The judge emits `node.failed(judge, will_retry=false)` and the run continues exactly as for invalid JSON: `edge.traversed(judge→guard, verdict)` with the default verdict `sufficient` (recorded in `node_events`) and the guard runs. There is no `run.failed`, no `session.ended(failed)`, no applicant `error` event, and no `node.skipped` for the judge's downstream nodes.
-- **`authenticity`.** It is advisory, so a failure after the 1× HTTP retry does not end the run. It emits `node.failed(authenticity, will_retry=false)`, the runner still traverses `authenticity → recruiter_gate`, and `run.completed` reports `succeeded`; the application's `authenticity` stays `null`. There is no `run.failed`, no `session.ended(failed)`, no applicant `error` event, and no `node.skipped`.
+- **`authenticity`.** It is advisory, so a failure after the 1× HTTP retry does not end the run. It emits `node.failed(authenticity, will_retry=false)`, the runner still traverses `authenticity → fluency`, and `run.completed` reports `succeeded`; the application's `authenticity` stays `null`. There is no `run.failed`, no `session.ended(failed)`, no applicant `error` event, and no `node.skipped`.
+- **`fluency`.** It is advisory and voice-only, so a failure after the 1× HTTP retry does not end the run. It emits `node.failed(fluency, will_retry=false)`, the runner still traverses `fluency → recruiter_gate`, and `run.completed` reports `succeeded`; the application's `fluency` stays `null`. There is no `run.failed`, no `session.ended(failed)`, no applicant `error` event, and no `node.skipped`.
 - **Every other node.** A failure ends the run immediately: `node.failed` (and `node.skipped` for downstream machine nodes) → `run.failed`, `session.ended` with `finish_reason: "failed"`, and the application becomes `failed`.
 
 ```
@@ -170,7 +175,7 @@ edge.traversed(guard→interviewer, next_topic)
 node.started(interviewer, attempt=1) → message.completed(assistant, question) → node.completed(interviewer, attempt=1)
 ```
 
-If `evidence_check` still fails on its final allowed attempt (`max_attempts=3`), no further `loop.retry` is emitted: `check.failed` is emitted for that final attempt, the criterion becomes `needs_manual`, `evidence_check` completes, the transition `evidence_check → authenticity → recruiter_gate` is emitted, and `run.completed` reports `needs_manual_count > 0`.
+If `evidence_check` still fails on its final allowed attempt (`max_attempts=3`), no further `loop.retry` is emitted: `check.failed` is emitted for that final attempt, the criterion becomes `needs_manual`, `evidence_check` completes, the transitions `evidence_check → authenticity → fluency → recruiter_gate` are emitted, and `run.completed` reports `needs_manual_count > 0`.
 
 The client mock (Day 1) must be able to replay these sequences from fixture files.
 

@@ -376,6 +376,42 @@ paths:
         "404":
           $ref: "#/components/responses/NotFound"
 
+  /applications/{applicationId}/messages/{messageId}/audio:
+    get:
+      tags: [applications]
+      operationId: downloadApplicationMessageAudio
+      summary: Stream a spoken answer recording
+      description: |
+        Streams the recording from the private `audio` bucket through the server.
+        No Storage URL is returned to the client.
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/ApplicationId"
+        - $ref: "#/components/parameters/MessageId"
+      responses:
+        "200":
+          description: Spoken answer recording in its uploaded format.
+          content:
+            audio/webm:
+              schema:
+                type: string
+                format: binary
+            audio/ogg:
+              schema:
+                type: string
+                format: binary
+            audio/mp4:
+              schema:
+                type: string
+                format: binary
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "410":
+          $ref: "#/components/responses/RecordingGone"
+
   /applications/{applicationId}/decision:
     post:
       tags: [applications]
@@ -453,9 +489,20 @@ paths:
       tags: [sessions]
       operationId: startSession
       summary: Start the screening session
+      description: |
+        For a voice session `recording_consent` is required (400 when missing).
+        With `false` the session stays a voice session but every answer is a text
+        fallback with reason `declined_recording`. The field is ignored for a
+        text session.
       security: []
       parameters:
         - $ref: "#/components/parameters/SessionToken"
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/StartSessionRequest"
       responses:
         "200":
           description: Session started.
@@ -463,12 +510,63 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/SessionDetail"
+        "400":
+          $ref: "#/components/responses/ValidationFailed"
         "404":
           $ref: "#/components/responses/SessionNotFound"
         "409":
           $ref: "#/components/responses/Conflict"
         "410":
           $ref: "#/components/responses/SessionGone"
+
+  /sessions/{token}/audio:
+    post:
+      tags: [sessions]
+      operationId: uploadSessionAudio
+      summary: Upload a spoken answer recording
+      description: |
+        Transcribes the audio (language auto-detected) and stores it in the private
+        `audio` bucket. This does not send an answer; send the returned `audio_id`
+        with `POST /sessions/{token}/messages`. A storage failure is not an error:
+        `stored` is `false` and the answer can still be sent.
+      security: []
+      parameters:
+        - $ref: "#/components/parameters/SessionToken"
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [audio]
+              properties:
+                audio:
+                  type: string
+                  format: binary
+                  description: At most 1 MB; audio/webm, audio/ogg or audio/mp4.
+      responses:
+        "200":
+          description: Audio uploaded and transcribed.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AudioUploadResponse"
+        "400":
+          $ref: "#/components/responses/ValidationFailed"
+        "404":
+          $ref: "#/components/responses/SessionNotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "410":
+          $ref: "#/components/responses/SessionGone"
+        "413":
+          $ref: "#/components/responses/FileTooLarge"
+        "422":
+          $ref: "#/components/responses/NoSpeech"
+        "429":
+          $ref: "#/components/responses/RateLimited"
+        "502":
+          $ref: "#/components/responses/TranscriptionUnavailable"
 
   /sessions/{token}/messages:
     get:
@@ -671,6 +769,13 @@ components:
       schema:
         type: string
         format: uuid
+    MessageId:
+      name: messageId
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
     RunId:
       name: runId
       in: path
@@ -729,6 +834,24 @@ components:
         application/json:
           schema:
             $ref: "#/components/schemas/Error"
+    RecordingGone:
+      description: The recording was deleted by retention or was not stored.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+    NoSpeech:
+      description: The recording contains no speech.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+    TranscriptionUnavailable:
+      description: The transcription service is unavailable; the client may re-send the same recording.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
     RateLimited:
       description: Too many requests.
       headers:
@@ -762,12 +885,16 @@ components:
                 - already_applied
                 - session_already_started
                 - invalid_state
+                - audio_budget_exceeded
                 - session_expired
                 - session_completed
+                - recording_deleted
                 - file_too_large
+                - no_speech
                 - rate_limited
                 - internal_error
                 - llm_unavailable
+                - transcription_unavailable
                 - db_unavailable
             message:
               type: string
@@ -886,6 +1013,9 @@ components:
             $ref: "#/components/schemas/RubricCriterion"
         status:
           $ref: "#/components/schemas/JobStatus"
+        spoken_english_required:
+          type: boolean
+          default: false
         apply_url:
           type: string
           format: uri
@@ -919,6 +1049,9 @@ components:
             $ref: "#/components/schemas/RubricCriterion"
         status:
           $ref: "#/components/schemas/JobStatus"
+        spoken_english_required:
+          type: boolean
+          default: false
 
     JobUpdateRequest:
       type: object
@@ -939,6 +1072,8 @@ components:
             $ref: "#/components/schemas/RubricCriterion"
         status:
           $ref: "#/components/schemas/JobStatus"
+        spoken_english_required:
+          type: boolean
 
     RubricSuggestionRequest:
       type: object
@@ -963,6 +1098,10 @@ components:
           maxItems: 6
           items:
             $ref: "#/components/schemas/RubricCriterion"
+        spoken_english_required:
+          type: boolean
+        spoken_english_reason:
+          type: string
 
     PublicJob:
       type: object
@@ -977,6 +1116,9 @@ components:
           type: string
         status:
           $ref: "#/components/schemas/JobStatus"
+        spoken_english_required:
+          type: boolean
+          default: false
 
     ApplicationStatus:
       type: string
@@ -1048,6 +1190,24 @@ components:
           type: integer
           minimum: 0
           maximum: 10000000
+        mode:
+          type: string
+          enum: [typed, spoken]
+        fallback_reason:
+          type: string
+          enum: [chose_text, declined_recording, microphone_unavailable, transcription_failed]
+        start_latency_ms:
+          type: integer
+          minimum: 0
+          maximum: 10000000
+        speaking_ms:
+          type: integer
+          minimum: 0
+          maximum: 10000000
+        rerecord_count:
+          type: integer
+          minimum: 0
+          maximum: 10000000
 
     Message:
       type: object
@@ -1081,6 +1241,23 @@ components:
               oneOf:
                 - $ref: "#/components/schemas/MessageEntry"
                 - type: "null"
+            audio:
+              oneOf:
+                - $ref: "#/components/schemas/MessageAudio"
+                - type: "null"
+
+    MessageAudio:
+      type: object
+      required: [duration_ms, language, status]
+      properties:
+        duration_ms:
+          type: integer
+          minimum: 0
+        language:
+          type: string
+        status:
+          type: string
+          enum: [available, deleted, not_stored]
 
     Authenticity:
       type: object
@@ -1093,6 +1270,50 @@ components:
           type: array
           items:
             type: string
+        assessed_at:
+          type: string
+          format: date-time
+
+    Fluency:
+      type: object
+      required:
+        - words_per_minute
+        - pause_ratio
+        - filler_rate
+        - transcript_confidence
+        - languages
+        - summary
+        - spoken_answers
+        - typed_answers
+        - assessed_at
+      properties:
+        words_per_minute:
+          type: number
+          minimum: 0
+        pause_ratio:
+          type: number
+          minimum: 0
+          maximum: 1
+        filler_rate:
+          type: number
+          minimum: 0
+          maximum: 1
+        transcript_confidence:
+          type: number
+          minimum: 0
+          maximum: 1
+        languages:
+          type: array
+          items:
+            type: string
+        summary:
+          type: string
+        spoken_answers:
+          type: integer
+          minimum: 0
+        typed_answers:
+          type: integer
+          minimum: 0
         assessed_at:
           type: string
           format: date-time
@@ -1247,6 +1468,8 @@ components:
               type: array
               items:
                 $ref: "#/components/schemas/RubricCriterion"
+            spoken_english_required:
+              type: boolean
         cv_text:
           type: string
         decision:
@@ -1276,6 +1499,10 @@ components:
         authenticity:
           oneOf:
             - $ref: "#/components/schemas/Authenticity"
+            - type: "null"
+        fluency:
+          oneOf:
+            - $ref: "#/components/schemas/Fluency"
             - type: "null"
 
     ApplyResponse:
@@ -1328,6 +1555,25 @@ components:
           type: integer
           minimum: 1
 
+    VoiceSession:
+      type: object
+      required: [max_answer_seconds, max_total_seconds, used_seconds, recording_consent]
+      properties:
+        max_answer_seconds:
+          type: integer
+          minimum: 1
+          default: 120
+        max_total_seconds:
+          type: integer
+          minimum: 1
+          default: 1200
+        used_seconds:
+          type: integer
+          minimum: 0
+          default: 0
+        recording_consent:
+          type: [boolean, "null"]
+
     SessionDetail:
       type: object
       required:
@@ -1374,17 +1620,56 @@ components:
           oneOf:
             - $ref: "#/components/schemas/CurrentTopic"
             - type: "null"
+        voice:
+          oneOf:
+            - $ref: "#/components/schemas/VoiceSession"
+            - type: "null"
+
+    StartSessionRequest:
+      type: object
+      properties:
+        recording_consent:
+          type: boolean
+
+    AudioUploadResponse:
+      type: object
+      required: [audio_id, transcript, language, duration_ms, stored]
+      properties:
+        audio_id:
+          type: string
+          format: uuid
+        transcript:
+          type: string
+        language:
+          type: string
+        duration_ms:
+          type: integer
+          minimum: 0
+        stored:
+          type: boolean
 
     SendMessageRequest:
-      type: object
-      required: [content]
-      properties:
-        content:
-          type: string
-          minLength: 1
-          maxLength: 2000
-        entry:
-          $ref: "#/components/schemas/MessageEntry"
+      description: Exactly one of `content` or `audio_id` is required.
+      oneOf:
+        - type: object
+          required: [content]
+          additionalProperties: false
+          properties:
+            content:
+              type: string
+              minLength: 1
+              maxLength: 2000
+            entry:
+              $ref: "#/components/schemas/MessageEntry"
+        - type: object
+          required: [audio_id]
+          additionalProperties: false
+          properties:
+            audio_id:
+              type: string
+              format: uuid
+            entry:
+              $ref: "#/components/schemas/MessageEntry"
 
     SendMessageResponse:
       type: object
@@ -1462,6 +1747,7 @@ components:
             - scorer
             - evidence_check
             - authenticity
+            - fluency
             - recruiter_gate
         type:
           type: string

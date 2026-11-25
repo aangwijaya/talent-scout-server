@@ -71,7 +71,7 @@ func newApplicationsFixture(t *testing.T, emailMode string) *applicationsFixture
 		Version:             "0.1.0",
 		LLMMode:             "fake",
 		EmailMode:           emailMode,
-		PublicAppURL:        "https://talentscout.vercel.app",
+		PublicAppURL:        "https://talentscout-id.vercel.app",
 		RecruiterPassword:   "correct horse",
 		AuthTokenSecret:     "0123456789abcdef0123456789abcdef",
 		SessionTTLHours:     168,
@@ -566,7 +566,7 @@ func TestResendInviteForInvitedSession(t *testing.T) {
 	if got.SessionID == old.ID {
 		t.Errorf("session_id = %q, want a new session", got.SessionID)
 	}
-	if got.InviteURL == nil || !strings.HasPrefix(*got.InviteURL, "https://talentscout.vercel.app/s/") {
+	if got.InviteURL == nil || !strings.HasPrefix(*got.InviteURL, "https://talentscout-id.vercel.app/s/") {
 		t.Errorf("invite_url = %v, want a public /s/ link", got.InviteURL)
 	}
 	if strings.Contains(*got.InviteURL, oldRaw) {

@@ -19,7 +19,7 @@ import (
 
 func sessionCfg() config.Config {
 	return config.Config{
-		PublicAppURL:        "https://talentscout.vercel.app",
+		PublicAppURL:        "https://talentscout-id.vercel.app",
 		SessionTTLHours:     168,
 		SessionMaxMinutes:   15,
 		SessionMaxQuestions: 15,

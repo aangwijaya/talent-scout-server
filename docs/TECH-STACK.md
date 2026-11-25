@@ -61,8 +61,8 @@
 | `SUPABASE_URL` | `https://<project_ref>.supabase.co` | For the Storage API. |
 | `SUPABASE_SERVICE_ROLE_KEY` | (secret) | **Server only.** Never log it. |
 | `SUPABASE_STORAGE_BUCKET` | `cvs` | Private bucket. |
-| `PUBLIC_APP_URL` | `https://talentscout.vercel.app` | Base for email links (`${PUBLIC_APP_URL}/s/<token>`) and `apply_url` (`${PUBLIC_APP_URL}/apply/<jobId>`). |
-| `FRONTEND_ORIGIN` | `https://talentscout.vercel.app,http://localhost:5173` | Allowed CORS origins for the two SSE `GET` routes only (REST is server-to-server), comma-separated. No wildcard. |
+| `PUBLIC_APP_URL` | `https://talentscout-id.vercel.app` | Base for email links (`${PUBLIC_APP_URL}/s/<token>`) and `apply_url` (`${PUBLIC_APP_URL}/apply/<jobId>`). |
+| `FRONTEND_ORIGIN` | `https://talentscout-id.vercel.app,http://localhost:5173` | Allowed CORS origins for the two SSE `GET` routes only (REST is server-to-server), comma-separated. No wildcard. |
 | `BFF_SHARED_SECRET` | (secret, 32+ bytes) | Must equal the client's `BFF_SHARED_SECRET`. Only when `X-BFF-Secret` matches (constant-time) is `X-Forwarded-For` trusted as the applicant IP for the apply rate limit. Never log it. |
 | `RECRUITER_PASSWORD` | (secret) | Single recruiter password (the only recruiter auth in the MVP). |
 | `AUTH_TOKEN_SECRET` | (secret, 32+ bytes) | HMAC for the recruiter bearer token. |
@@ -96,7 +96,7 @@ All secrets live only in `.env` (gitignored), Railway Variables, or Vercel env. 
 
 ```mermaid
 flowchart LR
-  A[Applicant / recruiter browser] -->|HTTPS pages, form actions, cookie| VC[Vercel Hobby<br/>talent-scout-client SvelteKit SSR<br/>talentscout.vercel.app]
+  A[Applicant / recruiter browser] -->|HTTPS pages, form actions, cookie| VC[Vercel Hobby<br/>talent-scout-client SvelteKit SSR<br/>talentscout-id.vercel.app]
   VC -->|REST server-to-server<br/>Bearer, X-Forwarded-For + X-BFF-Secret| RW[Railway<br/>talent-scout-server Go]
   A -->|SSE only, CORS GET<br/>sse_token / path token| RW
   RW -->|pgx · session pooler| PG[(Supabase Postgres<br/>RLS on, no public policy)]
@@ -107,8 +107,8 @@ flowchart LR
 ```
 
 - **One frontend app, routed by path:** `/dashboard/...` (recruiter), `/apply/[jobId]` (apply form), `/s/[token]` (AI session).
-- Default domain: `talentscout.vercel.app` (or another name still available when creating the Vercel project; adjust `PUBLIC_APP_URL` & `FRONTEND_ORIGIN`).
-- Vercel's free subdomain is single-level, so `apply.talentscout.vercel.app` is **not possible**.
+- Default domain: `talentscout-id.vercel.app` (or another name still available when creating the Vercel project; adjust `PUBLIC_APP_URL` & `FRONTEND_ORIGIN`).
+- Vercel's free subdomain is single-level, so `apply.talentscout-id.vercel.app` is **not possible**.
 - Optional later: buy a domain (e.g. `talentscout.com`) and point the root and `apply.` to the same Vercel project. Just change `PUBLIC_APP_URL`, `FRONTEND_ORIGIN`, `EMAIL_FROM`; no code changes.
 
 ## 7. Local Development & Tests

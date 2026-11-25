@@ -13,7 +13,7 @@ import (
 const (
 	defaultPort           = "8080"
 	defaultVersion        = "0.1.0"
-	defaultPublicAppURL   = "https://talentscout.vercel.app"
+	defaultPublicAppURL   = "https://talentscout-id.vercel.app"
 	defaultLLMBaseURL     = "https://openrouter.ai/api/v1"
 	defaultModelsPath     = "./config/models.yaml"
 	defaultEmailFrom      = "Talent Scout <you@gmail.com>"

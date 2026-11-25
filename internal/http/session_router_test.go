@@ -56,7 +56,7 @@ func sessionRouter(t *testing.T) (http.Handler, string) {
 		Version:             "0.1.0",
 		LLMMode:             "fake",
 		EmailMode:           "log",
-		PublicAppURL:        "https://talentscout.vercel.app",
+		PublicAppURL:        "https://talentscout-id.vercel.app",
 		SessionTTLHours:     168,
 		SessionMaxMinutes:   15,
 		SessionMaxQuestions: 15,

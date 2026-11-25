@@ -22,7 +22,7 @@ func jobsConfig() config.Config {
 		Version:           "0.1.0",
 		LLMMode:           "fake",
 		EmailMode:         "log",
-		PublicAppURL:      "https://talentscout.vercel.app",
+		PublicAppURL:      "https://talentscout-id.vercel.app",
 		RecruiterPassword: "correct horse",
 		AuthTokenSecret:   "0123456789abcdef0123456789abcdef",
 	}
@@ -88,7 +88,7 @@ func TestListJobs(t *testing.T) {
 	if got.Items[0].ID != jobsJobID {
 		t.Errorf("id = %q, want %q", got.Items[0].ID, jobsJobID)
 	}
-	if want := "https://talentscout.vercel.app/apply/" + jobsJobID; got.Items[0].ApplyURL != want {
+	if want := "https://talentscout-id.vercel.app/apply/" + jobsJobID; got.Items[0].ApplyURL != want {
 		t.Errorf("apply_url = %q, want %q", got.Items[0].ApplyURL, want)
 	}
 	if got.Items[0].ApplicationCount != 2 {

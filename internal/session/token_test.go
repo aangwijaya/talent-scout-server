@@ -47,16 +47,16 @@ func TestHashTokenMatchesRaw(t *testing.T) {
 }
 
 func TestInviteURL(t *testing.T) {
-	got := InviteURL("https://talentscout.vercel.app", "abc123")
-	want := "https://talentscout.vercel.app/s/abc123"
+	got := InviteURL("https://talentscout-id.vercel.app", "abc123")
+	want := "https://talentscout-id.vercel.app/s/abc123"
 	if got != want {
 		t.Errorf("InviteURL = %q, want %q", got, want)
 	}
 }
 
 func TestInviteURLTrimsTrailingSlash(t *testing.T) {
-	got := InviteURL("https://talentscout.vercel.app/", "abc123")
-	if !strings.Contains(got, "talentscout.vercel.app/s/abc123") {
+	got := InviteURL("https://talentscout-id.vercel.app/", "abc123")
+	if !strings.Contains(got, "talentscout-id.vercel.app/s/abc123") {
 		t.Errorf("InviteURL = %q, want no double slash", got)
 	}
 }

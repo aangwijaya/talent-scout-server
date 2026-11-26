@@ -18,6 +18,7 @@ import (
 	httpapi "github.com/aangwijaya/talent-scout-server/internal/http"
 	"github.com/aangwijaya/talent-scout-server/internal/http/handlers"
 	"github.com/aangwijaya/talent-scout-server/internal/llm"
+	"github.com/aangwijaya/talent-scout-server/internal/retention"
 	"github.com/aangwijaya/talent-scout-server/internal/session"
 	"github.com/aangwijaya/talent-scout-server/internal/storage"
 	"github.com/aangwijaya/talent-scout-server/internal/store"
@@ -61,13 +62,15 @@ func main() {
 		os.Exit(1)
 	}
 	registry := session.NewRegistry()
+	cvStorage := storage.NewSupabase(cfg.SupabaseURL, cfg.SupabaseStorageBucket, cfg.SupabaseServiceRoleKey)
+	audioStorage := storage.NewSupabase(cfg.SupabaseURL, cfg.SupabaseAudioBucket, cfg.SupabaseServiceRoleKey)
 
 	server := &http.Server{
 		Addr: ":" + cfg.Port,
 		Handler: httpapi.NewRouter(cfg, httpapi.Deps{
 			DB:        db,
 			Store:     st,
-			Storage:   storage.NewSupabase(cfg.SupabaseURL, cfg.SupabaseStorageBucket, cfg.SupabaseServiceRoleKey),
+			Storage:   cvStorage,
 			Extractor: cv.NewPDF(),
 			Mailer:    mailer,
 			LLM:       client,
@@ -81,8 +84,11 @@ func main() {
 	defer stop()
 
 	errCh := make(chan error, 1)
-	if err := boot(ctx, st, registry, time.Duration(cfg.SessionMaxMinutes)*time.Minute, logger,
+	if err := boot(ctx, st, registry, time.Duration(cfg.SessionMaxMinutes)*time.Minute, logger, audioStorage,
 		func(ctx context.Context, sweeper *session.Sweeper) {
+			go sweeper.Run(ctx)
+		},
+		func(ctx context.Context, sweeper *retention.Sweeper) {
 			go sweeper.Run(ctx)
 		},
 		func() {
@@ -123,7 +129,9 @@ func boot(
 	registry *session.Registry,
 	maxSession time.Duration,
 	logger *slog.Logger,
+	audioStorage storage.Storage,
 	startSweeper func(context.Context, *session.Sweeper),
+	startRetention func(context.Context, *retention.Sweeper),
 	startListener func(),
 ) error {
 	if st != nil {
@@ -138,6 +146,9 @@ func boot(
 				"nodes", reconciled.NodesClosed)
 		}
 		startSweeper(ctx, session.NewSweeper(st, registry, maxSession, logger))
+		if audioStorage != nil {
+			startRetention(ctx, retention.NewSweeper(st, audioStorage, logger))
+		}
 	}
 	startListener()
 	return nil

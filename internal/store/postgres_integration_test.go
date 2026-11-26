@@ -38,6 +38,14 @@ func TestPostgresStore(t *testing.T) {
 	if err := migrations.Run(ctx, db, "up"); err != nil {
 		t.Fatalf("migrate up: %v", err)
 	}
+	var audioUploadsRLS bool
+	if err := db.QueryRowContext(ctx,
+		`SELECT relrowsecurity FROM pg_class WHERE oid = 'audio_uploads'::regclass`).Scan(&audioUploadsRLS); err != nil {
+		t.Fatalf("audio_uploads RLS lookup: %v", err)
+	}
+	if !audioUploadsRLS {
+		t.Fatal("audio_uploads must have RLS enabled")
+	}
 	db.Close()
 
 	pool, err := store.OpenPool(ctx, dsn)

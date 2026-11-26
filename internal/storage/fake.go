@@ -52,3 +52,13 @@ func (f *Fake) Download(_ context.Context, path string) ([]byte, error) {
 	}
 	return append([]byte(nil), data...), nil
 }
+
+func (f *Fake) Delete(_ context.Context, path string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.err != nil {
+		return f.err
+	}
+	delete(f.objects, path)
+	return nil
+}

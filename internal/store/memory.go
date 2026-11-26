@@ -16,6 +16,7 @@ type Memory struct {
 	sessions     map[string]domain.Session
 	topics       map[string]domain.Topic
 	messages     map[string]domain.Message
+	audioUploads map[string]AudioUpload
 	scores       map[string]domain.Score
 	graphRuns    map[string]domain.GraphRun
 	nodeEvents   map[string]domain.NodeEvent
@@ -29,6 +30,7 @@ func NewMemory() *Memory {
 		sessions:     make(map[string]domain.Session),
 		topics:       make(map[string]domain.Topic),
 		messages:     make(map[string]domain.Message),
+		audioUploads: make(map[string]AudioUpload),
 		scores:       make(map[string]domain.Score),
 		graphRuns:    make(map[string]domain.GraphRun),
 		nodeEvents:   make(map[string]domain.NodeEvent),
@@ -642,6 +644,92 @@ func (m *Memory) ListMessagesBySession(_ context.Context, sessionID string, incl
 	return messages, nil
 }
 
+func (m *Memory) CreateAudioUpload(_ context.Context, upload AudioUpload) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	if upload.ID == "" {
+		upload.ID = domain.NewID()
+	}
+	if _, ok := m.audioUploads[upload.ID]; ok {
+		return ErrConflict
+	}
+	if upload.UploadedAt.IsZero() {
+		upload.UploadedAt = time.Now().UTC()
+	}
+	m.audioUploads[upload.ID] = cloneAudioUpload(upload)
+	return nil
+}
+
+func (m *Memory) GetAudioUpload(_ context.Context, id string) (AudioUpload, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	upload, ok := m.audioUploads[id]
+	if !ok {
+		return AudioUpload{}, ErrNotFound
+	}
+	return cloneAudioUpload(upload), nil
+}
+
+func (m *Memory) AttachAudioUpload(_ context.Context, id, messageID string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	upload, ok := m.audioUploads[id]
+	if !ok {
+		return ErrNotFound
+	}
+	if upload.MessageID != nil {
+		return ErrConflict
+	}
+	upload.MessageID = &messageID
+	m.audioUploads[id] = upload
+	return nil
+}
+
+func (m *Memory) ListAudioUploadsDue(_ context.Context, sentBefore, unsentBefore time.Time) ([]AudioUpload, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	uploads := make([]AudioUpload, 0)
+	for _, upload := range m.audioUploads {
+		if upload.DeletedAt != nil {
+			continue
+		}
+		cutoff := unsentBefore
+		if upload.MessageID != nil {
+			cutoff = sentBefore
+		}
+		if !upload.UploadedAt.After(cutoff) {
+			uploads = append(uploads, cloneAudioUpload(upload))
+		}
+	}
+	sort.Slice(uploads, func(i, j int) bool {
+		if uploads[i].UploadedAt.Equal(uploads[j].UploadedAt) {
+			return uploads[i].ID < uploads[j].ID
+		}
+		return uploads[i].UploadedAt.Before(uploads[j].UploadedAt)
+	})
+	return uploads, nil
+}
+
+func (m *Memory) MarkAudioUploadDeleted(_ context.Context, id string, deletedAt time.Time) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	upload, ok := m.audioUploads[id]
+	if !ok {
+		return ErrNotFound
+	}
+	if upload.DeletedAt != nil {
+		return nil
+	}
+	upload.DeletedAt = &deletedAt
+	m.audioUploads[id] = upload
+	return nil
+}
+
 func (m *Memory) UpsertScores(_ context.Context, scores []domain.Score) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -842,6 +930,18 @@ func cloneMessage(message domain.Message) domain.Message {
 		message.Entry = &entry
 	}
 	return message
+}
+
+func cloneAudioUpload(upload AudioUpload) AudioUpload {
+	if upload.MessageID != nil {
+		messageID := *upload.MessageID
+		upload.MessageID = &messageID
+	}
+	if upload.DeletedAt != nil {
+		deletedAt := *upload.DeletedAt
+		upload.DeletedAt = &deletedAt
+	}
+	return upload
 }
 
 func cloneScore(score domain.Score) domain.Score {

@@ -49,6 +49,21 @@ func defaultGraphRunStatus(run *domain.GraphRun) {
 	}
 }
 
+// AudioUpload is the internal metadata for a recording stored in the private
+// audio bucket. MessageID is nil until the upload is attached to an answer.
+// The table is not exposed through the API; retention only reads deleted_at.
+type AudioUpload struct {
+	ID          string
+	SessionID   string
+	ObjectPath  string
+	ContentType string
+	SizeBytes   int
+	DurationMS  int
+	MessageID   *string
+	UploadedAt  time.Time
+	DeletedAt   *time.Time
+}
+
 var (
 	_ Store = (*Memory)(nil)
 	_ Store = (*Postgres)(nil)
@@ -91,6 +106,12 @@ type Store interface {
 
 	CreateMessage(ctx context.Context, message domain.Message) error
 	ListMessagesBySession(ctx context.Context, sessionID string, includeSystem bool) ([]domain.Message, error)
+
+	CreateAudioUpload(ctx context.Context, upload AudioUpload) error
+	GetAudioUpload(ctx context.Context, id string) (AudioUpload, error)
+	AttachAudioUpload(ctx context.Context, id, messageID string) error
+	ListAudioUploadsDue(ctx context.Context, sentBefore, unsentBefore time.Time) ([]AudioUpload, error)
+	MarkAudioUploadDeleted(ctx context.Context, id string, deletedAt time.Time) error
 
 	UpsertScores(ctx context.Context, scores []domain.Score) error
 	ListScoresByApplication(ctx context.Context, applicationID string) ([]domain.Score, error)

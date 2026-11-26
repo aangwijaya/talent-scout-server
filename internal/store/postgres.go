@@ -677,6 +677,94 @@ func (p *Postgres) ListMessagesBySession(ctx context.Context, sessionID string, 
 	return messages, mapError(rows.Err())
 }
 
+func (p *Postgres) CreateAudioUpload(ctx context.Context, upload AudioUpload) error {
+	if upload.ID == "" {
+		upload.ID = domain.NewID()
+	}
+	if upload.UploadedAt.IsZero() {
+		upload.UploadedAt = time.Now().UTC()
+	}
+	_, err := p.pool.Exec(ctx, `
+		INSERT INTO audio_uploads (id, session_id, object_path, content_type, size_bytes, duration_ms, message_id, uploaded_at)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
+		upload.ID, upload.SessionID, upload.ObjectPath, upload.ContentType,
+		upload.SizeBytes, upload.DurationMS, upload.MessageID, upload.UploadedAt)
+	return mapError(err)
+}
+
+func (p *Postgres) GetAudioUpload(ctx context.Context, id string) (AudioUpload, error) {
+	row := p.pool.QueryRow(ctx, `SELECT `+audioUploadColumns+` FROM audio_uploads WHERE id = $1`, id)
+	upload, err := scanAudioUpload(row)
+	if err != nil {
+		return AudioUpload{}, mapError(err)
+	}
+	return upload, nil
+}
+
+func (p *Postgres) AttachAudioUpload(ctx context.Context, id, messageID string) error {
+	tag, err := p.pool.Exec(ctx, `
+		UPDATE audio_uploads SET message_id = $2
+		WHERE id = $1 AND message_id IS NULL`, id, messageID)
+	if err != nil {
+		return mapError(err)
+	}
+	if tag.RowsAffected() > 0 {
+		return nil
+	}
+	var exists bool
+	if err := p.pool.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM audio_uploads WHERE id = $1)`, id).Scan(&exists); err != nil {
+		return mapError(err)
+	}
+	if exists {
+		return ErrConflict
+	}
+	return ErrNotFound
+}
+
+func (p *Postgres) ListAudioUploadsDue(ctx context.Context, sentBefore, unsentBefore time.Time) ([]AudioUpload, error) {
+	rows, err := p.pool.Query(ctx, `
+		SELECT `+audioUploadColumns+` FROM audio_uploads
+		WHERE deleted_at IS NULL AND (
+			(message_id IS NOT NULL AND uploaded_at <= $1)
+			OR (message_id IS NULL AND uploaded_at <= $2)
+		)
+		ORDER BY uploaded_at, id`, sentBefore, unsentBefore)
+	if err != nil {
+		return nil, mapError(err)
+	}
+	defer rows.Close()
+
+	uploads := make([]AudioUpload, 0)
+	for rows.Next() {
+		upload, err := scanAudioUpload(rows)
+		if err != nil {
+			return nil, err
+		}
+		uploads = append(uploads, upload)
+	}
+	return uploads, mapError(rows.Err())
+}
+
+func (p *Postgres) MarkAudioUploadDeleted(ctx context.Context, id string, deletedAt time.Time) error {
+	tag, err := p.pool.Exec(ctx, `
+		UPDATE audio_uploads SET deleted_at = $2
+		WHERE id = $1 AND deleted_at IS NULL`, id, deletedAt)
+	if err != nil {
+		return mapError(err)
+	}
+	if tag.RowsAffected() > 0 {
+		return nil
+	}
+	var exists bool
+	if err := p.pool.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM audio_uploads WHERE id = $1)`, id).Scan(&exists); err != nil {
+		return mapError(err)
+	}
+	if !exists {
+		return ErrNotFound
+	}
+	return nil
+}
+
 func (p *Postgres) UpsertScores(ctx context.Context, scores []domain.Score) error {
 	tx, err := p.pool.Begin(ctx)
 	if err != nil {
@@ -868,6 +956,7 @@ const (
 	sessionColumns     = `id, application_id, token_hash, status, expires_at, started_at, ended_at, finish_reason, question_count, created_at`
 	topicColumns       = `id, session_id, position, title, goal, rubric_keys, seed_question, status, follow_up_count`
 	messageColumns     = `id, session_id, topic_id, role, kind, content, entry, created_at`
+	audioUploadColumns = `id, session_id, object_path, content_type, size_bytes, duration_ms, message_id, uploaded_at, deleted_at`
 	scoreColumns       = `id, application_id, rubric_key, score, rationale, evidence, status, attempts, created_at`
 	graphRunColumns    = `id, session_id, status, started_at, ended_at, total_tokens_in, total_tokens_out, cost_usd::double precision, error`
 	nodeEventColumns   = `id, run_id, seq, node_id, type, attempt, model, tokens_in, tokens_out, duration_ms, payload, created_at`
@@ -948,6 +1037,15 @@ func scanMessage(row rowScanner) (domain.Message, error) {
 		message.Entry = &signals
 	}
 	return message, nil
+}
+
+func scanAudioUpload(row rowScanner) (AudioUpload, error) {
+	var upload AudioUpload
+	if err := row.Scan(&upload.ID, &upload.SessionID, &upload.ObjectPath, &upload.ContentType,
+		&upload.SizeBytes, &upload.DurationMS, &upload.MessageID, &upload.UploadedAt, &upload.DeletedAt); err != nil {
+		return AudioUpload{}, err
+	}
+	return upload, nil
 }
 
 func scanScore(row rowScanner) (domain.Score, error) {

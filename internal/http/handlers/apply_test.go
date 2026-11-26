@@ -458,6 +458,64 @@ func TestApplyStoresApplicationAsInvited(t *testing.T) {
 	}
 }
 
+func TestApplySnapshotsSpokenEnglishRequired(t *testing.T) {
+	st := store.NewMemory()
+	job := domain.Job{
+		ID:                    jobID,
+		Title:                 "Senior Frontend Engineer",
+		Description:           "We are hiring a senior frontend engineer with deep Svelte and React experience.",
+		Status:                domain.JobStatusOpen,
+		SpokenEnglishRequired: true,
+	}
+	if err := st.CreateJob(context.Background(), job); err != nil {
+		t.Fatalf("seed job: %v", err)
+	}
+	apply := handlers.NewApply(config.Config{EmailMode: "log", SessionTTLHours: 168}, st, storage.NewFake(), fakeExtractor{text: "text"}, nil)
+
+	applyAs := func(t *testing.T, email string) domain.Session {
+		t.Helper()
+		rec := httptest.NewRecorder()
+		req, _ := multipartBody(t, "Budi", email, "cv.pdf", []byte("%PDF-1.4 fake"))
+		apply.ServeHTTP(rec, req)
+		if rec.Code != http.StatusCreated {
+			t.Fatalf("apply %s status = %d, want 201 (body: %s)", email, rec.Code, rec.Body.String())
+		}
+		var got struct {
+			ApplicationID string `json:"application_id"`
+		}
+		if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+			t.Fatalf("decode apply: %v", err)
+		}
+		sess, err := st.GetLatestSessionByApplication(context.Background(), got.ApplicationID)
+		if err != nil {
+			t.Fatalf("latest session: %v", err)
+		}
+		return sess
+	}
+
+	before := applyAs(t, "before@example.com")
+	if !before.Voice {
+		t.Fatal("session created from a voice job is not a voice session")
+	}
+
+	job.SpokenEnglishRequired = false
+	if err := st.UpdateJob(context.Background(), job); err != nil {
+		t.Fatalf("update job: %v", err)
+	}
+	kept, err := st.GetSession(context.Background(), before.ID)
+	if err != nil {
+		t.Fatalf("get existing session: %v", err)
+	}
+	if !kept.Voice {
+		t.Fatal("editing the job changed an existing session's mode")
+	}
+
+	after := applyAs(t, "after@example.com")
+	if after.Voice {
+		t.Fatal("session created after the edit did not take the new text mode")
+	}
+}
+
 func TestApplySendFailureStill201(t *testing.T) {
 	mailer := &fakeMailer{err: errors.New("gmail send: status 500")}
 	apply, _, st := newApplyWithMailer(t, "gmail", fakeExtractor{text: "text"}, mailer)

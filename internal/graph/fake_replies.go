@@ -17,6 +17,11 @@ var FakeReplies = map[string]string{
 	"interviewer":  "Tell me about a frontend performance problem you solved. What did you measure before and after, and what trade-offs did you accept?",
 	"judge":        `{"verdict":"follow_up","reason":"The answer needs a concrete example with measured outcomes.","missing":["specific project","before/after metrics"]}`,
 	"authenticity": `{"level":"likely","reasons":["4 of 6 answers were pasted in full","answers read as generic and template-like, with no first-hand detail"]}`,
+	"rubric_suggester": `{"rubric":[
+		{"key":"frontend_depth","label":"Frontend depth","description":"Svelte, React and rendering depth.","weight":3},
+		{"key":"system_design","label":"System design","description":"Component boundaries and data flow.","weight":2},
+		{"key":"communication","label":"Communication","description":"Clarity and collaboration.","weight":1}
+	],"spoken_english_required":true,"spoken_english_reason":"The role coordinates with client-facing English-speaking teams."}`,
 	"scorer": `{"scores":[
 		{"rubric_key":"frontend_depth","score":4,"rationale":"Moved shared state into a store with a concrete reason.","evidence":[{"message_id":"m1","quote":"I moved the state into a separate store"}]},
 		{"rubric_key":"system_design","score":3,"rationale":"Reduced prop drilling after naming the layers.","evidence":[{"message_id":"m2","quote":"Props were crossing four layers"}]},

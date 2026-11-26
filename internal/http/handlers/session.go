@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
 	"strconv"
 	"strings"
@@ -54,6 +55,18 @@ type currentTopic struct {
 	Total    int    `json:"total"`
 }
 
+const (
+	voiceMaxAnswerSeconds = 120
+	voiceMaxTotalSeconds  = 1200
+)
+
+type voiceSession struct {
+	MaxAnswerSeconds int   `json:"max_answer_seconds"`
+	MaxTotalSeconds  int   `json:"max_total_seconds"`
+	UsedSeconds      int   `json:"used_seconds"`
+	RecordingConsent *bool `json:"recording_consent"`
+}
+
 type sessionDetail struct {
 	Status        domain.SessionStatus `json:"status"`
 	JobTitle      string               `json:"job_title"`
@@ -66,6 +79,7 @@ type sessionDetail struct {
 	QuestionCount int                  `json:"question_count"`
 	MaxQuestions  int                  `json:"max_questions"`
 	CurrentTopic  *currentTopic        `json:"current_topic"`
+	Voice         *voiceSession        `json:"voice"`
 }
 
 func (h *Sessions) Get(w http.ResponseWriter, r *http.Request) {
@@ -82,13 +96,34 @@ func (h *Sessions) Get(w http.ResponseWriter, r *http.Request) {
 	apierror.JSON(w, http.StatusOK, detail)
 }
 
+type startSessionRequest struct {
+	RecordingConsent *bool `json:"recording_consent"`
+}
+
 func (h *Sessions) Start(w http.ResponseWriter, r *http.Request) {
 	sess, ok := h.resolve(w, r, chi.URLParam(r, "token"))
 	if !ok {
 		return
 	}
 
-	started, err := h.store.StartSession(r.Context(), sess.ID, time.Now().UTC())
+	r.Body = http.MaxBytesReader(w, r.Body, 64<<10)
+	var req startSessionRequest
+	decoder := json.NewDecoder(r.Body)
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&req); err != nil && !errors.Is(err, io.EOF) {
+		apierror.Write(w, http.StatusBadRequest, apierror.CodeValidationFailed, "invalid JSON body", nil)
+		return
+	}
+	var consent *bool
+	if sess.Voice && sess.Status == domain.SessionStatusInvited {
+		if req.RecordingConsent == nil {
+			apierror.Write(w, http.StatusBadRequest, apierror.CodeValidationFailed, "recording_consent is required for a voice session", map[string]string{"field": "recording_consent"})
+			return
+		}
+		consent = req.RecordingConsent
+	}
+
+	started, err := h.store.StartSessionWithConsent(r.Context(), sess.ID, time.Now().UTC(), consent)
 	if err != nil {
 		switch {
 		case errors.Is(err, store.ErrConflict):
@@ -168,6 +203,14 @@ func (h *Sessions) buildDetail(ctx context.Context, sess domain.Session) (sessio
 		MaxMinutes:    h.cfg.SessionMaxMinutes,
 		QuestionCount: sess.QuestionCount,
 		MaxQuestions:  h.cfg.SessionMaxQuestions,
+	}
+	if sess.Voice {
+		detail.Voice = &voiceSession{
+			MaxAnswerSeconds: voiceMaxAnswerSeconds,
+			MaxTotalSeconds:  voiceMaxTotalSeconds,
+			UsedSeconds:      0,
+			RecordingConsent: sess.RecordingConsent,
+		}
 	}
 
 	if sess.Status == domain.SessionStatusActive && sess.StartedAt != nil {

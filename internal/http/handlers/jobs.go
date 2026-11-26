@@ -44,22 +44,24 @@ func NewJobs(cfg config.Config, st store.Store, client llm.Client, models config
 }
 
 type jobResponse struct {
-	ID               string                   `json:"id"`
-	Title            string                   `json:"title"`
-	Description      string                   `json:"description"`
-	Rubric           []domain.RubricCriterion `json:"rubric"`
-	Status           domain.JobStatus         `json:"status"`
-	ApplyURL         string                   `json:"apply_url"`
-	ApplicationCount int                      `json:"application_count"`
-	CreatedAt        time.Time                `json:"created_at"`
-	UpdatedAt        time.Time                `json:"updated_at"`
+	ID                    string                   `json:"id"`
+	Title                 string                   `json:"title"`
+	Description           string                   `json:"description"`
+	Rubric                []domain.RubricCriterion `json:"rubric"`
+	Status                domain.JobStatus         `json:"status"`
+	SpokenEnglishRequired bool                     `json:"spoken_english_required"`
+	ApplyURL              string                   `json:"apply_url"`
+	ApplicationCount      int                      `json:"application_count"`
+	CreatedAt             time.Time                `json:"created_at"`
+	UpdatedAt             time.Time                `json:"updated_at"`
 }
 
 type publicJobResponse struct {
-	ID          string           `json:"id"`
-	Title       string           `json:"title"`
-	Description string           `json:"description"`
-	Status      domain.JobStatus `json:"status"`
+	ID                    string           `json:"id"`
+	Title                 string           `json:"title"`
+	Description           string           `json:"description"`
+	Status                domain.JobStatus `json:"status"`
+	SpokenEnglishRequired bool             `json:"spoken_english_required"`
 }
 
 type jobListResponse struct {
@@ -68,17 +70,19 @@ type jobListResponse struct {
 }
 
 type createJobRequest struct {
-	Title       string                   `json:"title"`
-	Description string                   `json:"description"`
-	Rubric      []domain.RubricCriterion `json:"rubric"`
-	Status      *domain.JobStatus        `json:"status"`
+	Title                 string                   `json:"title"`
+	Description           string                   `json:"description"`
+	Rubric                []domain.RubricCriterion `json:"rubric"`
+	Status                *domain.JobStatus        `json:"status"`
+	SpokenEnglishRequired bool                     `json:"spoken_english_required"`
 }
 
 type updateJobRequest struct {
-	Title       *string                   `json:"title"`
-	Description *string                   `json:"description"`
-	Rubric      *[]domain.RubricCriterion `json:"rubric"`
-	Status      *domain.JobStatus         `json:"status"`
+	Title                 *string                   `json:"title"`
+	Description           *string                   `json:"description"`
+	Rubric                *[]domain.RubricCriterion `json:"rubric"`
+	Status                *domain.JobStatus         `json:"status"`
+	SpokenEnglishRequired *bool                     `json:"spoken_english_required"`
 }
 
 type rubricSuggestionRequest struct {
@@ -87,7 +91,9 @@ type rubricSuggestionRequest struct {
 }
 
 type rubricSuggestionResponse struct {
-	Rubric []domain.RubricCriterion `json:"rubric"`
+	Rubric                []domain.RubricCriterion `json:"rubric"`
+	SpokenEnglishRequired bool                     `json:"spoken_english_required"`
+	SpokenEnglishReason   string                   `json:"spoken_english_reason"`
 }
 
 func (h *Jobs) List(w http.ResponseWriter, r *http.Request) {
@@ -133,10 +139,11 @@ func (h *Jobs) Public(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	apierror.JSON(w, http.StatusOK, publicJobResponse{
-		ID:          job.ID,
-		Title:       job.Title,
-		Description: job.Description,
-		Status:      job.Status,
+		ID:                    job.ID,
+		Title:                 job.Title,
+		Description:           job.Description,
+		Status:                job.Status,
+		SpokenEnglishRequired: job.SpokenEnglishRequired,
 	})
 }
 
@@ -159,13 +166,14 @@ func (h *Jobs) Create(w http.ResponseWriter, r *http.Request) {
 	}
 	now := time.Now().UTC()
 	job := domain.Job{
-		ID:          domain.NewID(),
-		Title:       req.Title,
-		Description: req.Description,
-		Rubric:      req.Rubric,
-		Status:      status,
-		CreatedAt:   now,
-		UpdatedAt:   now,
+		ID:                    domain.NewID(),
+		Title:                 req.Title,
+		Description:           req.Description,
+		Rubric:                req.Rubric,
+		Status:                status,
+		SpokenEnglishRequired: req.SpokenEnglishRequired,
+		CreatedAt:             now,
+		UpdatedAt:             now,
 	}
 	if verr := domain.ValidateJob(job); verr != nil {
 		writeValidationError(w, verr)
@@ -232,6 +240,9 @@ func (h *Jobs) Update(w http.ResponseWriter, r *http.Request) {
 		}
 		job.Status = *req.Status
 	}
+	if req.SpokenEnglishRequired != nil {
+		job.SpokenEnglishRequired = *req.SpokenEnglishRequired
+	}
 
 	job.UpdatedAt = time.Now().UTC()
 	update := h.store.UpdateJob
@@ -284,7 +295,7 @@ func (h *Jobs) SuggestRubric(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	rubric, err := h.suggestRubric(r.Context(), req.Title, req.Description)
+	suggestion, err := h.suggestRubric(r.Context(), req.Title, req.Description)
 	if err != nil {
 		if !errors.Is(err, errInvalidSuggestion) {
 			h.suggestionLimiter.Refund(middleware.RubricSuggestionRateKey)
@@ -292,7 +303,11 @@ func (h *Jobs) SuggestRubric(w http.ResponseWriter, r *http.Request) {
 		apierror.Write(w, http.StatusBadGateway, apierror.CodeLLMUnavailable, "rubric suggestion is unavailable", nil)
 		return
 	}
-	apierror.JSON(w, http.StatusOK, rubricSuggestionResponse{Rubric: rubric})
+	apierror.JSON(w, http.StatusOK, rubricSuggestionResponse{
+		Rubric:                suggestion.Rubric,
+		SpokenEnglishRequired: suggestion.SpokenEnglishRequired,
+		SpokenEnglishReason:   suggestion.SpokenEnglishReason,
+	})
 }
 
 // errInvalidSuggestion means the model answered twice with output that failed
@@ -300,10 +315,22 @@ func (h *Jobs) SuggestRubric(w http.ResponseWriter, r *http.Request) {
 // description written to make the model fail can't bypass the hourly cap.
 var errInvalidSuggestion = errors.New("rubric suggestion failed validation")
 
-func (h *Jobs) suggestRubric(ctx context.Context, title, description string) ([]domain.RubricCriterion, error) {
+type rubricSuggestion struct {
+	Rubric                []domain.RubricCriterion
+	SpokenEnglishRequired bool
+	SpokenEnglishReason   string
+}
+
+type rubricSuggestionPayload struct {
+	Rubric                []domain.RubricCriterion `json:"rubric"`
+	SpokenEnglishRequired *bool                    `json:"spoken_english_required"`
+	SpokenEnglishReason   *string                  `json:"spoken_english_reason"`
+}
+
+func (h *Jobs) suggestRubric(ctx context.Context, title, description string) (rubricSuggestion, error) {
 	node, err := h.models.Node("rubric_suggester")
 	if err != nil {
-		return nil, err
+		return rubricSuggestion{}, err
 	}
 	req := llm.Request{
 		Node:           "rubric_suggester",
@@ -319,25 +346,35 @@ func (h *Jobs) suggestRubric(ctx context.Context, title, description string) ([]
 	for attempt := 0; attempt < maxSuggestionAttempts; attempt++ {
 		resp, err := h.llm.Chat(ctx, req)
 		if err != nil {
-			return nil, err
+			return rubricSuggestion{}, err
 		}
-		rubric, err := parseRubricSuggestion(resp.Content)
+		suggestion, err := parseRubricSuggestion(resp.Content)
 		if err == nil {
-			return rubric, nil
+			return suggestion, nil
 		}
 	}
-	return nil, errInvalidSuggestion
+	return rubricSuggestion{}, errInvalidSuggestion
 }
 
-func parseRubricSuggestion(content string) ([]domain.RubricCriterion, error) {
-	var raw rubricSuggestionResponse
+func parseRubricSuggestion(content string) (rubricSuggestion, error) {
+	var raw rubricSuggestionPayload
 	if err := json.Unmarshal([]byte(strings.TrimSpace(content)), &raw); err != nil {
-		return nil, err
+		return rubricSuggestion{}, err
 	}
 	if verr := domain.ValidateRubric(raw.Rubric); verr != nil {
-		return nil, verr
+		return rubricSuggestion{}, verr
 	}
-	return raw.Rubric, nil
+	if raw.SpokenEnglishRequired == nil {
+		return rubricSuggestion{}, errors.New("spoken_english_required is missing")
+	}
+	if raw.SpokenEnglishReason == nil || strings.TrimSpace(*raw.SpokenEnglishReason) == "" {
+		return rubricSuggestion{}, errors.New("spoken_english_reason is missing")
+	}
+	return rubricSuggestion{
+		Rubric:                raw.Rubric,
+		SpokenEnglishRequired: *raw.SpokenEnglishRequired,
+		SpokenEnglishReason:   strings.TrimSpace(*raw.SpokenEnglishReason),
+	}, nil
 }
 
 func rubricSuggestionResponseFormat() *llm.ResponseFormat {
@@ -364,8 +401,10 @@ func rubricSuggestionResponseFormat() *llm.ResponseFormat {
 					"minItems": 3,
 					"maxItems": 6,
 				},
+				"spoken_english_required": map[string]any{"type": "boolean"},
+				"spoken_english_reason":   stringProperty,
 			},
-			"required":             []string{"rubric"},
+			"required":             []string{"rubric", "spoken_english_required", "spoken_english_reason"},
 			"additionalProperties": false,
 		},
 	}
@@ -415,14 +454,15 @@ func (h *Jobs) jobResponse(ctx context.Context, job domain.Job) (jobResponse, er
 		return jobResponse{}, err
 	}
 	return jobResponse{
-		ID:               job.ID,
-		Title:            job.Title,
-		Description:      job.Description,
-		Rubric:           append([]domain.RubricCriterion{}, job.Rubric...),
-		Status:           job.Status,
-		ApplyURL:         strings.TrimRight(h.cfg.PublicAppURL, "/") + "/apply/" + job.ID,
-		ApplicationCount: applicationCount,
-		CreatedAt:        job.CreatedAt,
-		UpdatedAt:        job.UpdatedAt,
+		ID:                    job.ID,
+		Title:                 job.Title,
+		Description:           job.Description,
+		Rubric:                append([]domain.RubricCriterion{}, job.Rubric...),
+		Status:                job.Status,
+		SpokenEnglishRequired: job.SpokenEnglishRequired,
+		ApplyURL:              strings.TrimRight(h.cfg.PublicAppURL, "/") + "/apply/" + job.ID,
+		ApplicationCount:      applicationCount,
+		CreatedAt:             job.CreatedAt,
+		UpdatedAt:             job.UpdatedAt,
 	}, nil
 }

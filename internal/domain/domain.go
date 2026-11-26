@@ -96,13 +96,14 @@ type RubricCriterion struct {
 }
 
 type Job struct {
-	ID          string            `json:"id"`
-	Title       string            `json:"title"`
-	Description string            `json:"description"`
-	Rubric      []RubricCriterion `json:"rubric"`
-	Status      JobStatus         `json:"status"`
-	CreatedAt   time.Time         `json:"created_at"`
-	UpdatedAt   time.Time         `json:"updated_at"`
+	ID                    string            `json:"id"`
+	Title                 string            `json:"title"`
+	Description           string            `json:"description"`
+	Rubric                []RubricCriterion `json:"rubric"`
+	Status                JobStatus         `json:"status"`
+	SpokenEnglishRequired bool              `json:"spoken_english_required"`
+	CreatedAt             time.Time         `json:"created_at"`
+	UpdatedAt             time.Time         `json:"updated_at"`
 }
 
 type Application struct {
@@ -120,16 +121,18 @@ type Application struct {
 }
 
 type Session struct {
-	ID            string        `json:"id"`
-	ApplicationID string        `json:"application_id"`
-	TokenHash     string        `json:"token_hash"`
-	Status        SessionStatus `json:"status"`
-	ExpiresAt     time.Time     `json:"expires_at"`
-	StartedAt     *time.Time    `json:"started_at"`
-	EndedAt       *time.Time    `json:"ended_at"`
-	FinishReason  *FinishReason `json:"finish_reason"`
-	QuestionCount int           `json:"question_count"`
-	CreatedAt     time.Time     `json:"created_at"`
+	ID               string        `json:"id"`
+	ApplicationID    string        `json:"application_id"`
+	TokenHash        string        `json:"token_hash"`
+	Status           SessionStatus `json:"status"`
+	ExpiresAt        time.Time     `json:"expires_at"`
+	StartedAt        *time.Time    `json:"started_at"`
+	EndedAt          *time.Time    `json:"ended_at"`
+	FinishReason     *FinishReason `json:"finish_reason"`
+	QuestionCount    int           `json:"question_count"`
+	Voice            bool          `json:"voice"`
+	RecordingConsent *bool         `json:"recording_consent"`
+	CreatedAt        time.Time     `json:"created_at"`
 }
 
 type Topic struct {

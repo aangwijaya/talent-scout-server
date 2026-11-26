@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -46,7 +47,17 @@ func newSessionHandler(t *testing.T, st store.Store) *handlers.Sessions {
 }
 
 func sessionReq(method, target, token string) *http.Request {
-	r := httptest.NewRequest(method, target, nil)
+	return sessionReqBody(method, target, token, "")
+}
+
+func sessionReqBody(method, target, token, body string) *http.Request {
+	var reader *strings.Reader
+	if body == "" {
+		reader = strings.NewReader("")
+	} else {
+		reader = strings.NewReader(body)
+	}
+	r := httptest.NewRequest(method, target, reader)
 	rctx := chi.NewRouteContext()
 	rctx.URLParams.Add("token", token)
 	return r.WithContext(context.WithValue(r.Context(), chi.RouteCtxKey, rctx))
@@ -102,6 +113,107 @@ func TestGetSessionInvited(t *testing.T) {
 	}
 	if detail["current_topic"] != nil {
 		t.Errorf("current_topic = %v, want null", detail["current_topic"])
+	}
+	if detail["voice"] != nil {
+		t.Errorf("voice = %v, want null for a text session", detail["voice"])
+	}
+}
+
+func TestGetVoiceSession(t *testing.T) {
+	st, base := sessionStore(t)
+	raw, hash, _ := session.NewToken()
+	base.TokenHash = hash
+	base.Voice = true
+	if err := st.CreateSession(context.Background(), base); err != nil {
+		t.Fatalf("seed session: %v", err)
+	}
+
+	h := newSessionHandler(t, st)
+	rec := httptest.NewRecorder()
+	h.Get(rec, sessionReq(http.MethodGet, "/api/v1/sessions/"+raw, raw))
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200 (body: %s)", rec.Code, rec.Body.String())
+	}
+	_, detail := decodeSessionDetail(t, rec)
+	voice, ok := detail["voice"].(map[string]any)
+	if !ok {
+		t.Fatalf("voice = %v, want an object", detail["voice"])
+	}
+	for key, want := range map[string]float64{
+		"max_answer_seconds": 120,
+		"max_total_seconds":  1200,
+		"used_seconds":       0,
+	} {
+		if voice[key] != want {
+			t.Errorf("voice[%q] = %v, want %v", key, voice[key], want)
+		}
+	}
+	if voice["recording_consent"] != nil {
+		t.Errorf("voice.recording_consent = %v, want null before start", voice["recording_consent"])
+	}
+}
+
+func TestStartVoiceSessionRequiresRecordingConsent(t *testing.T) {
+	st, base := sessionStore(t)
+	raw, hash, _ := session.NewToken()
+	base.TokenHash = hash
+	base.Voice = true
+	if err := st.CreateSession(context.Background(), base); err != nil {
+		t.Fatalf("seed session: %v", err)
+	}
+
+	h := newSessionHandler(t, st)
+	rec := httptest.NewRecorder()
+	h.Start(rec, sessionReq(http.MethodPost, "/api/v1/sessions/"+raw+"/start", raw))
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400 (body: %s)", rec.Code, rec.Body.String())
+	}
+	code, _, details := decodeError(t, rec)
+	if code != "validation_failed" {
+		t.Errorf("code = %q, want validation_failed", code)
+	}
+	if details["field"] != "recording_consent" {
+		t.Errorf("details.field = %q, want recording_consent", details["field"])
+	}
+}
+
+func TestStartVoiceSessionStoresRecordingConsent(t *testing.T) {
+	for _, consent := range []bool{false, true} {
+		t.Run(map[bool]string{false: "declined", true: "accepted"}[consent], func(t *testing.T) {
+			st, base := sessionStore(t)
+			raw, hash, _ := session.NewToken()
+			base.TokenHash = hash
+			base.Voice = true
+			if err := st.CreateSession(context.Background(), base); err != nil {
+				t.Fatalf("seed session: %v", err)
+			}
+
+			h := newSessionHandler(t, st)
+			body := `{"recording_consent":` + map[bool]string{false: "false", true: "true"}[consent] + `}`
+			rec := httptest.NewRecorder()
+			h.Start(rec, sessionReqBody(http.MethodPost, "/api/v1/sessions/"+raw+"/start", raw, body))
+
+			if rec.Code != http.StatusOK {
+				t.Fatalf("status = %d, want 200 (body: %s)", rec.Code, rec.Body.String())
+			}
+			_, detail := decodeSessionDetail(t, rec)
+			voice, ok := detail["voice"].(map[string]any)
+			if !ok {
+				t.Fatalf("voice = %v, want an object", detail["voice"])
+			}
+			if voice["recording_consent"] != consent {
+				t.Errorf("voice.recording_consent = %v, want %v", voice["recording_consent"], consent)
+			}
+			stored, err := st.GetSession(context.Background(), base.ID)
+			if err != nil {
+				t.Fatalf("get stored session: %v", err)
+			}
+			if stored.RecordingConsent == nil || *stored.RecordingConsent != consent {
+				t.Errorf("stored recording_consent = %v, want %v", stored.RecordingConsent, consent)
+			}
+		})
 	}
 }
 
@@ -213,6 +325,9 @@ func TestStartSession(t *testing.T) {
 	if detail["deadline_at"] == nil {
 		t.Errorf("deadline_at = nil, want set")
 	}
+	if detail["voice"] != nil {
+		t.Errorf("voice = %v, want null for a text session", detail["voice"])
+	}
 
 	stored, _ := st.GetSession(context.Background(), base.ID)
 	if stored.Status != domain.SessionStatusActive {
@@ -220,6 +335,34 @@ func TestStartSession(t *testing.T) {
 	}
 	if stored.StartedAt == nil {
 		t.Errorf("stored started_at is nil")
+	}
+}
+
+func TestStartTextSessionIgnoresRecordingConsent(t *testing.T) {
+	st, base := sessionStore(t)
+	raw, hash, _ := session.NewToken()
+	base.TokenHash = hash
+	if err := st.CreateSession(context.Background(), base); err != nil {
+		t.Fatalf("seed session: %v", err)
+	}
+
+	h := newSessionHandler(t, st)
+	rec := httptest.NewRecorder()
+	h.Start(rec, sessionReqBody(http.MethodPost, "/api/v1/sessions/"+raw+"/start", raw, `{"recording_consent":true}`))
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200 (body: %s)", rec.Code, rec.Body.String())
+	}
+	_, detail := decodeSessionDetail(t, rec)
+	if detail["voice"] != nil {
+		t.Errorf("voice = %v, want null for a text session", detail["voice"])
+	}
+	stored, err := st.GetSession(context.Background(), base.ID)
+	if err != nil {
+		t.Fatalf("get stored session: %v", err)
+	}
+	if stored.RecordingConsent != nil {
+		t.Errorf("stored recording_consent = %v, want nil on a text session", stored.RecordingConsent)
 	}
 }
 
@@ -245,6 +388,31 @@ func TestStartSessionTwice(t *testing.T) {
 	}
 	code, _, _ := decodeError(t, second)
 	if code != "session_already_started" {
+		t.Errorf("code = %q, want session_already_started", code)
+	}
+}
+
+func TestStartVoiceSessionTwiceIsConflict(t *testing.T) {
+	st, base := sessionStore(t)
+	raw, hash, _ := session.NewToken()
+	base.TokenHash = hash
+	base.Voice = true
+	if err := st.CreateSession(context.Background(), base); err != nil {
+		t.Fatalf("seed session: %v", err)
+	}
+
+	h := newSessionHandler(t, st)
+	first := httptest.NewRecorder()
+	h.Start(first, sessionReqBody(http.MethodPost, "/api/v1/sessions/"+raw+"/start", raw, `{"recording_consent":true}`))
+	if first.Code != http.StatusOK {
+		t.Fatalf("first start = %d, want 200 (body: %s)", first.Code, first.Body.String())
+	}
+	second := httptest.NewRecorder()
+	h.Start(second, sessionReq(http.MethodPost, "/api/v1/sessions/"+raw+"/start", raw))
+	if second.Code != http.StatusConflict {
+		t.Fatalf("second start = %d, want 409 (body: %s)", second.Code, second.Body.String())
+	}
+	if code, _, _ := decodeError(t, second); code != "session_already_started" {
 		t.Errorf("code = %q, want session_already_started", code)
 	}
 }

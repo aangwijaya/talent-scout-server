@@ -992,6 +992,7 @@ components:
         - description
         - rubric
         - status
+        - spoken_english_required
         - apply_url
         - application_count
         - created_at
@@ -1093,7 +1094,7 @@ components:
 
     RubricSuggestionResponse:
       type: object
-      required: [rubric]
+      required: [rubric, spoken_english_required, spoken_english_reason]
       properties:
         rubric:
           type: array
@@ -1108,7 +1109,7 @@ components:
 
     PublicJob:
       type: object
-      required: [id, title, description, status]
+      required: [id, title, description, status, spoken_english_required]
       properties:
         id:
           type: string
@@ -1589,6 +1590,7 @@ components:
         - question_count
         - max_questions
         - current_topic
+        - voice
       properties:
         status:
           $ref: "#/components/schemas/SessionStatus"

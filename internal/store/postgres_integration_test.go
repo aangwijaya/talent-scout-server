@@ -57,11 +57,12 @@ func TestPostgresStore(t *testing.T) {
 	s := store.NewPostgres(pool)
 
 	job := domain.Job{
-		ID:          domain.NewID(),
-		Title:       "Senior Frontend Engineer",
-		Description: "Build the recruiter dashboard and the applicant screening experience.",
-		Rubric:      []domain.RubricCriterion{{Key: "frontend_depth", Label: "Frontend depth", Description: "Svelte/React", Weight: 2}},
-		Status:      domain.JobStatusOpen,
+		ID:                    domain.NewID(),
+		Title:                 "Senior Frontend Engineer",
+		Description:           "Build the recruiter dashboard and the applicant screening experience.",
+		Rubric:                []domain.RubricCriterion{{Key: "frontend_depth", Label: "Frontend depth", Description: "Svelte/React", Weight: 2}},
+		Status:                domain.JobStatusOpen,
+		SpokenEnglishRequired: true,
 	}
 	if err := s.CreateJob(ctx, job); err != nil {
 		t.Fatalf("CreateJob: %v", err)
@@ -73,7 +74,7 @@ func TestPostgresStore(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetJob: %v", err)
 	}
-	if got.Title != job.Title || len(got.Rubric) != 1 {
+	if got.Title != job.Title || len(got.Rubric) != 1 || !got.SpokenEnglishRequired {
 		t.Fatalf("GetJob = %+v", got)
 	}
 
@@ -87,6 +88,7 @@ func TestPostgresStore(t *testing.T) {
 	job.Title = "Staff Frontend Engineer"
 	job.Description = strings.Repeat("a", 9000)
 	job.Status = domain.JobStatusClosed
+	job.SpokenEnglishRequired = false
 	if err := s.UpdateJob(ctx, job); err != nil {
 		t.Fatalf("UpdateJob: %v", err)
 	}
@@ -94,7 +96,7 @@ func TestPostgresStore(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetJob after update: %v", err)
 	}
-	if updated.Title != job.Title || updated.Status != domain.JobStatusClosed || len(updated.Description) != 9000 {
+	if updated.Title != job.Title || updated.Status != domain.JobStatusClosed || len(updated.Description) != 9000 || updated.SpokenEnglishRequired {
 		t.Fatalf("GetJob after update = %+v", updated)
 	}
 	if err := s.UpdateJob(ctx, domain.Job{ID: domain.NewID()}); !errors.Is(err, store.ErrNotFound) {
@@ -168,21 +170,25 @@ func TestPostgresStore(t *testing.T) {
 		TokenHash:     "hash",
 		Status:        domain.SessionStatusInvited,
 		ExpiresAt:     expiresAt,
+		Voice:         true,
 	}
 	if err := s.CreateSession(ctx, session); err != nil {
 		t.Fatalf("CreateSession: %v", err)
 	}
-	if got, err := s.GetSessionByTokenHash(ctx, "hash"); err != nil || got.ID != session.ID {
-		t.Fatalf("GetSessionByTokenHash = %+v, %v", got, err)
+	storedSession, err := s.GetSessionByTokenHash(ctx, "hash")
+	if err != nil || storedSession.ID != session.ID || !storedSession.Voice || storedSession.RecordingConsent != nil {
+		t.Fatalf("GetSessionByTokenHash = %+v, %v", storedSession, err)
 	}
 
 	startedAt := time.Now().UTC()
-	started, err := s.StartSession(ctx, session.ID, startedAt)
+	consent := true
+	started, err := s.StartSessionWithConsent(ctx, session.ID, startedAt, &consent)
 	if err != nil {
-		t.Fatalf("StartSession: %v", err)
+		t.Fatalf("StartSessionWithConsent: %v", err)
 	}
-	if started.Status != domain.SessionStatusActive || started.StartedAt == nil {
-		t.Fatalf("StartSession = %+v", started)
+	if started.Status != domain.SessionStatusActive || started.StartedAt == nil || !started.Voice ||
+		started.RecordingConsent == nil || !*started.RecordingConsent {
+		t.Fatalf("StartSessionWithConsent = %+v", started)
 	}
 	if _, err := s.StartSession(ctx, session.ID, startedAt); !errors.Is(err, store.ErrConflict) {
 		t.Fatalf("second StartSession = %v, want ErrConflict", err)

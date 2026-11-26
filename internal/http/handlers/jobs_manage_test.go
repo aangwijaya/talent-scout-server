@@ -44,6 +44,12 @@ const validSuggestionJSON = `{"rubric":[
 	{"key":"frontend_depth","label":"Frontend depth","description":"Svelte, React and rendering depth.","weight":3},
 	{"key":"system_design","label":"System design","description":"Component boundaries and data flow.","weight":2},
 	{"key":"communication","label":"Communication","description":"Clarity and collaboration.","weight":1}
+],"spoken_english_required":true,"spoken_english_reason":"The role requires client-facing English conversations."}`
+
+const suggestionRubricWithoutSpokenEnglishJSON = `{"rubric":[
+	{"key":"frontend_depth","label":"Frontend depth","description":"Svelte, React and rendering depth.","weight":3},
+	{"key":"system_design","label":"System design","description":"Component boundaries and data flow.","weight":2},
+	{"key":"communication","label":"Communication","description":"Clarity and collaboration.","weight":1}
 ]}`
 
 func newManageJobs(st store.Store, client llm.Client) *handlers.Jobs {
@@ -51,10 +57,11 @@ func newManageJobs(st store.Store, client llm.Client) *handlers.Jobs {
 }
 
 type manageJobBody struct {
-	Title       string                   `json:"title"`
-	Description string                   `json:"description"`
-	Rubric      []domain.RubricCriterion `json:"rubric"`
-	Status      string                   `json:"status,omitempty"`
+	Title                 string                   `json:"title"`
+	Description           string                   `json:"description"`
+	Rubric                []domain.RubricCriterion `json:"rubric"`
+	Status                string                   `json:"status,omitempty"`
+	SpokenEnglishRequired *bool                    `json:"spoken_english_required,omitempty"`
 }
 
 func (b manageJobBody) JSON(t *testing.T) string {
@@ -161,6 +168,95 @@ func TestCreateGetAndListJobs(t *testing.T) {
 	}
 	if listed.Items[0].ID != secondJob.ID {
 		t.Errorf("first item = %q, want newest %q", listed.Items[0].ID, secondJob.ID)
+	}
+}
+
+func TestJobSpokenEnglishRequiredCreatePatchAndPublic(t *testing.T) {
+	st := store.NewMemory()
+	h := newManageJobs(st, llm.NewFake(nil))
+
+	type jobFlagResponse struct {
+		ID                    string `json:"id"`
+		SpokenEnglishRequired *bool  `json:"spoken_english_required"`
+	}
+	decode := func(t *testing.T, rec *httptest.ResponseRecorder) jobFlagResponse {
+		t.Helper()
+		var got jobFlagResponse
+		if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+			t.Fatalf("decode job response: %v", err)
+		}
+		return got
+	}
+
+	without := serveBody(h.Create, http.MethodPost, "/api/v1/jobs", validManageBody().JSON(t), "")
+	if without.Code != http.StatusCreated {
+		t.Fatalf("create without status = %d, want 201 (body: %s)", without.Code, without.Body.String())
+	}
+	createdWithout := decode(t, without)
+	if createdWithout.SpokenEnglishRequired == nil || *createdWithout.SpokenEnglishRequired {
+		t.Fatalf("create without spoken_english_required = %v, want false", createdWithout.SpokenEnglishRequired)
+	}
+
+	withTrueBody := validManageBody()
+	withTrue := true
+	withTrueBody.SpokenEnglishRequired = &withTrue
+	with := serveBody(h.Create, http.MethodPost, "/api/v1/jobs", withTrueBody.JSON(t), "")
+	if with.Code != http.StatusCreated {
+		t.Fatalf("create with status = %d, want 201 (body: %s)", with.Code, with.Body.String())
+	}
+	createdWith := decode(t, with)
+	if createdWith.SpokenEnglishRequired == nil || !*createdWith.SpokenEnglishRequired {
+		t.Fatalf("create with spoken_english_required = %v, want true", createdWith.SpokenEnglishRequired)
+	}
+
+	patched := serveBody(h.Update, http.MethodPatch, "/api/v1/jobs/"+createdWithout.ID, `{"spoken_english_required":true}`, createdWithout.ID)
+	if patched.Code != http.StatusOK {
+		t.Fatalf("patch status = %d, want 200 (body: %s)", patched.Code, patched.Body.String())
+	}
+	if got := decode(t, patched); got.SpokenEnglishRequired == nil || !*got.SpokenEnglishRequired {
+		t.Fatalf("patched spoken_english_required = %v, want true", got.SpokenEnglishRequired)
+	}
+
+	unchanged := serveBody(h.Update, http.MethodPatch, "/api/v1/jobs/"+createdWithout.ID, `{"title":"Staff Frontend Engineer"}`, createdWithout.ID)
+	if unchanged.Code != http.StatusOK {
+		t.Fatalf("title-only patch status = %d, want 200 (body: %s)", unchanged.Code, unchanged.Body.String())
+	}
+	if got := decode(t, unchanged); got.SpokenEnglishRequired == nil || !*got.SpokenEnglishRequired {
+		t.Fatalf("title-only patch spoken_english_required = %v, want unchanged true", got.SpokenEnglishRequired)
+	}
+
+	public := serveBody(h.Public, http.MethodGet, "/api/v1/jobs/"+createdWithout.ID+"/public", "", createdWithout.ID)
+	if public.Code != http.StatusOK {
+		t.Fatalf("public status = %d, want 200 (body: %s)", public.Code, public.Body.String())
+	}
+	if got := decode(t, public); got.SpokenEnglishRequired == nil || !*got.SpokenEnglishRequired {
+		t.Fatalf("public spoken_english_required = %v, want true", got.SpokenEnglishRequired)
+	}
+
+	list := serveBody(h.List, http.MethodGet, "/api/v1/jobs", "", "")
+	if list.Code != http.StatusOK {
+		t.Fatalf("list status = %d, want 200 (body: %s)", list.Code, list.Body.String())
+	}
+	var listed struct {
+		Items []struct {
+			ID                    string `json:"id"`
+			SpokenEnglishRequired *bool  `json:"spoken_english_required"`
+		} `json:"items"`
+	}
+	if err := json.Unmarshal(list.Body.Bytes(), &listed); err != nil {
+		t.Fatalf("decode job list: %v", err)
+	}
+	found := false
+	for _, item := range listed.Items {
+		if item.ID == createdWith.ID {
+			found = true
+			if item.SpokenEnglishRequired == nil || !*item.SpokenEnglishRequired {
+				t.Fatalf("listed spoken_english_required = %v, want true", item.SpokenEnglishRequired)
+			}
+		}
+	}
+	if !found {
+		t.Fatalf("created job %q missing from list", createdWith.ID)
 	}
 }
 
@@ -421,7 +517,9 @@ func TestRubricSuggestionValid(t *testing.T) {
 		t.Fatalf("status = %d, want 200 (body: %s)", rec.Code, rec.Body.String())
 	}
 	var got struct {
-		Rubric []domain.RubricCriterion `json:"rubric"`
+		Rubric                []domain.RubricCriterion `json:"rubric"`
+		SpokenEnglishRequired *bool                    `json:"spoken_english_required"`
+		SpokenEnglishReason   *string                  `json:"spoken_english_reason"`
 	}
 	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
 		t.Fatalf("decode suggestion: %v", err)
@@ -429,8 +527,31 @@ func TestRubricSuggestionValid(t *testing.T) {
 	if len(got.Rubric) != 3 {
 		t.Fatalf("rubric len = %d, want 3", len(got.Rubric))
 	}
+	if got.SpokenEnglishRequired == nil || !*got.SpokenEnglishRequired {
+		t.Errorf("spoken_english_required = %v, want true", got.SpokenEnglishRequired)
+	}
+	if got.SpokenEnglishReason == nil || *got.SpokenEnglishReason == "" {
+		t.Errorf("spoken_english_reason = %v, want a reason", got.SpokenEnglishReason)
+	}
 	if calls := len(fake.Calls()); calls != 1 {
 		t.Errorf("llm calls = %d, want 1", calls)
+	}
+}
+
+func TestRubricSuggestionRequiresSpokenEnglishFields(t *testing.T) {
+	fake := llm.NewFake(map[string]string{"rubric_suggester": suggestionRubricWithoutSpokenEnglishJSON})
+	h := newManageJobs(store.NewMemory(), fake)
+
+	body := `{"title":"Senior Frontend Engineer","description":"` + manageDescription + `"}`
+	rec := serveBody(h.SuggestRubric, http.MethodPost, "/api/v1/jobs/rubric-suggestion", body, "")
+	if rec.Code != http.StatusBadGateway {
+		t.Fatalf("status = %d, want 502 (body: %s)", rec.Code, rec.Body.String())
+	}
+	if code, _, _ := decodeError(t, rec); code != "llm_unavailable" {
+		t.Errorf("code = %q, want llm_unavailable", code)
+	}
+	if calls := len(fake.Calls()); calls != 2 {
+		t.Errorf("llm calls = %d, want 2 (one retry)", calls)
 	}
 }
 

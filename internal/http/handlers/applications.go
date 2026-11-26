@@ -395,6 +395,11 @@ func (h *Applications) ResendInvite(w http.ResponseWriter, r *http.Request) {
 		apierror.Write(w, http.StatusConflict, apierror.CodeInvalidState, "application has no invite to resend", nil)
 		return
 	}
+	job, err := h.store.GetJob(r.Context(), app.JobID)
+	if err != nil {
+		apierror.Write(w, http.StatusInternalServerError, apierror.CodeInternalError, "could not load job", nil)
+		return
+	}
 
 	token, tokenHash, err := session.NewToken()
 	if err != nil {
@@ -407,6 +412,7 @@ func (h *Applications) ResendInvite(w http.ResponseWriter, r *http.Request) {
 		TokenHash:     tokenHash,
 		Status:        domain.SessionStatusInvited,
 		ExpiresAt:     now.Add(time.Duration(h.cfg.SessionTTLHours) * time.Hour),
+		Voice:         job.SpokenEnglishRequired,
 	}
 	if err := h.store.ResendInvite(r.Context(), revokeID, next); err != nil {
 		switch {

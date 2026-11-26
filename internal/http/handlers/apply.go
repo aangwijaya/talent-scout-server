@@ -161,6 +161,7 @@ func (h *Apply) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		TokenHash:     tokenHash,
 		Status:        domain.SessionStatusInvited,
 		ExpiresAt:     time.Now().UTC().Add(time.Duration(h.cfg.SessionTTLHours) * time.Hour),
+		Voice:         job.SpokenEnglishRequired,
 	}
 	if err := h.store.CreateApplicationWithSession(r.Context(), app, sess); err != nil {
 		if errors.Is(err, store.ErrConflict) {

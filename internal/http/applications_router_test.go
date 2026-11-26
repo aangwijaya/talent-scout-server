@@ -632,6 +632,58 @@ func TestResendInviteForFailedApplication(t *testing.T) {
 	}
 }
 
+func TestResendInviteSnapshotsSpokenEnglishRequired(t *testing.T) {
+	f := newApplicationsFixture(t, "log")
+	ctx := context.Background()
+
+	job, err := f.store.GetJob(ctx, applicationsJobID)
+	if err != nil {
+		t.Fatalf("get job: %v", err)
+	}
+	job.SpokenEnglishRequired = true
+	if err := f.store.UpdateJob(ctx, job); err != nil {
+		t.Fatalf("set voice job: %v", err)
+	}
+
+	app := f.seedApplication(t, "resend-voice@example.com", domain.ApplicationStatusInvited)
+	f.seedSession(t, app, domain.SessionStatusInvited)
+	resend := func(t *testing.T) domain.Session {
+		t.Helper()
+		rec := f.do(t, http.MethodPost, "/api/v1/applications/"+app.ID+"/resend-invite", "", true)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("resend status = %d, want 200 (body: %s)", rec.Code, rec.Body.String())
+		}
+		var got struct {
+			SessionID string `json:"session_id"`
+		}
+		if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+			t.Fatalf("decode resend: %v", err)
+		}
+		sess, err := f.store.GetSession(ctx, got.SessionID)
+		if err != nil {
+			t.Fatalf("get resent session: %v", err)
+		}
+		return sess
+	}
+
+	voice := resend(t)
+	if !voice.Voice {
+		t.Fatal("resent session from a voice job is not a voice session")
+	}
+	if kept, err := f.store.GetSession(ctx, voice.ID); err != nil || !kept.Voice {
+		t.Fatalf("existing resent session = %+v, %v; want voice", kept, err)
+	}
+
+	job.SpokenEnglishRequired = false
+	if err := f.store.UpdateJob(ctx, job); err != nil {
+		t.Fatalf("set text job: %v", err)
+	}
+	text := resend(t)
+	if text.Voice {
+		t.Fatal("resent session after the edit did not take the new text mode")
+	}
+}
+
 func TestResendInviteGmailModeHidesLink(t *testing.T) {
 	f := newApplicationsFixture(t, "gmail")
 

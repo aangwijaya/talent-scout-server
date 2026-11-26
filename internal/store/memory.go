@@ -107,6 +107,7 @@ func (m *Memory) updateJobLocked(job domain.Job) error {
 	existing.Description = job.Description
 	existing.Rubric = append([]domain.RubricCriterion(nil), job.Rubric...)
 	existing.Status = job.Status
+	existing.SpokenEnglishRequired = job.SpokenEnglishRequired
 	existing.UpdatedAt = job.UpdatedAt
 	if existing.UpdatedAt.IsZero() {
 		existing.UpdatedAt = time.Now().UTC()
@@ -409,7 +410,11 @@ func (m *Memory) UpdateSession(_ context.Context, session domain.Session) error 
 	return nil
 }
 
-func (m *Memory) StartSession(_ context.Context, id string, startedAt time.Time) (domain.Session, error) {
+func (m *Memory) StartSession(ctx context.Context, id string, startedAt time.Time) (domain.Session, error) {
+	return m.StartSessionWithConsent(ctx, id, startedAt, nil)
+}
+
+func (m *Memory) StartSessionWithConsent(_ context.Context, id string, startedAt time.Time, consent *bool) (domain.Session, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
@@ -429,6 +434,10 @@ func (m *Memory) StartSession(_ context.Context, id string, startedAt time.Time)
 	}
 	session.Status = domain.SessionStatusActive
 	session.StartedAt = &startedAt
+	if consent != nil {
+		value := *consent
+		session.RecordingConsent = &value
+	}
 	app.Status = domain.ApplicationStatusInSession
 	m.sessions[id] = session
 	m.applications[app.ID] = app

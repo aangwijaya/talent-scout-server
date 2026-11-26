@@ -95,6 +95,7 @@ type Store interface {
 	ListSessionsByStatus(ctx context.Context, status domain.SessionStatus) ([]domain.Session, error)
 	UpdateSession(ctx context.Context, session domain.Session) error
 	StartSession(ctx context.Context, id string, startedAt time.Time) (domain.Session, error)
+	StartSessionWithConsent(ctx context.Context, id string, startedAt time.Time, consent *bool) (domain.Session, error)
 	ExpireSession(ctx context.Context, id string, now time.Time) (bool, error)
 	AbandonSession(ctx context.Context, id string, now time.Time) (bool, error)
 	FinishSession(ctx context.Context, id string, reason domain.FinishReason, now time.Time) (bool, error)

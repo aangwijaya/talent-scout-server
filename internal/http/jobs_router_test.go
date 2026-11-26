@@ -21,7 +21,7 @@ const routerSuggestionJSON = `{"rubric":[
 	{"key":"frontend_depth","label":"Frontend depth","description":"Svelte, React and rendering depth.","weight":3},
 	{"key":"system_design","label":"System design","description":"Component boundaries and data flow.","weight":2},
 	{"key":"communication","label":"Communication","description":"Clarity and collaboration.","weight":1}
-]}`
+],"spoken_english_required":true,"spoken_english_reason":"The role coordinates with client-facing English-speaking teams."}`
 
 func jobManageModels() config.ModelsConfig {
 	return config.ModelsConfig{

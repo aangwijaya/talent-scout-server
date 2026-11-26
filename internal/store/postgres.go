@@ -74,9 +74,9 @@ func (p *Postgres) createJob(ctx context.Context, exec execer, job domain.Job) e
 		job.UpdatedAt = job.CreatedAt
 	}
 	_, err = exec.Exec(ctx, `
-		INSERT INTO jobs (id, title, description, rubric, status, created_at, updated_at)
-		VALUES ($1, $2, $3, $4, $5, $6, $7)`,
-		job.ID, job.Title, job.Description, string(rubric), job.Status, job.CreatedAt, job.UpdatedAt)
+		INSERT INTO jobs (id, title, description, rubric, status, spoken_english_required, created_at, updated_at)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
+		job.ID, job.Title, job.Description, string(rubric), job.Status, job.SpokenEnglishRequired, job.CreatedAt, job.UpdatedAt)
 	return mapError(err)
 }
 
@@ -91,9 +91,10 @@ func (p *Postgres) UpdateJob(ctx context.Context, job domain.Job) error {
 		updatedAt = time.Now().UTC()
 	}
 	tag, err := p.pool.Exec(ctx, `
-		UPDATE jobs SET title = $2, description = $3, rubric = $4, status = $5, updated_at = $6
+		UPDATE jobs SET title = $2, description = $3, rubric = $4, status = $5,
+			spoken_english_required = $6, updated_at = $7
 		WHERE id = $1`,
-		job.ID, job.Title, job.Description, string(rubric), job.Status, updatedAt)
+		job.ID, job.Title, job.Description, string(rubric), job.Status, job.SpokenEnglishRequired, updatedAt)
 	if err != nil {
 		return mapError(err)
 	}
@@ -118,9 +119,10 @@ func (p *Postgres) UpdateJobRubricIfNoApplications(ctx context.Context, job doma
 		updatedAt = time.Now().UTC()
 	}
 	tag, err := p.pool.Exec(ctx, `
-		UPDATE jobs SET title = $2, description = $3, rubric = $4, status = $5, updated_at = $6
+		UPDATE jobs SET title = $2, description = $3, rubric = $4, status = $5,
+			spoken_english_required = $6, updated_at = $7
 		WHERE id = $1 AND NOT EXISTS (SELECT 1 FROM applications WHERE job_id = $1)`,
-		job.ID, job.Title, job.Description, string(rubric), job.Status, updatedAt)
+		job.ID, job.Title, job.Description, string(rubric), job.Status, job.SpokenEnglishRequired, updatedAt)
 	if err != nil {
 		return mapError(err)
 	}
@@ -215,10 +217,10 @@ func (p *Postgres) CreateApplicationWithSession(ctx context.Context, app domain.
 		return mapError(err)
 	}
 	if _, err := tx.Exec(ctx, `
-		INSERT INTO sessions (id, application_id, token_hash, status, expires_at, started_at, ended_at, finish_reason, question_count, created_at)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
+		INSERT INTO sessions (id, application_id, token_hash, status, expires_at, started_at, ended_at, finish_reason, question_count, voice, recording_consent, created_at)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)`,
 		session.ID, session.ApplicationID, session.TokenHash, session.Status, session.ExpiresAt,
-		session.StartedAt, session.EndedAt, session.FinishReason, session.QuestionCount, session.CreatedAt); err != nil {
+		session.StartedAt, session.EndedAt, session.FinishReason, session.QuestionCount, session.Voice, session.RecordingConsent, session.CreatedAt); err != nil {
 		return mapError(err)
 	}
 	return tx.Commit(ctx)
@@ -325,10 +327,10 @@ func (p *Postgres) CreateSession(ctx context.Context, session domain.Session) er
 		session.CreatedAt = time.Now().UTC()
 	}
 	_, err := p.pool.Exec(ctx, `
-		INSERT INTO sessions (id, application_id, token_hash, status, expires_at, started_at, ended_at, finish_reason, question_count, created_at)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
+		INSERT INTO sessions (id, application_id, token_hash, status, expires_at, started_at, ended_at, finish_reason, question_count, voice, recording_consent, created_at)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)`,
 		session.ID, session.ApplicationID, session.TokenHash, session.Status, session.ExpiresAt,
-		session.StartedAt, session.EndedAt, session.FinishReason, session.QuestionCount, session.CreatedAt)
+		session.StartedAt, session.EndedAt, session.FinishReason, session.QuestionCount, session.Voice, session.RecordingConsent, session.CreatedAt)
 	return mapError(err)
 }
 
@@ -385,10 +387,11 @@ func (p *Postgres) UpdateSession(ctx context.Context, session domain.Session) er
 	tag, err := p.pool.Exec(ctx, `
 		UPDATE sessions SET
 			application_id = $2, token_hash = $3, status = $4, expires_at = $5,
-			started_at = $6, ended_at = $7, finish_reason = $8, question_count = $9
+			started_at = $6, ended_at = $7, finish_reason = $8, question_count = $9,
+			voice = $10, recording_consent = $11
 		WHERE id = $1`,
 		session.ID, session.ApplicationID, session.TokenHash, session.Status, session.ExpiresAt,
-		session.StartedAt, session.EndedAt, session.FinishReason, session.QuestionCount)
+		session.StartedAt, session.EndedAt, session.FinishReason, session.QuestionCount, session.Voice, session.RecordingConsent)
 	if err != nil {
 		return mapError(err)
 	}
@@ -405,6 +408,10 @@ func (p *Postgres) UpdateSession(ctx context.Context, session domain.Session) er
 // (ErrConflict). In the same transaction the application moves from invited to
 // in_session.
 func (p *Postgres) StartSession(ctx context.Context, id string, startedAt time.Time) (domain.Session, error) {
+	return p.StartSessionWithConsent(ctx, id, startedAt, nil)
+}
+
+func (p *Postgres) StartSessionWithConsent(ctx context.Context, id string, startedAt time.Time, consent *bool) (domain.Session, error) {
 	tx, err := p.pool.Begin(ctx)
 	if err != nil {
 		return domain.Session{}, err
@@ -412,10 +419,10 @@ func (p *Postgres) StartSession(ctx context.Context, id string, startedAt time.T
 	defer tx.Rollback(ctx)
 
 	row := tx.QueryRow(ctx, `
-		UPDATE sessions SET status = $2, started_at = $3
-		WHERE id = $1 AND status = $4
+		UPDATE sessions SET status = $2, started_at = $3, recording_consent = COALESCE($4, recording_consent)
+		WHERE id = $1 AND status = $5
 		RETURNING `+sessionColumns,
-		id, domain.SessionStatusActive, startedAt, domain.SessionStatusInvited)
+		id, domain.SessionStatusActive, startedAt, consent, domain.SessionStatusInvited)
 	session, err := scanSession(row)
 	if err != nil {
 		if !errors.Is(err, pgx.ErrNoRows) {
@@ -555,10 +562,10 @@ func (p *Postgres) ResendInvite(ctx context.Context, revokeSessionID *string, se
 		}
 	}
 	if _, err := tx.Exec(ctx, `
-		INSERT INTO sessions (id, application_id, token_hash, status, expires_at, started_at, ended_at, finish_reason, question_count, created_at)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
+		INSERT INTO sessions (id, application_id, token_hash, status, expires_at, started_at, ended_at, finish_reason, question_count, voice, recording_consent, created_at)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)`,
 		session.ID, session.ApplicationID, session.TokenHash, session.Status, session.ExpiresAt,
-		session.StartedAt, session.EndedAt, session.FinishReason, session.QuestionCount, session.CreatedAt); err != nil {
+		session.StartedAt, session.EndedAt, session.FinishReason, session.QuestionCount, session.Voice, session.RecordingConsent, session.CreatedAt); err != nil {
 		return mapError(err)
 	}
 	tag, err := tx.Exec(ctx, `UPDATE applications SET status = $2 WHERE id = $1`, session.ApplicationID, domain.ApplicationStatusInvited)
@@ -951,9 +958,9 @@ func (p *Postgres) ListNodeEvents(ctx context.Context, runID string, sinceSeq in
 }
 
 const (
-	jobColumns         = `id, title, description, rubric, status, created_at, updated_at`
+	jobColumns         = `id, title, description, rubric, status, spoken_english_required, created_at, updated_at`
 	applicationColumns = `id, job_id, name, email, cv_object_path, cv_text, status, decision_note, decided_at, authenticity, created_at`
-	sessionColumns     = `id, application_id, token_hash, status, expires_at, started_at, ended_at, finish_reason, question_count, created_at`
+	sessionColumns     = `id, application_id, token_hash, status, expires_at, started_at, ended_at, finish_reason, question_count, voice, recording_consent, created_at`
 	topicColumns       = `id, session_id, position, title, goal, rubric_keys, seed_question, status, follow_up_count`
 	messageColumns     = `id, session_id, topic_id, role, kind, content, entry, created_at`
 	audioUploadColumns = `id, session_id, object_path, content_type, size_bytes, duration_ms, message_id, uploaded_at, deleted_at`
@@ -969,7 +976,7 @@ type rowScanner interface {
 func scanJob(row rowScanner) (domain.Job, error) {
 	var job domain.Job
 	var rubric []byte
-	if err := row.Scan(&job.ID, &job.Title, &job.Description, &rubric, &job.Status, &job.CreatedAt, &job.UpdatedAt); err != nil {
+	if err := row.Scan(&job.ID, &job.Title, &job.Description, &rubric, &job.Status, &job.SpokenEnglishRequired, &job.CreatedAt, &job.UpdatedAt); err != nil {
 		return domain.Job{}, err
 	}
 	if err := json.Unmarshal(rubric, &job.Rubric); err != nil {
@@ -999,7 +1006,8 @@ func scanSession(row rowScanner) (domain.Session, error) {
 	var session domain.Session
 	var finishReason *string
 	if err := row.Scan(&session.ID, &session.ApplicationID, &session.TokenHash, &session.Status, &session.ExpiresAt,
-		&session.StartedAt, &session.EndedAt, &finishReason, &session.QuestionCount, &session.CreatedAt); err != nil {
+		&session.StartedAt, &session.EndedAt, &finishReason, &session.QuestionCount,
+		&session.Voice, &session.RecordingConsent, &session.CreatedAt); err != nil {
 		return domain.Session{}, err
 	}
 	if finishReason != nil {

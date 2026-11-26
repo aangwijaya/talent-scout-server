@@ -164,6 +164,25 @@ func TestSupabaseDelete(t *testing.T) {
 	}
 }
 
+func TestSupabaseDeleteNetworkErrorOmitsObjectPath(t *testing.T) {
+	// A closed server makes the HTTP client fail with a *url.Error, whose text
+	// carries the whole request URL. The retention sweeper logs this error, and
+	// the object path must not reach the logs.
+	server := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
+	server.Close()
+
+	s := storage.NewSupabase(server.URL, "audio", "secret-key")
+	err := s.Delete(context.Background(), "sessions/s1/upload.webm")
+	if err == nil {
+		t.Fatal("Delete() error = nil, want a network error")
+	}
+	for _, leak := range []string{"sessions/s1", "upload.webm", "/storage/v1/object"} {
+		if strings.Contains(err.Error(), leak) {
+			t.Fatalf("Delete() error %q contains %q", err, leak)
+		}
+	}
+}
+
 func TestSupabaseDeleteMissingIsSuccess(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, `{"error":"not found"}`, http.StatusNotFound)

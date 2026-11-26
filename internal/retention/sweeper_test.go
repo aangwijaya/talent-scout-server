@@ -84,8 +84,9 @@ func TestSweepDeletesSentAtThirtyDaysAndUnsentAtTwentyFourHours(t *testing.T) {
 	now := time.Now().UTC()
 	sentMessage := "message-sent"
 
-	seedUpload(t, st, upload("sent-30-days", now.Add(-retention.RecordingRetention), &sentMessage))
-	seedUpload(t, st, upload("unsent-24-hours", now.Add(-retention.UnsentUploadRetention), nil))
+	// Literal windows, not the constants: the contract fixes 30 days and 24 hours.
+	seedUpload(t, st, upload("sent-30-days", now.Add(-30*24*time.Hour), &sentMessage))
+	seedUpload(t, st, upload("unsent-24-hours", now.Add(-24*time.Hour), nil))
 	seedUpload(t, st, upload("sent-29-days", now.Add(-29*24*time.Hour), &sentMessage))
 	seedUpload(t, st, upload("unsent-23-hours", now.Add(-23*time.Hour), nil))
 

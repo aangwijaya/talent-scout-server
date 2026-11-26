@@ -391,6 +391,8 @@ func TestPostgresStore(t *testing.T) {
 		t.Fatalf("stored entry = %+v, want %+v", messages[0].Entry, message.Entry)
 	}
 
+	testPostgresAudioUploads(ctx, t, s, session.ID, message.ID)
+
 	assessedAt := time.Now().UTC().Truncate(time.Microsecond)
 	auth := domain.Authenticity{
 		Level:      domain.AuthenticityLevelPossible,
@@ -464,4 +466,81 @@ func testSchema(t *testing.T, dsn string) string {
 		schema = "test"
 	}
 	return schema
+}
+
+// testPostgresAudioUploads checks the retention SQL itself: which uploads are due
+// (sent after 30 days, unsent after 24 hours, never one already deleted), marking
+// one deleted, and attaching an upload to an answer.
+func testPostgresAudioUploads(ctx context.Context, t *testing.T, s *store.Postgres, sessionID, messageID string) {
+	t.Helper()
+	now := time.Now().UTC().Truncate(time.Microsecond)
+	upload := func(uploadedAt time.Time, sent bool) store.AudioUpload {
+		id := domain.NewID()
+		u := store.AudioUpload{
+			ID:          id,
+			SessionID:   sessionID,
+			ObjectPath:  "sessions/" + sessionID + "/" + id + ".webm",
+			ContentType: "audio/webm",
+			SizeBytes:   1024,
+			DurationMS:  3000,
+			UploadedAt:  uploadedAt,
+		}
+		if sent {
+			u.MessageID = &messageID
+		}
+		return u
+	}
+	sentOld := upload(now.Add(-31*24*time.Hour), true)
+	sentNew := upload(now.Add(-29*24*time.Hour), true)
+	unsentOld := upload(now.Add(-25*time.Hour), false)
+	unsentNew := upload(now.Add(-23*time.Hour), false)
+	deleted := upload(now.Add(-40*24*time.Hour), false)
+	for _, u := range []store.AudioUpload{sentOld, sentNew, unsentOld, unsentNew, deleted} {
+		if err := s.CreateAudioUpload(ctx, u); err != nil {
+			t.Fatalf("CreateAudioUpload: %v", err)
+		}
+	}
+	// Insert never stores deleted_at; only the sweeper's mark sets it.
+	if err := s.MarkAudioUploadDeleted(ctx, deleted.ID, now.Add(-time.Hour)); err != nil {
+		t.Fatalf("MarkAudioUploadDeleted(already deleted): %v", err)
+	}
+
+	dueIDs := func() map[string]bool {
+		t.Helper()
+		due, err := s.ListAudioUploadsDue(ctx, now.Add(-30*24*time.Hour), now.Add(-24*time.Hour))
+		if err != nil {
+			t.Fatalf("ListAudioUploadsDue: %v", err)
+		}
+		ids := map[string]bool{}
+		for _, u := range due {
+			ids[u.ID] = true
+		}
+		return ids
+	}
+	if got := dueIDs(); len(got) != 2 || !got[sentOld.ID] || !got[unsentOld.ID] {
+		t.Fatalf("due = %v, want only the 31-day sent and the 25-hour unsent upload", got)
+	}
+
+	if err := s.MarkAudioUploadDeleted(ctx, sentOld.ID, now); err != nil {
+		t.Fatalf("MarkAudioUploadDeleted: %v", err)
+	}
+	if got := dueIDs(); len(got) != 1 || !got[unsentOld.ID] {
+		t.Fatalf("due after mark = %v, want only the 25-hour unsent upload", got)
+	}
+	if got, err := s.GetAudioUpload(ctx, sentOld.ID); err != nil || got.DeletedAt == nil || !got.DeletedAt.Equal(now) {
+		t.Fatalf("deleted upload = %+v, %v; want deleted_at %s", got, err, now)
+	}
+
+	if err := s.AttachAudioUpload(ctx, unsentNew.ID, messageID); err != nil {
+		t.Fatalf("AttachAudioUpload: %v", err)
+	}
+	if got, err := s.GetAudioUpload(ctx, unsentNew.ID); err != nil || got.MessageID == nil || *got.MessageID != messageID {
+		t.Fatalf("attached upload = %+v, %v", got, err)
+	}
+	if err := s.AttachAudioUpload(ctx, unsentNew.ID, messageID); !errors.Is(err, store.ErrConflict) {
+		t.Fatalf("second AttachAudioUpload = %v, want ErrConflict", err)
+	}
+	if err := s.AttachAudioUpload(ctx, domain.NewID(), messageID); !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("unknown AttachAudioUpload = %v, want ErrNotFound", err)
+	}
 }

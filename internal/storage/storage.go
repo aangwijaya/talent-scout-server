@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"strings"
 )
 
@@ -89,8 +90,8 @@ func (s *Supabase) Download(ctx context.Context, path string) ([]byte, error) {
 // Delete removes an object from the bucket. A missing object is not an error,
 // so deleting the same path twice is safe.
 func (s *Supabase) Delete(ctx context.Context, path string) error {
-	url := fmt.Sprintf("%s/storage/v1/object/%s/%s", s.baseURL, s.bucket, path)
-	req, err := http.NewRequestWithContext(ctx, http.MethodDelete, url, nil)
+	endpoint := fmt.Sprintf("%s/storage/v1/object/%s/%s", s.baseURL, s.bucket, path)
+	req, err := http.NewRequestWithContext(ctx, http.MethodDelete, endpoint, nil)
 	if err != nil {
 		return fmt.Errorf("build storage delete request: %w", err)
 	}
@@ -98,6 +99,12 @@ func (s *Supabase) Delete(ctx context.Context, path string) error {
 
 	resp, err := s.client.Do(req)
 	if err != nil {
+		// A *url.Error's text carries the full request URL, object path included;
+		// the retention sweeper logs this error, so keep only the cause.
+		var urlErr *url.Error
+		if errors.As(err, &urlErr) {
+			err = urlErr.Err
+		}
 		return fmt.Errorf("storage delete: %w", err)
 	}
 	defer resp.Body.Close()

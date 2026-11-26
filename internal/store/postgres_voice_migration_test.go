@@ -62,7 +62,7 @@ func TestVoiceMigrationDefaultsExistingRowsToText(t *testing.T) {
 	if _, err := db.ExecContext(ctx, `
 		INSERT INTO sessions (id, application_id, token_hash, status, expires_at)
 		VALUES ($1, $2, 'pre-migration-hash', 'invited', now() + interval '1 day')`,
-		sessionID); err != nil {
+		sessionID, appID); err != nil {
 		t.Fatalf("insert pre-migration session: %v", err)
 	}
 

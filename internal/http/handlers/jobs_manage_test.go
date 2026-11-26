@@ -13,6 +13,7 @@ import (
 
 	"github.com/aangwijaya/talent-scout-server/internal/config"
 	"github.com/aangwijaya/talent-scout-server/internal/domain"
+	"github.com/aangwijaya/talent-scout-server/internal/graph"
 	"github.com/aangwijaya/talent-scout-server/internal/http/handlers"
 	"github.com/aangwijaya/talent-scout-server/internal/llm"
 	"github.com/aangwijaya/talent-scout-server/internal/store"
@@ -539,19 +540,56 @@ func TestRubricSuggestionValid(t *testing.T) {
 }
 
 func TestRubricSuggestionRequiresSpokenEnglishFields(t *testing.T) {
-	fake := llm.NewFake(map[string]string{"rubric_suggester": suggestionRubricWithoutSpokenEnglishJSON})
-	h := newManageJobs(store.NewMemory(), fake)
+	// Each case is a valid rubric; only the spoken English fields differ. Any of
+	// them missing makes the answer invalid, with the same single retry as a bad rubric.
+	rubric := strings.TrimSuffix(suggestionRubricWithoutSpokenEnglishJSON, "}")
+	cases := map[string]string{
+		"both missing":     suggestionRubricWithoutSpokenEnglishJSON,
+		"required missing": rubric + `,"spoken_english_reason":"Talks to clients in English."}`,
+		"reason missing":   rubric + `,"spoken_english_required":true}`,
+		"reason blank":     rubric + `,"spoken_english_required":false,"spoken_english_reason":"  "}`,
+	}
+	for name, answer := range cases {
+		t.Run(name, func(t *testing.T) {
+			fake := llm.NewFake(map[string]string{"rubric_suggester": answer})
+			h := newManageJobs(store.NewMemory(), fake)
+
+			body := `{"title":"Senior Frontend Engineer","description":"` + manageDescription + `"}`
+			rec := serveBody(h.SuggestRubric, http.MethodPost, "/api/v1/jobs/rubric-suggestion", body, "")
+			if rec.Code != http.StatusBadGateway {
+				t.Fatalf("status = %d, want 502 (body: %s)", rec.Code, rec.Body.String())
+			}
+			if code, _, _ := decodeError(t, rec); code != "llm_unavailable" {
+				t.Errorf("code = %q, want llm_unavailable", code)
+			}
+			if calls := len(fake.Calls()); calls != 2 {
+				t.Errorf("llm calls = %d, want 2 (one retry)", calls)
+			}
+		})
+	}
+}
+
+// LLM_MODE=fake serves graph.FakeReplies. CI and the client's integration test
+// run against it, so its suggestion must pass the same validation as a real one.
+func TestRubricSuggestionFakeModeReplyIsValid(t *testing.T) {
+	h := newManageJobs(store.NewMemory(), llm.NewFake(graph.FakeReplies))
 
 	body := `{"title":"Senior Frontend Engineer","description":"` + manageDescription + `"}`
 	rec := serveBody(h.SuggestRubric, http.MethodPost, "/api/v1/jobs/rubric-suggestion", body, "")
-	if rec.Code != http.StatusBadGateway {
-		t.Fatalf("status = %d, want 502 (body: %s)", rec.Code, rec.Body.String())
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200 (body: %s)", rec.Code, rec.Body.String())
 	}
-	if code, _, _ := decodeError(t, rec); code != "llm_unavailable" {
-		t.Errorf("code = %q, want llm_unavailable", code)
+	var got struct {
+		Rubric                []domain.RubricCriterion `json:"rubric"`
+		SpokenEnglishRequired *bool                    `json:"spoken_english_required"`
+		SpokenEnglishReason   *string                  `json:"spoken_english_reason"`
 	}
-	if calls := len(fake.Calls()); calls != 2 {
-		t.Errorf("llm calls = %d, want 2 (one retry)", calls)
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+		t.Fatalf("decode suggestion: %v", err)
+	}
+	if len(got.Rubric) < 3 || got.SpokenEnglishRequired == nil ||
+		got.SpokenEnglishReason == nil || strings.TrimSpace(*got.SpokenEnglishReason) == "" {
+		t.Fatalf("fake suggestion = %s, want a rubric and both spoken English fields", rec.Body.String())
 	}
 }
 

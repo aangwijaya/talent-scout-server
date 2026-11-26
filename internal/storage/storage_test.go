@@ -136,3 +136,93 @@ func TestFakeDownload(t *testing.T) {
 		t.Fatalf("Download() missing error = %v, want ErrNotFound", err)
 	}
 }
+
+func TestSupabaseDelete(t *testing.T) {
+	var gotMethod, gotPath, gotAuth string
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotMethod = r.Method
+		gotPath = r.URL.Path
+		gotAuth = r.Header.Get("Authorization")
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer server.Close()
+
+	s := storage.NewSupabase(server.URL, "audio", "secret-key")
+	if err := s.Delete(context.Background(), "sessions/s1/upload.webm"); err != nil {
+		t.Fatalf("Delete() error: %v", err)
+	}
+
+	if gotMethod != http.MethodDelete {
+		t.Errorf("method = %q, want DELETE", gotMethod)
+	}
+	if gotPath != "/storage/v1/object/audio/sessions/s1/upload.webm" {
+		t.Errorf("path = %q", gotPath)
+	}
+	if gotAuth != "Bearer secret-key" {
+		t.Errorf("auth header = %q", gotAuth)
+	}
+}
+
+func TestSupabaseDeleteNetworkErrorOmitsObjectPath(t *testing.T) {
+	// A closed server makes the HTTP client fail with a *url.Error, whose text
+	// carries the whole request URL. The retention sweeper logs this error, and
+	// the object path must not reach the logs.
+	server := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
+	server.Close()
+
+	s := storage.NewSupabase(server.URL, "audio", "secret-key")
+	err := s.Delete(context.Background(), "sessions/s1/upload.webm")
+	if err == nil {
+		t.Fatal("Delete() error = nil, want a network error")
+	}
+	for _, leak := range []string{"sessions/s1", "upload.webm", "/storage/v1/object"} {
+		if strings.Contains(err.Error(), leak) {
+			t.Fatalf("Delete() error %q contains %q", err, leak)
+		}
+	}
+}
+
+func TestSupabaseDeleteMissingIsSuccess(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, `{"error":"not found"}`, http.StatusNotFound)
+	}))
+	defer server.Close()
+
+	s := storage.NewSupabase(server.URL, "audio", "secret-key")
+	if err := s.Delete(context.Background(), "missing.webm"); err != nil {
+		t.Fatalf("Delete() of a missing object = %v, want nil", err)
+	}
+}
+
+func TestSupabaseDeleteError(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, `{"error":"boom"}`, http.StatusInternalServerError)
+	}))
+	defer server.Close()
+
+	s := storage.NewSupabase(server.URL, "audio", "secret-key")
+	err := s.Delete(context.Background(), "upload.webm")
+	if err == nil {
+		t.Fatal("Delete() expected an error for a non-200 response")
+	}
+	if strings.Contains(err.Error(), "secret-key") {
+		t.Errorf("error must not leak the service role key: %v", err)
+	}
+}
+
+func TestFakeDelete(t *testing.T) {
+	f := storage.NewFake()
+	if err := f.Upload(context.Background(), "upload.webm", []byte("data"), "audio/webm"); err != nil {
+		t.Fatalf("Upload() error: %v", err)
+	}
+	if err := f.Delete(context.Background(), "upload.webm"); err != nil {
+		t.Fatalf("Delete() error: %v", err)
+	}
+	if _, ok := f.Get("upload.webm"); ok {
+		t.Error("object still present after Delete()")
+	}
+	if err := f.Delete(context.Background(), "missing.webm"); err != nil {
+		t.Fatalf("Delete() of a missing object = %v, want nil", err)
+	}
+}

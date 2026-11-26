@@ -7,17 +7,19 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"strings"
 )
 
 // ErrNotFound means the object does not exist in the bucket.
 var ErrNotFound = errors.New("storage object not found")
 
-// Storage uploads and downloads CV files in the private bucket `cvs`.
+// Storage stores and retrieves files in a private Supabase Storage bucket.
 // The backend is the only caller; the client never touches Supabase Storage.
 type Storage interface {
 	Upload(ctx context.Context, path string, data []byte, contentType string) error
 	Download(ctx context.Context, path string) ([]byte, error)
+	Delete(ctx context.Context, path string) error
 }
 
 // Supabase uploads objects to Supabase Storage using the service role key.
@@ -83,4 +85,36 @@ func (s *Supabase) Download(ctx context.Context, path string) ([]byte, error) {
 		return nil, fmt.Errorf("storage download: status %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))
 	}
 	return io.ReadAll(resp.Body)
+}
+
+// Delete removes an object from the bucket. A missing object is not an error,
+// so deleting the same path twice is safe.
+func (s *Supabase) Delete(ctx context.Context, path string) error {
+	endpoint := fmt.Sprintf("%s/storage/v1/object/%s/%s", s.baseURL, s.bucket, path)
+	req, err := http.NewRequestWithContext(ctx, http.MethodDelete, endpoint, nil)
+	if err != nil {
+		return fmt.Errorf("build storage delete request: %w", err)
+	}
+	req.Header.Set("Authorization", "Bearer "+s.apiKey)
+
+	resp, err := s.client.Do(req)
+	if err != nil {
+		// A *url.Error's text carries the full request URL, object path included;
+		// the retention sweeper logs this error, so keep only the cause.
+		var urlErr *url.Error
+		if errors.As(err, &urlErr) {
+			err = urlErr.Err
+		}
+		return fmt.Errorf("storage delete: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode == http.StatusNotFound {
+		return nil
+	}
+	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusNoContent {
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<10))
+		return fmt.Errorf("storage delete: status %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))
+	}
+	return nil
 }

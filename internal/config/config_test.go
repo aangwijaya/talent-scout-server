@@ -6,7 +6,7 @@ const validAuthTokenSecret = "0123456789abcdef0123456789abcdef"
 
 var allEnv = []string{
 	"PORT", "APP_ENV", "DATABASE_URL", "SUPABASE_URL",
-	"SUPABASE_SERVICE_ROLE_KEY", "SUPABASE_STORAGE_BUCKET", "PUBLIC_APP_URL",
+	"SUPABASE_SERVICE_ROLE_KEY", "SUPABASE_STORAGE_BUCKET", "SUPABASE_AUDIO_BUCKET", "PUBLIC_APP_URL",
 	"FRONTEND_ORIGIN", "BFF_SHARED_SECRET", "RECRUITER_PASSWORD", "AUTH_TOKEN_SECRET",
 	"LLM_MODE", "LLM_BASE_URL", "OPENROUTER_API_KEY", "MODELS_CONFIG_PATH",
 	"EMAIL_MODE", "GMAIL_CLIENT_ID", "GMAIL_CLIENT_SECRET", "GMAIL_REFRESH_TOKEN",
@@ -56,6 +56,9 @@ func TestLoadDefaults(t *testing.T) {
 	if cfg.MessageMaxPerWindow != 20 || cfg.MessageWindowMinutes != 10 {
 		t.Errorf("message rate defaults = %d/%d, want 20/10", cfg.MessageMaxPerWindow, cfg.MessageWindowMinutes)
 	}
+	if cfg.SupabaseAudioBucket != "audio" {
+		t.Errorf("SupabaseAudioBucket = %q, want audio", cfg.SupabaseAudioBucket)
+	}
 }
 
 func TestLoadDefaultsPublicAppURL(t *testing.T) {
@@ -83,6 +86,7 @@ func TestLoadFromEnv(t *testing.T) {
 	t.Setenv("LOGIN_WINDOW_MINUTES", "30")
 	t.Setenv("MESSAGE_MAX_PER_WINDOW", "7")
 	t.Setenv("MESSAGE_WINDOW_MINUTES", "5")
+	t.Setenv("SUPABASE_AUDIO_BUCKET", "recordings")
 	t.Setenv("AUTH_TOKEN_SECRET", validAuthTokenSecret)
 
 	cfg, err := Load()
@@ -113,6 +117,9 @@ func TestLoadFromEnv(t *testing.T) {
 	}
 	if cfg.MessageMaxPerWindow != 7 || cfg.MessageWindowMinutes != 5 {
 		t.Errorf("message rate = %d/%d, want 7/5", cfg.MessageMaxPerWindow, cfg.MessageWindowMinutes)
+	}
+	if cfg.SupabaseAudioBucket != "recordings" {
+		t.Errorf("SupabaseAudioBucket = %q, want recordings", cfg.SupabaseAudioBucket)
 	}
 }
 

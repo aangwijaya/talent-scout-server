@@ -13,6 +13,7 @@ import (
 const (
 	defaultPort           = "8080"
 	defaultVersion        = "0.1.0"
+	defaultAudioBucket    = "audio"
 	defaultPublicAppURL   = "https://talentscout-id.vercel.app"
 	defaultLLMBaseURL     = "https://openrouter.ai/api/v1"
 	defaultModelsPath     = "./config/models.yaml"
@@ -35,6 +36,7 @@ type Config struct {
 	SupabaseURL            string
 	SupabaseServiceRoleKey string
 	SupabaseStorageBucket  string
+	SupabaseAudioBucket    string
 	PublicAppURL           string
 	FrontendOrigins        []string
 	BFFSharedSecret        string
@@ -68,6 +70,7 @@ func Load() (Config, error) {
 		SupabaseURL:            os.Getenv("SUPABASE_URL"),
 		SupabaseServiceRoleKey: os.Getenv("SUPABASE_SERVICE_ROLE_KEY"),
 		SupabaseStorageBucket:  envOr("SUPABASE_STORAGE_BUCKET", "cvs"),
+		SupabaseAudioBucket:    envOr("SUPABASE_AUDIO_BUCKET", defaultAudioBucket),
 		PublicAppURL:           envOr("PUBLIC_APP_URL", defaultPublicAppURL),
 		FrontendOrigins:        splitList(os.Getenv("FRONTEND_ORIGIN")),
 		BFFSharedSecret:        os.Getenv("BFF_SHARED_SECRET"),

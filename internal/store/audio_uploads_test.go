@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/aangwijaya/talent-scout-server/internal/domain"
 	"github.com/aangwijaya/talent-scout-server/internal/store"
 )
 
@@ -85,6 +86,58 @@ func TestMemoryAttachAudioUpload(t *testing.T) {
 	}
 	if err := st.AttachAudioUpload(ctx, "missing", "message-1"); !errors.Is(err, store.ErrNotFound) {
 		t.Fatalf("AttachAudioUpload unknown = %v, want ErrNotFound", err)
+	}
+}
+
+func TestMemoryCreateMessageWithAudioUploadIsAtomic(t *testing.T) {
+	st := store.NewMemory()
+	ctx := context.Background()
+	upload := audioUpload("upload-1", time.Now().UTC(), nil)
+	upload.Transcript = "a spoken answer"
+	upload.Stored = true
+	upload.Counted = true
+	if err := st.CreateAudioUpload(ctx, upload); err != nil {
+		t.Fatalf("CreateAudioUpload: %v", err)
+	}
+
+	message := domain.Message{
+		ID:        "message-1",
+		SessionID: upload.SessionID,
+		Role:      domain.MessageRoleApplicant,
+		Kind:      domain.MessageKindAnswer,
+		Content:   upload.Transcript,
+	}
+	if err := st.CreateMessageWithAudioUpload(ctx, message, upload.ID); err != nil {
+		t.Fatalf("CreateMessageWithAudioUpload: %v", err)
+	}
+	got, err := st.GetAudioUpload(ctx, upload.ID)
+	if err != nil {
+		t.Fatalf("GetAudioUpload: %v", err)
+	}
+	if got.MessageID == nil || *got.MessageID != message.ID {
+		t.Fatalf("message_id = %v, want %s", got.MessageID, message.ID)
+	}
+
+	second := message
+	second.ID = "message-2"
+	if err := st.CreateMessageWithAudioUpload(ctx, second, upload.ID); !errors.Is(err, store.ErrConflict) {
+		t.Fatalf("second CreateMessageWithAudioUpload = %v, want ErrConflict", err)
+	}
+	messages, err := st.ListMessagesBySession(ctx, upload.SessionID, false)
+	if err != nil {
+		t.Fatalf("ListMessagesBySession: %v", err)
+	}
+	if len(messages) != 1 || messages[0].ID != message.ID {
+		t.Fatalf("messages = %+v, want only the first answer", messages)
+	}
+
+	rejected := audioUpload("upload-2", time.Now().UTC(), nil)
+	rejected.Counted = false
+	if err := st.CreateAudioUpload(ctx, rejected); err != nil {
+		t.Fatalf("CreateAudioUpload(rejected): %v", err)
+	}
+	if err := st.CreateMessageWithAudioUpload(ctx, second, rejected.ID); !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("rejected CreateMessageWithAudioUpload = %v, want ErrNotFound", err)
 	}
 }
 

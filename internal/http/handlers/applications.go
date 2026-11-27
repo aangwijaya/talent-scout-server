@@ -106,6 +106,7 @@ type recruiterMessage struct {
 	Kind      domain.MessageKind   `json:"kind"`
 	Content   string               `json:"content"`
 	Entry     *domain.MessageEntry `json:"entry"`
+	Audio     *domain.MessageAudio `json:"audio"`
 	CreatedAt time.Time            `json:"created_at"`
 }
 
@@ -120,10 +121,41 @@ func recruiterMessages(messages []domain.Message) []recruiterMessage {
 			Kind:      message.Kind,
 			Content:   message.Content,
 			Entry:     message.Entry,
+			Audio:     message.Audio,
 			CreatedAt: message.CreatedAt,
 		})
 	}
 	return out
+}
+
+// attachMessageAudio maps a session's recordings onto the answers they are
+// attached to. A recording that retention deleted is distinct from one whose
+// storage upload failed.
+func attachMessageAudio(messages []domain.Message, uploads []store.AudioUpload) {
+	byMessage := make(map[string]store.AudioUpload, len(uploads))
+	for _, upload := range uploads {
+		if upload.MessageID != nil {
+			byMessage[*upload.MessageID] = upload
+		}
+	}
+	for i := range messages {
+		upload, ok := byMessage[messages[i].ID]
+		if !ok {
+			continue
+		}
+		status := domain.MessageAudioStatusAvailable
+		switch {
+		case upload.DeletedAt != nil:
+			status = domain.MessageAudioStatusDeleted
+		case !upload.Stored:
+			status = domain.MessageAudioStatusNotStored
+		}
+		messages[i].Audio = &domain.MessageAudio{
+			DurationMS: upload.DurationMS,
+			Language:   upload.Language,
+			Status:     status,
+		}
+	}
 }
 
 type decisionRequest struct {
@@ -255,6 +287,12 @@ func (h *Applications) Get(w http.ResponseWriter, r *http.Request) {
 			apierror.Write(w, http.StatusInternalServerError, apierror.CodeInternalError, "could not load transcript", nil)
 			return
 		}
+		uploads, err := h.store.ListAudioUploadsBySession(ctx, sess.ID)
+		if err != nil {
+			apierror.Write(w, http.StatusInternalServerError, apierror.CodeInternalError, "could not load message audio", nil)
+			return
+		}
+		attachMessageAudio(messages, uploads)
 		detail.Messages = recruiterMessages(messages)
 		run, err := h.store.GetGraphRunBySession(ctx, sess.ID)
 		switch {

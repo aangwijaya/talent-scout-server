@@ -155,16 +155,55 @@ type Message struct {
 	Kind      MessageKind   `json:"kind"`
 	Content   string        `json:"content"`
 	Entry     *MessageEntry `json:"entry,omitempty"`
+	Audio     *MessageAudio `json:"audio,omitempty"`
 	CreatedAt time.Time     `json:"created_at"`
 }
 
-// MessageEntry holds the client-recorded typing/paste signals for an applicant
-// answer. It is advisory: the authenticity node only explains it to the
-// recruiter and never changes the interview flow or a score.
+type MessageEntryMode string
+
+const (
+	MessageEntryModeTyped  MessageEntryMode = "typed"
+	MessageEntryModeSpoken MessageEntryMode = "spoken"
+)
+
+type MessageEntryFallbackReason string
+
+const (
+	MessageEntryFallbackChoseText             MessageEntryFallbackReason = "chose_text"
+	MessageEntryFallbackDeclinedRecording     MessageEntryFallbackReason = "declined_recording"
+	MessageEntryFallbackMicrophoneUnavailable MessageEntryFallbackReason = "microphone_unavailable"
+	MessageEntryFallbackTranscriptionFailed   MessageEntryFallbackReason = "transcription_failed"
+)
+
+// MessageEntry holds the client-recorded signals for an applicant answer. It is
+// advisory: the authenticity node only explains it to the recruiter and never
+// changes the interview flow or a score. The voice fields are meaningful only
+// for a spoken answer; a typed answer in a voice session carries a fallback
+// reason instead.
 type MessageEntry struct {
-	PastedChars int `json:"pasted_chars"`
-	TypedChars  int `json:"typed_chars"`
-	DurationMS  int `json:"duration_ms"`
+	PastedChars    int                        `json:"pasted_chars"`
+	TypedChars     int                        `json:"typed_chars"`
+	DurationMS     int                        `json:"duration_ms"`
+	Mode           MessageEntryMode           `json:"mode,omitempty"`
+	FallbackReason MessageEntryFallbackReason `json:"fallback_reason,omitempty"`
+	StartLatencyMS int                        `json:"start_latency_ms,omitempty"`
+	SpeakingMS     int                        `json:"speaking_ms,omitempty"`
+	RerecordCount  int                        `json:"rerecord_count,omitempty"`
+}
+
+type MessageAudioStatus string
+
+const (
+	MessageAudioStatusAvailable MessageAudioStatus = "available"
+	MessageAudioStatusDeleted   MessageAudioStatus = "deleted"
+	MessageAudioStatusNotStored MessageAudioStatus = "not_stored"
+)
+
+// MessageAudio is the recruiter-only recording metadata for a spoken answer.
+type MessageAudio struct {
+	DurationMS int                `json:"duration_ms"`
+	Language   string             `json:"language"`
+	Status     MessageAudioStatus `json:"status"`
 }
 
 type AuthenticityLevel string

@@ -211,13 +211,24 @@ func (m *SessionManager) runStep(st *liveSession, fn func()) {
 // stepMu, so the applicant event and the next step never touch the runner while
 // the previous step is still using it.
 func (m *SessionManager) SubmitAnswer(ctx context.Context, sess domain.Session, content string) (domain.Message, error) {
-	return m.SubmitAnswerWithEntry(ctx, sess, content, nil)
+	return m.submitAnswer(ctx, sess, content, nil, "")
 }
 
 // SubmitAnswerWithEntry is SubmitAnswer plus the optional client entry signals.
 // The entry is stored with the answer for the recruiter only and never changes
 // the interview flow.
 func (m *SessionManager) SubmitAnswerWithEntry(ctx context.Context, sess domain.Session, content string, entry *domain.MessageEntry) (domain.Message, error) {
+	return m.submitAnswer(ctx, sess, content, entry, "")
+}
+
+// SubmitAnswerWithAudio stores a spoken answer. The message insert and the
+// upload attach happen in one store transaction, so the same upload cannot be
+// sent twice.
+func (m *SessionManager) SubmitAnswerWithAudio(ctx context.Context, sess domain.Session, content string, entry *domain.MessageEntry, audioUploadID string) (domain.Message, error) {
+	return m.submitAnswer(ctx, sess, content, entry, audioUploadID)
+}
+
+func (m *SessionManager) submitAnswer(ctx context.Context, sess domain.Session, content string, entry *domain.MessageEntry, audioUploadID string) (domain.Message, error) {
 	m.mu.Lock()
 	st, ok := m.states[sess.ID]
 	if !ok {
@@ -265,7 +276,7 @@ func (m *SessionManager) SubmitAnswerWithEntry(ctx context.Context, sess domain.
 	// for the whole continueAfterAnswer step.
 	m.registry.Add(sess.ID)
 
-	answer, topic, err := m.storeApplicantAnswer(ctx, sess, st, content, entry)
+	answer, topic, err := m.storeApplicantAnswer(ctx, sess, st, content, entry, audioUploadID)
 	if err != nil {
 		m.mu.Lock()
 		st.busy = false
@@ -283,12 +294,12 @@ func (m *SessionManager) SubmitAnswerWithEntry(ctx context.Context, sess domain.
 
 // storeApplicantAnswer persists the answer and publishes its message.completed
 // while the caller holds stepMu.
-func (m *SessionManager) storeApplicantAnswer(ctx context.Context, sess domain.Session, st *liveSession, content string, entry *domain.MessageEntry) (domain.Message, *domain.Topic, error) {
+func (m *SessionManager) storeApplicantAnswer(ctx context.Context, sess domain.Session, st *liveSession, content string, entry *domain.MessageEntry, audioUploadID string) (domain.Message, *domain.Topic, error) {
 	topic, err := m.activeTopic(ctx, sess.ID)
 	if err != nil {
 		return domain.Message{}, nil, err
 	}
-	if err := m.store.CreateMessage(ctx, domain.Message{
+	message := domain.Message{
 		ID:        domain.NewID(),
 		SessionID: sess.ID,
 		TopicID:   topicID(topic),
@@ -297,7 +308,13 @@ func (m *SessionManager) storeApplicantAnswer(ctx context.Context, sess domain.S
 		Content:   content,
 		Entry:     entry,
 		CreatedAt: time.Now().UTC().Truncate(time.Microsecond),
-	}); err != nil {
+	}
+	if audioUploadID != "" {
+		err = m.store.CreateMessageWithAudioUpload(ctx, message, audioUploadID)
+	} else {
+		err = m.store.CreateMessage(ctx, message)
+	}
+	if err != nil {
 		return domain.Message{}, nil, err
 	}
 

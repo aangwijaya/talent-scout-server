@@ -660,6 +660,58 @@ func (p *Postgres) CreateMessage(ctx context.Context, message domain.Message) er
 	return mapError(err)
 }
 
+// CreateMessageWithAudioUpload inserts a spoken answer and attaches its upload
+// in one transaction. The upload row is locked while it is checked and attached,
+// so two concurrent sends of the same upload cannot both succeed.
+func (p *Postgres) CreateMessageWithAudioUpload(ctx context.Context, message domain.Message, audioUploadID string) error {
+	if message.CreatedAt.IsZero() {
+		message.CreatedAt = time.Now().UTC()
+	}
+	var entry any
+	if message.Entry != nil {
+		encoded, err := json.Marshal(message.Entry)
+		if err != nil {
+			return fmt.Errorf("marshal message entry: %w", err)
+		}
+		entry = string(encoded)
+	}
+
+	tx, err := p.pool.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(ctx)
+
+	var (
+		sessionID string
+		messageID *string
+		counted   bool
+	)
+	if err := tx.QueryRow(ctx, `
+		SELECT session_id, message_id, counted FROM audio_uploads
+		WHERE id = $1 FOR UPDATE`, audioUploadID).Scan(&sessionID, &messageID, &counted); err != nil {
+		return mapError(err)
+	}
+	if sessionID != message.SessionID || !counted {
+		return ErrNotFound
+	}
+	if messageID != nil {
+		return ErrConflict
+	}
+
+	if _, err := tx.Exec(ctx, `
+		INSERT INTO messages (id, session_id, topic_id, role, kind, content, entry, created_at)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
+		message.ID, message.SessionID, message.TopicID, message.Role, message.Kind, message.Content, entry, message.CreatedAt); err != nil {
+		return mapError(err)
+	}
+	if _, err := tx.Exec(ctx, `
+		UPDATE audio_uploads SET message_id = $2 WHERE id = $1`, audioUploadID, message.ID); err != nil {
+		return mapError(err)
+	}
+	return mapError(tx.Commit(ctx))
+}
+
 func (p *Postgres) ListMessagesBySession(ctx context.Context, sessionID string, includeSystem bool) ([]domain.Message, error) {
 	query := `SELECT ` + messageColumns + ` FROM messages WHERE session_id = $1`
 	if !includeSystem {
@@ -692,11 +744,11 @@ func (p *Postgres) CreateAudioUpload(ctx context.Context, upload AudioUpload) er
 		upload.UploadedAt = time.Now().UTC()
 	}
 	_, err := p.pool.Exec(ctx, `
-		INSERT INTO audio_uploads (id, session_id, object_path, content_type, size_bytes, duration_ms, transcript, language, cost_usd, counted, message_id, uploaded_at)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)`,
+		INSERT INTO audio_uploads (id, session_id, object_path, content_type, size_bytes, duration_ms, transcript, language, cost_usd, stored, counted, message_id, uploaded_at)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)`,
 		upload.ID, upload.SessionID, upload.ObjectPath, upload.ContentType,
 		upload.SizeBytes, upload.DurationMS, upload.Transcript, upload.Language, upload.CostUSD,
-		upload.Counted, upload.MessageID, upload.UploadedAt)
+		upload.Stored, upload.Counted, upload.MessageID, upload.UploadedAt)
 	return mapError(err)
 }
 
@@ -742,6 +794,38 @@ func (p *Postgres) AttachAudioUpload(ctx context.Context, id, messageID string) 
 		return ErrConflict
 	}
 	return ErrNotFound
+}
+
+func (p *Postgres) SetAudioUploadStored(ctx context.Context, id string, stored bool) error {
+	tag, err := p.pool.Exec(ctx, `UPDATE audio_uploads SET stored = $2 WHERE id = $1`, id, stored)
+	if err != nil {
+		return mapError(err)
+	}
+	if tag.RowsAffected() == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
+func (p *Postgres) ListAudioUploadsBySession(ctx context.Context, sessionID string) ([]AudioUpload, error) {
+	rows, err := p.pool.Query(ctx, `
+		SELECT `+audioUploadColumns+` FROM audio_uploads
+		WHERE session_id = $1
+		ORDER BY uploaded_at, id`, sessionID)
+	if err != nil {
+		return nil, mapError(err)
+	}
+	defer rows.Close()
+
+	uploads := make([]AudioUpload, 0)
+	for rows.Next() {
+		upload, err := scanAudioUpload(rows)
+		if err != nil {
+			return nil, err
+		}
+		uploads = append(uploads, upload)
+	}
+	return uploads, mapError(rows.Err())
 }
 
 func (p *Postgres) ListAudioUploadsDue(ctx context.Context, sentBefore, unsentBefore time.Time) ([]AudioUpload, error) {
@@ -979,7 +1063,7 @@ const (
 	sessionColumns     = `id, application_id, token_hash, status, expires_at, started_at, ended_at, finish_reason, question_count, voice, recording_consent, created_at`
 	topicColumns       = `id, session_id, position, title, goal, rubric_keys, seed_question, status, follow_up_count`
 	messageColumns     = `id, session_id, topic_id, role, kind, content, entry, created_at`
-	audioUploadColumns = `id, session_id, object_path, content_type, size_bytes, duration_ms, transcript, language, cost_usd::double precision, counted, message_id, uploaded_at, deleted_at`
+	audioUploadColumns = `id, session_id, object_path, content_type, size_bytes, duration_ms, transcript, language, cost_usd::double precision, stored, counted, message_id, uploaded_at, deleted_at`
 	scoreColumns       = `id, application_id, rubric_key, score, rationale, evidence, status, attempts, created_at`
 	graphRunColumns    = `id, session_id, status, started_at, ended_at, total_tokens_in, total_tokens_out, cost_usd::double precision, error`
 	nodeEventColumns   = `id, run_id, seq, node_id, type, attempt, model, tokens_in, tokens_out, duration_ms, payload, created_at`
@@ -1067,7 +1151,7 @@ func scanAudioUpload(row rowScanner) (AudioUpload, error) {
 	var upload AudioUpload
 	if err := row.Scan(&upload.ID, &upload.SessionID, &upload.ObjectPath, &upload.ContentType,
 		&upload.SizeBytes, &upload.DurationMS, &upload.Transcript, &upload.Language, &upload.CostUSD,
-		&upload.Counted, &upload.MessageID, &upload.UploadedAt, &upload.DeletedAt); err != nil {
+		&upload.Stored, &upload.Counted, &upload.MessageID, &upload.UploadedAt, &upload.DeletedAt); err != nil {
 		return AudioUpload{}, err
 	}
 	return upload, nil

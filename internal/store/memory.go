@@ -681,6 +681,23 @@ func (m *Memory) GetAudioUpload(_ context.Context, id string) (AudioUpload, erro
 	return cloneAudioUpload(upload), nil
 }
 
+func (m *Memory) GetAudioUsage(_ context.Context, sessionID string) (AudioUsage, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	var usage AudioUsage
+	for _, upload := range m.audioUploads {
+		if upload.SessionID != sessionID {
+			continue
+		}
+		if upload.Counted {
+			usage.DurationMS += upload.DurationMS
+		}
+		usage.CostUSD += upload.CostUSD
+	}
+	return usage, nil
+}
+
 func (m *Memory) AttachAudioUpload(_ context.Context, id, messageID string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()

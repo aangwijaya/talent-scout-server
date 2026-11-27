@@ -46,6 +46,8 @@ type Config struct {
 	LLMBaseURL             string
 	OpenRouterAPIKey       string
 	ModelsConfigPath       string
+	TranscribeMode         string
+	GroqAPIKey             string
 	EmailMode              string
 	GmailClientID          string
 	GmailClientSecret      string
@@ -62,6 +64,18 @@ type Config struct {
 }
 
 func Load() (Config, error) {
+	llmMode := envOr("LLM_MODE", "openrouter")
+	transcribeMode := os.Getenv("TRANSCRIBE_MODE")
+	if transcribeMode == "" {
+		// CI, the agent environment and the client's integration job only set
+		// LLM_MODE=fake; a live LLM mode needs a real transcriber unless the
+		// caller overrides it.
+		if llmMode == "fake" {
+			transcribeMode = "fake"
+		} else {
+			transcribeMode = "groq"
+		}
+	}
 	cfg := Config{
 		Port:                   envOr("PORT", defaultPort),
 		AppEnv:                 envOr("APP_ENV", "development"),
@@ -76,10 +90,12 @@ func Load() (Config, error) {
 		BFFSharedSecret:        os.Getenv("BFF_SHARED_SECRET"),
 		RecruiterPassword:      os.Getenv("RECRUITER_PASSWORD"),
 		AuthTokenSecret:        os.Getenv("AUTH_TOKEN_SECRET"),
-		LLMMode:                envOr("LLM_MODE", "openrouter"),
+		LLMMode:                llmMode,
 		LLMBaseURL:             envOr("LLM_BASE_URL", defaultLLMBaseURL),
 		OpenRouterAPIKey:       os.Getenv("OPENROUTER_API_KEY"),
 		ModelsConfigPath:       envOr("MODELS_CONFIG_PATH", defaultModelsPath),
+		TranscribeMode:         transcribeMode,
+		GroqAPIKey:             os.Getenv("GROQ_API_KEY"),
 		EmailMode:              envOr("EMAIL_MODE", "log"),
 		GmailClientID:          os.Getenv("GMAIL_CLIENT_ID"),
 		GmailClientSecret:      os.Getenv("GMAIL_CLIENT_SECRET"),
@@ -125,6 +141,14 @@ func (c Config) validate() error {
 	case "openrouter", "fake":
 	default:
 		return fmt.Errorf("LLM_MODE must be openrouter or fake, got %q", c.LLMMode)
+	}
+	switch c.TranscribeMode {
+	case "groq", "fake":
+	default:
+		return fmt.Errorf("TRANSCRIBE_MODE must be groq or fake, got %q", c.TranscribeMode)
+	}
+	if c.TranscribeMode == "groq" && c.GroqAPIKey == "" {
+		return fmt.Errorf("GROQ_API_KEY is required when TRANSCRIBE_MODE=groq")
 	}
 	switch c.EmailMode {
 	case "log", "gmail":

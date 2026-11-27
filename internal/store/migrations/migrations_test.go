@@ -24,6 +24,25 @@ func TestVoiceSnapshotMigrationDefaultsExistingRowsToText(t *testing.T) {
 	}
 }
 
+func TestAudioTranscriptMigrationAddsMetadataAndUsageIndex(t *testing.T) {
+	data, err := migrations.FS.ReadFile("00007_audio_transcript.sql")
+	if err != nil {
+		t.Fatalf("read migration: %v", err)
+	}
+	up := string(data)
+	for _, want := range []string{
+		"ALTER TABLE audio_uploads ADD COLUMN transcript text NOT NULL DEFAULT ''",
+		"ALTER TABLE audio_uploads ADD COLUMN language text NOT NULL DEFAULT ''",
+		"ALTER TABLE audio_uploads ADD COLUMN cost_usd numeric(10, 6) NOT NULL DEFAULT 0",
+		"ALTER TABLE audio_uploads ADD COLUMN counted boolean NOT NULL DEFAULT true",
+		"CREATE INDEX audio_uploads_session_id_idx ON audio_uploads (session_id)",
+	} {
+		if !strings.Contains(up, want) {
+			t.Errorf("migration is missing %q", want)
+		}
+	}
+}
+
 func TestAudioUploadsMigrationEnablesRLS(t *testing.T) {
 	data, err := migrations.FS.ReadFile("00005_audio_uploads.sql")
 	if err != nil {

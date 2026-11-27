@@ -2,6 +2,7 @@ package graph
 
 import (
 	"context"
+	"log/slog"
 	"time"
 	"unicode/utf8"
 
@@ -289,7 +290,7 @@ func (r *Runner) Complete(ctx context.Context, finishReason string, needsManualC
 			FinishReason:     finishReason,
 			TotalTokensIn:    r.totalTokensIn,
 			TotalTokensOut:   r.totalTokensOut,
-			CostUSD:          r.costUSD,
+			CostUSD:          r.costUSD + r.transcriptionCost(ctx),
 			NeedsManualCount: needsManualCount,
 		},
 	})
@@ -323,6 +324,18 @@ func (r *Runner) finishRun(ctx context.Context, status domain.GraphRunStatus, er
 		Error:          errMsg,
 	}
 	return r.store.UpdateGraphRun(ctx, run)
+}
+
+// transcriptionCost keeps upload cost out of r.costUSD: the upload handler
+// stores it on audio_uploads, and the runner only adds it to the emitted
+// run.completed total so a later run update cannot erase it.
+func (r *Runner) transcriptionCost(ctx context.Context) float64 {
+	usage, err := r.store.GetAudioUsage(ctx, r.sessionID)
+	if err != nil {
+		slog.Default().Error("load transcription cost failed", "run_id", r.runID, "session_id", r.sessionID, "error", err)
+		return 0
+	}
+	return usage.CostUSD
 }
 
 // terminalContext detaches a terminal event from a cancelled parent while

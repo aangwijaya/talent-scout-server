@@ -4,10 +4,14 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
+	"log/slog"
+	"mime"
 	"net/http"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 	"unicode/utf8"
 
@@ -20,10 +24,18 @@ import (
 	"github.com/aangwijaya/talent-scout-server/internal/http/middleware"
 	"github.com/aangwijaya/talent-scout-server/internal/session"
 	"github.com/aangwijaya/talent-scout-server/internal/sse"
+	"github.com/aangwijaya/talent-scout-server/internal/storage"
 	"github.com/aangwijaya/talent-scout-server/internal/store"
+	"github.com/aangwijaya/talent-scout-server/internal/transcribe"
 )
 
-const maxAnswerChars = 2000
+const (
+	maxAnswerChars = 2000
+
+	maxAudioUploadBytes = 1 << 20
+	audioUploadLimit    = 60
+	audioUploadWindow   = 10 * time.Minute
+)
 
 type Sessions struct {
 	cfg            config.Config
@@ -31,6 +43,16 @@ type Sessions struct {
 	manager        *graph.SessionManager
 	bus            *graph.Bus
 	messageLimiter *middleware.RateLimiter
+	audioLimiter   *middleware.RateLimiter
+	audioStorage   storage.Storage
+	transcriber    transcribe.Transcriber
+	models         config.ModelsConfig
+	awaiting       func(sessionID string) bool
+
+	// audioLocks serializes the budget read and the row insert for one session,
+	// so two concurrent uploads cannot both pass the check without counting.
+	audioLocksMu sync.Mutex
+	audioLocks   map[string]*sync.Mutex
 }
 
 func NewSessions(cfg config.Config, st store.Store) *Sessions {
@@ -38,7 +60,21 @@ func NewSessions(cfg config.Config, st store.Store) *Sessions {
 		cfg:            cfg,
 		store:          st,
 		messageLimiter: middleware.NewRateLimiter(cfg.MessageRateLimit(), cfg.MessageRateWindow()),
+		audioLimiter:   middleware.NewRateLimiter(audioUploadLimit, audioUploadWindow),
+		audioLocks:     make(map[string]*sync.Mutex),
 	}
+}
+
+// audioLock returns the per-session mutex guarding the audio budget.
+func (h *Sessions) audioLock(sessionID string) *sync.Mutex {
+	h.audioLocksMu.Lock()
+	defer h.audioLocksMu.Unlock()
+	mu, ok := h.audioLocks[sessionID]
+	if !ok {
+		mu = &sync.Mutex{}
+		h.audioLocks[sessionID] = mu
+	}
+	return mu
 }
 
 // SetChat attaches the live graph manager and event bus. Without them the chat
@@ -47,6 +83,23 @@ func NewSessions(cfg config.Config, st store.Store) *Sessions {
 func (h *Sessions) SetChat(manager *graph.SessionManager, bus *graph.Bus) {
 	h.manager = manager
 	h.bus = bus
+	if manager != nil {
+		h.awaiting = manager.Awaiting
+	}
+}
+
+// SetAudio attaches the private audio bucket, speech-to-text client and model
+// price. Without them the audio endpoint cannot accept recordings.
+func (h *Sessions) SetAudio(audioStorage storage.Storage, transcriber transcribe.Transcriber, models config.ModelsConfig) {
+	h.audioStorage = audioStorage
+	h.transcriber = transcriber
+	h.models = models
+}
+
+// SetAwaiting supplies the live check for "the AI finished replying". The
+// router uses the session manager; tests can supply a deterministic stub.
+func (h *Sessions) SetAwaiting(fn func(sessionID string) bool) {
+	h.awaiting = fn
 }
 
 type currentTopic struct {
@@ -151,6 +204,192 @@ func (h *Sessions) Start(w http.ResponseWriter, r *http.Request) {
 	apierror.JSON(w, http.StatusOK, detail)
 }
 
+type audioUploadResponse struct {
+	AudioID    string `json:"audio_id"`
+	Transcript string `json:"transcript"`
+	Language   string `json:"language"`
+	DurationMS int    `json:"duration_ms"`
+	Stored     bool   `json:"stored"`
+}
+
+// UploadAudio transcribes one spoken answer and stores the recording. It does
+// not send the answer; the client sends the returned audio_id with POST
+// /sessions/{token}/messages (S-V4).
+func (h *Sessions) UploadAudio(w http.ResponseWriter, r *http.Request) {
+	sess, ok := h.resolve(w, r, chi.URLParam(r, "token"))
+	if !ok {
+		return
+	}
+	if !sess.Voice || sess.RecordingConsent == nil || !*sess.RecordingConsent {
+		apierror.Write(w, http.StatusConflict, apierror.CodeInvalidState, "the session is not recording answers", nil)
+		return
+	}
+	if !h.requireActive(w, sess) {
+		return
+	}
+	if h.awaiting == nil || !h.awaiting(sess.ID) {
+		apierror.Write(w, http.StatusConflict, apierror.CodeInvalidState, "the assistant is still replying", nil)
+		return
+	}
+	if h.transcriber == nil || h.audioStorage == nil {
+		apierror.Write(w, http.StatusInternalServerError, apierror.CodeInternalError, "audio transcription is unavailable", nil)
+		return
+	}
+	if ok, retryAfter := h.audioLimiter.AllowWithRetry(sess.ID); !ok {
+		apierror.WriteRateLimited(w, retryAfter)
+		return
+	}
+
+	r.Body = http.MaxBytesReader(w, r.Body, maxAudioUploadBytes+64<<10)
+	if err := r.ParseMultipartForm(maxAudioUploadBytes + 64<<10); err != nil {
+		var maxErr *http.MaxBytesError
+		if errors.As(err, &maxErr) {
+			apierror.Write(w, http.StatusRequestEntityTooLarge, apierror.CodeFileTooLarge, "audio exceeds 1 MB", nil)
+			return
+		}
+		apierror.Write(w, http.StatusBadRequest, apierror.CodeValidationFailed, "invalid multipart body", nil)
+		return
+	}
+	file, header, err := r.FormFile("audio")
+	if err != nil {
+		apierror.Write(w, http.StatusBadRequest, apierror.CodeValidationFailed, "audio field is required", map[string]string{"field": "audio"})
+		return
+	}
+	defer file.Close()
+
+	audio, err := io.ReadAll(io.LimitReader(file, maxAudioUploadBytes+1))
+	if err != nil {
+		apierror.Write(w, http.StatusBadRequest, apierror.CodeValidationFailed, "could not read the audio", nil)
+		return
+	}
+	if len(audio) > maxAudioUploadBytes {
+		apierror.Write(w, http.StatusRequestEntityTooLarge, apierror.CodeFileTooLarge, "audio exceeds 1 MB", nil)
+		return
+	}
+	if len(audio) == 0 {
+		apierror.Write(w, http.StatusBadRequest, apierror.CodeValidationFailed, "audio is empty", map[string]string{"field": "audio"})
+		return
+	}
+	mediaType, _, err := mime.ParseMediaType(header.Header.Get("Content-Type"))
+	if err != nil || !allowedAudioType(mediaType) {
+		apierror.Write(w, http.StatusBadRequest, apierror.CodeValidationFailed, "audio must be audio/webm, audio/ogg or audio/mp4", map[string]string{"field": "audio"})
+		return
+	}
+
+	result, err := h.transcriber.Transcribe(r.Context(), audio, mediaType)
+	if err != nil {
+		slog.Default().Error("transcription failed", "session_id", sess.ID, "error", err)
+		apierror.Write(w, http.StatusBadGateway, apierror.CodeTranscriptionUnavailable, "transcription is temporarily unavailable", nil)
+		return
+	}
+	transcript := strings.TrimSpace(result.Transcript)
+	if transcript == "" {
+		h.recordRejectedAudio(r.Context(), sess.ID, mediaType, len(audio), result)
+		apierror.Write(w, http.StatusUnprocessableEntity, apierror.CodeNoSpeech, "no speech was detected", nil)
+		return
+	}
+	if result.DurationMS > voiceMaxAnswerSeconds*1000 {
+		h.recordRejectedAudio(r.Context(), sess.ID, mediaType, len(audio), result)
+		apierror.Write(w, http.StatusBadRequest, apierror.CodeValidationFailed, "the recording is longer than the per-answer limit", map[string]string{"field": "audio"})
+		return
+	}
+
+	audioID := domain.NewID()
+	objectPath := fmt.Sprintf("sessions/%s/%s.%s", sess.ID, audioID, audioObjectExtension(mediaType))
+	upload := store.AudioUpload{
+		ID:          audioID,
+		SessionID:   sess.ID,
+		ObjectPath:  objectPath,
+		ContentType: mediaType,
+		SizeBytes:   len(audio),
+		DurationMS:  result.DurationMS,
+		Transcript:  transcript,
+		Language:    result.Language,
+		CostUSD:     h.models.TranscriptionCostUSD(result.DurationMS),
+		Counted:     true,
+		UploadedAt:  time.Now().UTC(),
+	}
+
+	// The recording took time to transcribe; serialize the budget read and the
+	// counted insert so two uploads cannot both spend the same remaining audio.
+	lock := h.audioLock(sess.ID)
+	lock.Lock()
+	usage, err := h.store.GetAudioUsage(r.Context(), sess.ID)
+	if err != nil {
+		lock.Unlock()
+		apierror.Write(w, http.StatusInternalServerError, apierror.CodeInternalError, "could not load the audio budget", nil)
+		return
+	}
+	if usage.DurationMS+result.DurationMS > voiceMaxTotalSeconds*1000 {
+		h.recordRejectedAudio(r.Context(), sess.ID, mediaType, len(audio), result)
+		lock.Unlock()
+		apierror.Write(w, http.StatusConflict, apierror.CodeAudioBudgetExceeded, "the session audio budget is exhausted", nil)
+		return
+	}
+	if err := h.store.CreateAudioUpload(r.Context(), upload); err != nil {
+		lock.Unlock()
+		apierror.Write(w, http.StatusInternalServerError, apierror.CodeInternalError, "could not store the audio", nil)
+		return
+	}
+	lock.Unlock()
+
+	stored := true
+	if err := h.audioStorage.Upload(r.Context(), objectPath, audio, mediaType); err != nil {
+		stored = false
+	}
+
+	apierror.JSON(w, http.StatusOK, audioUploadResponse{
+		AudioID:    audioID,
+		Transcript: transcript,
+		Language:   result.Language,
+		DurationMS: result.DurationMS,
+		Stored:     stored,
+	})
+}
+
+// recordRejectedAudio keeps the cost of a transcription the provider billed but
+// the session cannot use. The row has no stored object and Counted=false, so it
+// raises the run's cost without consuming the audio budget.
+func (h *Sessions) recordRejectedAudio(ctx context.Context, sessionID, mediaType string, size int, result transcribe.Result) {
+	id := domain.NewID()
+	upload := store.AudioUpload{
+		ID:          id,
+		SessionID:   sessionID,
+		ObjectPath:  fmt.Sprintf("sessions/%s/rejected-%s.%s", sessionID, id, audioObjectExtension(mediaType)),
+		ContentType: mediaType,
+		SizeBytes:   size,
+		DurationMS:  result.DurationMS,
+		Transcript:  strings.TrimSpace(result.Transcript),
+		Language:    result.Language,
+		CostUSD:     h.models.TranscriptionCostUSD(result.DurationMS),
+		Counted:     false,
+		UploadedAt:  time.Now().UTC(),
+	}
+	if err := h.store.CreateAudioUpload(ctx, upload); err != nil {
+		slog.Default().Error("store rejected audio upload failed", "session_id", sessionID, "error", err)
+	}
+}
+
+func allowedAudioType(mediaType string) bool {
+	switch mediaType {
+	case "audio/webm", "audio/ogg", "audio/mp4":
+		return true
+	default:
+		return false
+	}
+}
+
+func audioObjectExtension(mediaType string) string {
+	switch mediaType {
+	case "audio/ogg":
+		return "ogg"
+	case "audio/mp4":
+		return "mp4"
+	default:
+		return "webm"
+	}
+}
+
 // resolve looks up the session by token and writes the appropriate lifecycle
 // error (404/410) when it is unknown, revoked, expired, or completed. It
 // returns ok=false when a response was written.
@@ -205,10 +444,14 @@ func (h *Sessions) buildDetail(ctx context.Context, sess domain.Session) (sessio
 		MaxQuestions:  h.cfg.SessionMaxQuestions,
 	}
 	if sess.Voice {
+		usage, err := h.store.GetAudioUsage(ctx, sess.ID)
+		if err != nil {
+			return sessionDetail{}, err
+		}
 		detail.Voice = &voiceSession{
 			MaxAnswerSeconds: voiceMaxAnswerSeconds,
 			MaxTotalSeconds:  voiceMaxTotalSeconds,
-			UsedSeconds:      0,
+			UsedSeconds:      (usage.DurationMS + 999) / 1000,
 			RecordingConsent: sess.RecordingConsent,
 		}
 	}

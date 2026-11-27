@@ -22,6 +22,7 @@ import (
 	"github.com/aangwijaya/talent-scout-server/internal/session"
 	"github.com/aangwijaya/talent-scout-server/internal/storage"
 	"github.com/aangwijaya/talent-scout-server/internal/store"
+	"github.com/aangwijaya/talent-scout-server/internal/transcribe"
 )
 
 func main() {
@@ -61,6 +62,11 @@ func main() {
 		logger.Error("build llm client", "error", err)
 		os.Exit(1)
 	}
+	transcriber, err := newTranscriber(cfg, models)
+	if err != nil {
+		logger.Error("build transcriber", "error", err)
+		os.Exit(1)
+	}
 	registry := session.NewRegistry()
 	cvStorage := storage.NewSupabase(cfg.SupabaseURL, cfg.SupabaseStorageBucket, cfg.SupabaseServiceRoleKey)
 	audioStorage := storage.NewSupabase(cfg.SupabaseURL, cfg.SupabaseAudioBucket, cfg.SupabaseServiceRoleKey)
@@ -68,14 +74,16 @@ func main() {
 	server := &http.Server{
 		Addr: ":" + cfg.Port,
 		Handler: httpapi.NewRouter(cfg, httpapi.Deps{
-			DB:        db,
-			Store:     st,
-			Storage:   cvStorage,
-			Extractor: cv.NewPDF(),
-			Mailer:    mailer,
-			LLM:       client,
-			Models:    models,
-			Registry:  registry,
+			DB:           db,
+			Store:        st,
+			Storage:      cvStorage,
+			AudioStorage: audioStorage,
+			Transcriber:  transcriber,
+			Extractor:    cv.NewPDF(),
+			Mailer:       mailer,
+			LLM:          client,
+			Models:       models,
+			Registry:     registry,
 		}),
 		ReadHeaderTimeout: 5 * time.Second,
 	}
@@ -161,6 +169,18 @@ func newLLMClient(cfg config.Config) (llm.Client, error) {
 		return llm.NewFake(graph.FakeReplies), nil
 	}
 	return llm.New(cfg.LLMMode, cfg.LLMBaseURL, cfg.OpenRouterAPIKey)
+}
+
+// newTranscriber builds the speech-to-text client. TRANSCRIBE_MODE=fake needs
+// no key and is what LLM_MODE=fake chooses by default.
+func newTranscriber(cfg config.Config, models config.ModelsConfig) (transcribe.Transcriber, error) {
+	if cfg.TranscribeMode == "fake" {
+		return transcribe.NewFake(), nil
+	}
+	if models.Transcriber.Model == "" {
+		return nil, fmt.Errorf("config/models.yaml has no transcriber.model")
+	}
+	return transcribe.NewGroq("", cfg.GroqAPIKey, models.Transcriber.Model, nil), nil
 }
 
 func newMailer(cfg config.Config, logger *slog.Logger) email.Mailer {

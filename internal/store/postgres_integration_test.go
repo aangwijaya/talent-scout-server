@@ -489,6 +489,10 @@ func testPostgresAudioUploads(ctx context.Context, t *testing.T, s *store.Postgr
 			ContentType: "audio/webm",
 			SizeBytes:   1024,
 			DurationMS:  3000,
+			Transcript:  "a spoken answer",
+			Language:    "en",
+			CostUSD:     0.0001,
+			Counted:     true,
 			UploadedAt:  uploadedAt,
 		}
 		if sent {
@@ -501,10 +505,39 @@ func testPostgresAudioUploads(ctx context.Context, t *testing.T, s *store.Postgr
 	unsentOld := upload(now.Add(-25*time.Hour), false)
 	unsentNew := upload(now.Add(-23*time.Hour), false)
 	deleted := upload(now.Add(-40*24*time.Hour), false)
+	rejected := upload(now, false)
+	rejected.ID = domain.NewID()
+	rejected.ObjectPath = ""
+	rejected.DurationMS = 9000
+	rejected.CostUSD = 0.0002
+	rejected.Counted = false
 	for _, u := range []store.AudioUpload{sentOld, sentNew, unsentOld, unsentNew, deleted} {
 		if err := s.CreateAudioUpload(ctx, u); err != nil {
 			t.Fatalf("CreateAudioUpload: %v", err)
 		}
+	}
+	if err := s.CreateAudioUpload(ctx, rejected); err != nil {
+		t.Fatalf("CreateAudioUpload(rejected): %v", err)
+	}
+
+	// The new metadata round-trips, including counted=false for a rejected
+	// transcription that is billed but does not consume the budget.
+	stored, err := s.GetAudioUpload(ctx, rejected.ID)
+	if err != nil {
+		t.Fatalf("GetAudioUpload(rejected): %v", err)
+	}
+	if stored.Transcript != rejected.Transcript || stored.Language != "en" || stored.CostUSD != rejected.CostUSD || stored.Counted {
+		t.Fatalf("rejected upload = %+v, want transcript/language/cost/counted=false", stored)
+	}
+	usage, err := s.GetAudioUsage(ctx, sessionID)
+	if err != nil {
+		t.Fatalf("GetAudioUsage: %v", err)
+	}
+	if usage.DurationMS != 5*3000 {
+		t.Fatalf("usage duration = %d, want only the five counted uploads (15000ms)", usage.DurationMS)
+	}
+	if want := 5*0.0001 + 0.0002; usage.CostUSD < want-1e-12 || usage.CostUSD > want+1e-12 {
+		t.Fatalf("usage cost = %v, want every upload's cost (%v)", usage.CostUSD, want)
 	}
 	// Insert never stores deleted_at; only the sweeper's mark sets it.
 	if err := s.MarkAudioUploadDeleted(ctx, deleted.ID, now.Add(-time.Hour)); err != nil {

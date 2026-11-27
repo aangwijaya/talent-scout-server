@@ -492,6 +492,7 @@ func testPostgresAudioUploads(ctx context.Context, t *testing.T, s *store.Postgr
 			Transcript:  "a spoken answer",
 			Language:    "en",
 			CostUSD:     0.0001,
+			Stored:      true,
 			Counted:     true,
 			UploadedAt:  uploadedAt,
 		}
@@ -521,13 +522,26 @@ func testPostgresAudioUploads(ctx context.Context, t *testing.T, s *store.Postgr
 	}
 
 	// The new metadata round-trips, including counted=false for a rejected
-	// transcription that is billed but does not consume the budget.
+	// transcription that is billed but does not consume the budget, and the
+	// stored flag that tells a not_stored recording apart from a deleted one.
 	stored, err := s.GetAudioUpload(ctx, rejected.ID)
 	if err != nil {
 		t.Fatalf("GetAudioUpload(rejected): %v", err)
 	}
 	if stored.Transcript != rejected.Transcript || stored.Language != "en" || stored.CostUSD != rejected.CostUSD || stored.Counted {
 		t.Fatalf("rejected upload = %+v, want transcript/language/cost/counted=false", stored)
+	}
+	if stored.Stored {
+		t.Fatal("rejected upload stored = true, want false")
+	}
+	if err := s.SetAudioUploadStored(ctx, rejected.ID, true); err != nil {
+		t.Fatalf("SetAudioUploadStored: %v", err)
+	}
+	if got, err := s.GetAudioUpload(ctx, rejected.ID); err != nil || !got.Stored {
+		t.Fatalf("stored flag = %v, %v; want true after SetAudioUploadStored", got.Stored, err)
+	}
+	if err := s.SetAudioUploadStored(ctx, domain.NewID(), true); !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("SetAudioUploadStored unknown = %v, want ErrNotFound", err)
 	}
 	usage, err := s.GetAudioUsage(ctx, sessionID)
 	if err != nil {
@@ -581,5 +595,61 @@ func testPostgresAudioUploads(ctx context.Context, t *testing.T, s *store.Postgr
 	}
 	if err := s.AttachAudioUpload(ctx, domain.NewID(), messageID); !errors.Is(err, store.ErrNotFound) {
 		t.Fatalf("unknown AttachAudioUpload = %v, want ErrNotFound", err)
+	}
+
+	// A spoken answer inserts the message and attaches the upload in one
+	// transaction; a second send of the same upload cannot also succeed.
+	spokenUpload := upload(now, false)
+	spokenUpload.ID = domain.NewID()
+	spokenUpload.ObjectPath = "sessions/" + sessionID + "/" + spokenUpload.ID + ".webm"
+	if err := s.CreateAudioUpload(ctx, spokenUpload); err != nil {
+		t.Fatalf("CreateAudioUpload(spoken): %v", err)
+	}
+	spoken := domain.Message{
+		ID:        domain.NewID(),
+		SessionID: sessionID,
+		Role:      domain.MessageRoleApplicant,
+		Kind:      domain.MessageKindAnswer,
+		Content:   spokenUpload.Transcript,
+		Entry:     &domain.MessageEntry{Mode: "spoken", SpeakingMS: 3000},
+	}
+	if err := s.CreateMessageWithAudioUpload(ctx, spoken, spokenUpload.ID); err != nil {
+		t.Fatalf("CreateMessageWithAudioUpload: %v", err)
+	}
+	if got, err := s.GetAudioUpload(ctx, spokenUpload.ID); err != nil || got.MessageID == nil || *got.MessageID != spoken.ID {
+		t.Fatalf("spoken upload = %+v, %v; want attached to %s", got, err, spoken.ID)
+	}
+	second := spoken
+	second.ID = domain.NewID()
+	if err := s.CreateMessageWithAudioUpload(ctx, second, spokenUpload.ID); !errors.Is(err, store.ErrConflict) {
+		t.Fatalf("second CreateMessageWithAudioUpload = %v, want ErrConflict", err)
+	}
+	if _, err := s.ListMessagesBySession(ctx, sessionID, false); err != nil {
+		t.Fatalf("ListMessagesBySession after attach: %v", err)
+	}
+
+	// The upload join used by the recruiter detail can read a session's uploads.
+	sessionUploads, err := s.ListAudioUploadsBySession(ctx, sessionID)
+	if err != nil {
+		t.Fatalf("ListAudioUploadsBySession: %v", err)
+	}
+	var found bool
+	for _, u := range sessionUploads {
+		if u.ID == spokenUpload.ID {
+			found = true
+			if !u.Stored || u.DurationMS != spokenUpload.DurationMS || u.Language != spokenUpload.Language {
+				t.Fatalf("joined upload = %+v, want stored metadata", u)
+			}
+		}
+	}
+	if !found {
+		t.Fatalf("ListAudioUploadsBySession did not return the attached upload")
+	}
+
+	// A rejected upload cannot be attached by the send transaction.
+	rejectedMessage := spoken
+	rejectedMessage.ID = domain.NewID()
+	if err := s.CreateMessageWithAudioUpload(ctx, rejectedMessage, rejected.ID); !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("CreateMessageWithAudioUpload(rejected) = %v, want ErrNotFound", err)
 	}
 }

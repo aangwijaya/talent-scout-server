@@ -334,3 +334,49 @@ func TestAuthenticityFailureClearsAnEarlierAssessment(t *testing.T) {
 		t.Errorf("authenticity = %+v, want null: the earlier assessment must be cleared", app.Authenticity)
 	}
 }
+
+// A spoken answer is judged on its speech signals, not paste/typing counters.
+// Typed answers in a voice session also carry their fallback reason.
+func TestAuthenticityPromptUsesSpokenSignalsAndFallbackReasons(t *testing.T) {
+	entries := []*domain.MessageEntry{
+		{
+			Mode: domain.MessageEntryModeSpoken, PastedChars: 777, TypedChars: 0, DurationMS: 1000,
+			SpeakingMS: 17500, StartLatencyMS: 900, RerecordCount: 2,
+		},
+		{
+			Mode: domain.MessageEntryModeTyped, FallbackReason: domain.MessageEntryFallbackChoseText,
+			PastedChars: 0, TypedChars: 80, DurationMS: 4000,
+		},
+		{
+			Mode: domain.MessageEntryModeTyped, FallbackReason: domain.MessageEntryFallbackMicrophoneUnavailable,
+			PastedChars: 10, TypedChars: 60, DurationMS: 3000,
+		},
+	}
+	answers := []string{
+		"I moved the state into a separate store so each page stayed small.",
+		"Props were crossing four layers, so we changed the boundary.",
+		"I optimized rendering by memoizing the list rows.",
+	}
+	scenario := runAuthenticityScenario(t, answers, entries, FakeReplies["authenticity"], nil)
+
+	var input string
+	for _, call := range scenario.client.Calls() {
+		if call.Node == "authenticity" {
+			input = call.Messages[len(call.Messages)-1].Content
+		}
+	}
+	if input == "" {
+		t.Fatal("authenticity node made no LLM call")
+	}
+	for _, want := range []string{
+		"mode: spoken", "speaking_ms: 17500", "start_latency_ms: 900", "rerecord_count: 2",
+		"fallback_reason: chose_text", "fallback_reason: microphone_unavailable",
+	} {
+		if !strings.Contains(input, want) {
+			t.Errorf("authenticity input lacks %q:\n%s", want, input)
+		}
+	}
+	if strings.Contains(input, "pasted_chars: 777") {
+		t.Errorf("authenticity input reports a spoken answer's paste counters:\n%s", input)
+	}
+}

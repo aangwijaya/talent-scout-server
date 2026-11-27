@@ -858,3 +858,102 @@ func TestApplicationDetailReturnsEntryAndAuthenticity(t *testing.T) {
 		t.Errorf("messages = %+v, want both roles", got.Messages)
 	}
 }
+
+// The recruiter's application detail carries the recording metadata for spoken
+// answers: available, deleted after retention, or not_stored when storage failed.
+// Typed and interviewer messages carry a null audio. The applicant's own
+// transcript carries neither entry nor audio.
+func TestApplicationDetailReturnsAudioStatusPerMessage(t *testing.T) {
+	f := newApplicationsFixture(t, "log")
+	validator := conformance.New(t)
+	ctx := context.Background()
+
+	app := f.seedApplication(t, "audio-status@example.com", domain.ApplicationStatusReview)
+	sess, raw := f.seedSession(t, app, domain.SessionStatusActive)
+
+	assistant := domain.Message{ID: domain.NewID(), SessionID: sess.ID, Role: domain.MessageRoleAssistant, Kind: domain.MessageKindQuestion, Content: "How did you record?"}
+	available := domain.Message{ID: domain.NewID(), SessionID: sess.ID, Role: domain.MessageRoleApplicant, Kind: domain.MessageKindAnswer, Content: "available answer",
+		Entry: &domain.MessageEntry{Mode: domain.MessageEntryModeSpoken, SpeakingMS: 17500}}
+	deleted := domain.Message{ID: domain.NewID(), SessionID: sess.ID, Role: domain.MessageRoleApplicant, Kind: domain.MessageKindAnswer, Content: "deleted answer",
+		Entry: &domain.MessageEntry{Mode: domain.MessageEntryModeSpoken, SpeakingMS: 12000}}
+	notStored := domain.Message{ID: domain.NewID(), SessionID: sess.ID, Role: domain.MessageRoleApplicant, Kind: domain.MessageKindAnswer, Content: "not stored answer",
+		Entry: &domain.MessageEntry{Mode: domain.MessageEntryModeSpoken, SpeakingMS: 9000}}
+	typed := domain.Message{ID: domain.NewID(), SessionID: sess.ID, Role: domain.MessageRoleApplicant, Kind: domain.MessageKindAnswer, Content: "typed answer",
+		Entry: &domain.MessageEntry{Mode: domain.MessageEntryModeTyped, FallbackReason: domain.MessageEntryFallbackChoseText}}
+	for _, message := range []domain.Message{assistant, available, deleted, notStored, typed} {
+		if err := f.store.CreateMessage(ctx, message); err != nil {
+			t.Fatalf("CreateMessage: %v", err)
+		}
+	}
+
+	deletedAt := time.Now().UTC().Add(-time.Hour)
+	uploads := []store.AudioUpload{
+		{ID: domain.NewID(), SessionID: sess.ID, ObjectPath: "a.webm", ContentType: "audio/webm", DurationMS: 18000, Transcript: available.Content, Language: "en", Stored: true, Counted: true, MessageID: &available.ID},
+		{ID: domain.NewID(), SessionID: sess.ID, ObjectPath: "b.webm", ContentType: "audio/webm", DurationMS: 12000, Transcript: deleted.Content, Language: "en", Stored: true, Counted: true, MessageID: &deleted.ID, DeletedAt: &deletedAt},
+		{ID: domain.NewID(), SessionID: sess.ID, ObjectPath: "c.webm", ContentType: "audio/webm", DurationMS: 9000, Transcript: notStored.Content, Language: "en", Stored: false, Counted: true, MessageID: &notStored.ID},
+	}
+	for _, upload := range uploads {
+		if err := f.store.CreateAudioUpload(ctx, upload); err != nil {
+			t.Fatalf("CreateAudioUpload: %v", err)
+		}
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/applications/"+app.ID, nil)
+	req.Header.Set("Authorization", "Bearer "+f.token)
+	rec := httptest.NewRecorder()
+	f.router.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200 (body: %s)", rec.Code, rec.Body.String())
+	}
+	validator.ValidateResponse(t, req, rec.Result())
+
+	var got struct {
+		Messages []struct {
+			ID    string `json:"id"`
+			Role  string `json:"role"`
+			Audio *struct {
+				DurationMS int    `json:"duration_ms"`
+				Language   string `json:"language"`
+				Status     string `json:"status"`
+			} `json:"audio"`
+		} `json:"messages"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	want := map[string]string{
+		available.ID: "available",
+		deleted.ID:   "deleted",
+		notStored.ID: "not_stored",
+	}
+	for _, message := range got.Messages {
+		status, spoken := want[message.ID]
+		switch {
+		case spoken:
+			if message.Audio == nil {
+				t.Errorf("message %s audio = null, want %s", message.ID, status)
+				continue
+			}
+			if message.Audio.Status != status || message.Audio.Language != "en" {
+				t.Errorf("message %s audio = %+v, want status %s and language en", message.ID, message.Audio, status)
+			}
+		default:
+			if message.Audio != nil {
+				t.Errorf("message %s (%s) audio = %+v, want null", message.ID, message.Role, message.Audio)
+			}
+		}
+	}
+
+	// The applicant's transcript never exposes the recruiter-only entry or audio.
+	req = httptest.NewRequest(http.MethodGet, "/api/v1/sessions/"+raw+"/messages", nil)
+	rec = httptest.NewRecorder()
+	f.router.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("session messages status = %d, want 200 (body: %s)", rec.Code, rec.Body.String())
+	}
+	for _, field := range []string{`"entry"`, `"audio"`} {
+		if strings.Contains(rec.Body.String(), field) {
+			t.Errorf("applicant transcript exposes %s:\n%s", field, rec.Body.String())
+		}
+	}
+}

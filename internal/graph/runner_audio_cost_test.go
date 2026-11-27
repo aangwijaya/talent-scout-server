@@ -1,7 +1,12 @@
 package graph
 
 import (
+	"bytes"
+	"context"
 	"encoding/json"
+	"errors"
+	"log/slog"
+	"strings"
 	"testing"
 	"time"
 
@@ -47,5 +52,30 @@ func TestRunCompletedCostIncludesTranscription(t *testing.T) {
 	}
 	if completed.CostUSD != 0.002 {
 		t.Errorf("run.completed cost_usd = %v, want 0.002", completed.CostUSD)
+	}
+}
+
+type failingAudioUsageStore struct {
+	store.Store
+}
+
+func (s failingAudioUsageStore) GetAudioUsage(context.Context, string) (store.AudioUsage, error) {
+	return store.AudioUsage{}, errors.New("database is down")
+}
+
+func TestTranscriptionCostFailureIsLoggedAndDoesNotFailCompletion(t *testing.T) {
+	base := store.NewMemory()
+	runner := NewRunner(failingAudioUsageStore{Store: base}, NewBus(base), nil, testModels(), "run-1", "session-1")
+
+	var logs bytes.Buffer
+	previous := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&logs, nil)))
+	defer slog.SetDefault(previous)
+
+	if got := runner.transcriptionCost(context.Background()); got != 0 {
+		t.Errorf("transcriptionCost = %v, want 0 when the store fails", got)
+	}
+	if !strings.Contains(logs.String(), "load transcription cost failed") {
+		t.Errorf("log = %q, want the database error logged", logs.String())
 	}
 }

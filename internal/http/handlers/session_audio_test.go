@@ -4,11 +4,13 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"log/slog"
 	"math"
 	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
 	"net/textproto"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -331,6 +333,25 @@ func TestUploadAudioProviderFailureStoresNothing(t *testing.T) {
 	}
 	if used := usedSeconds(t, f); used != 0 {
 		t.Errorf("used_seconds = %d, want 0", used)
+	}
+}
+
+func TestUploadAudioProviderFailureLogsTheProviderError(t *testing.T) {
+	f := newAudioFixture(t, true, domain.SessionStatusActive, boolPtr(true), true)
+	f.fake.SetErr(transcribe.ErrUnavailable)
+
+	var logs strings.Builder
+	previous := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&logs, nil)))
+	defer slog.SetDefault(previous)
+
+	rec := httptest.NewRecorder()
+	f.handler.UploadAudio(rec, audioRequest(t, f.raw, []byte("audio"), "audio/mp4"))
+	if rec.Code != http.StatusBadGateway {
+		t.Fatalf("status = %d, want 502", rec.Code)
+	}
+	if !strings.Contains(logs.String(), "transcription failed") {
+		t.Errorf("log = %q, want the provider error logged on the 502 path", logs.String())
 	}
 }
 

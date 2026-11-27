@@ -630,6 +630,31 @@ func (m *Memory) CreateMessage(_ context.Context, message domain.Message) error 
 	return nil
 }
 
+// CreateMessageWithAudioUpload inserts a spoken answer and attaches its upload
+// under one lock, so two sends of one upload cannot both succeed.
+func (m *Memory) CreateMessageWithAudioUpload(_ context.Context, message domain.Message, audioUploadID string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	if _, ok := m.messages[message.ID]; ok {
+		return ErrConflict
+	}
+	upload, ok := m.audioUploads[audioUploadID]
+	if !ok || upload.SessionID != message.SessionID || !upload.Counted {
+		return ErrNotFound
+	}
+	if upload.MessageID != nil {
+		return ErrConflict
+	}
+	if message.CreatedAt.IsZero() {
+		message.CreatedAt = time.Now().UTC()
+	}
+	m.messages[message.ID] = cloneMessage(message)
+	upload.MessageID = &message.ID
+	m.audioUploads[audioUploadID] = upload
+	return nil
+}
+
 func (m *Memory) ListMessagesBySession(_ context.Context, sessionID string, includeSystem bool) ([]domain.Message, error) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
@@ -712,6 +737,38 @@ func (m *Memory) AttachAudioUpload(_ context.Context, id, messageID string) erro
 	upload.MessageID = &messageID
 	m.audioUploads[id] = upload
 	return nil
+}
+
+func (m *Memory) SetAudioUploadStored(_ context.Context, id string, stored bool) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	upload, ok := m.audioUploads[id]
+	if !ok {
+		return ErrNotFound
+	}
+	upload.Stored = stored
+	m.audioUploads[id] = upload
+	return nil
+}
+
+func (m *Memory) ListAudioUploadsBySession(_ context.Context, sessionID string) ([]AudioUpload, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	uploads := make([]AudioUpload, 0)
+	for _, upload := range m.audioUploads {
+		if upload.SessionID == sessionID {
+			uploads = append(uploads, cloneAudioUpload(upload))
+		}
+	}
+	sort.Slice(uploads, func(i, j int) bool {
+		if uploads[i].UploadedAt.Equal(uploads[j].UploadedAt) {
+			return uploads[i].ID < uploads[j].ID
+		}
+		return uploads[i].UploadedAt.Before(uploads[j].UploadedAt)
+	})
+	return uploads, nil
 }
 
 func (m *Memory) ListAudioUploadsDue(_ context.Context, sentBefore, unsentBefore time.Time) ([]AudioUpload, error) {

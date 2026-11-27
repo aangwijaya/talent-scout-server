@@ -60,6 +60,16 @@ func authenticityUser(messages []domain.Message) string {
 			continue
 		}
 		total := message.Entry.PastedChars + message.Entry.TypedChars
+		if message.Entry.Mode == domain.MessageEntryModeSpoken {
+			fmt.Fprintf(&b, "mode: spoken\nspeaking_ms: %d\nstart_latency_ms: %d\nrerecord_count: %d",
+				message.Entry.SpeakingMS, message.Entry.StartLatencyMS, message.Entry.RerecordCount)
+			b.WriteString("\n")
+			continue
+		}
+		mode := message.Entry.Mode
+		if mode == "" {
+			mode = domain.MessageEntryModeTyped
+		}
 		ratio := 0.0
 		if total > 0 {
 			ratio = float64(message.Entry.PastedChars) / float64(total)
@@ -68,10 +78,14 @@ func authenticityUser(messages []domain.Message) string {
 		if message.Entry.DurationMS > 0 {
 			charsPerSecond = float64(message.Entry.TypedChars) / (float64(message.Entry.DurationMS) / 1000)
 		}
-		b.WriteString(prompts.WrapUntrusted("entry_signals", fmt.Sprintf(
-			"pasted_chars: %d\ntyped_chars: %d\nduration_ms: %d\ntotal_chars: %d\npaste_ratio: %.2f\nchars_per_second: %.2f",
-			message.Entry.PastedChars, message.Entry.TypedChars, message.Entry.DurationMS, total,
-			math.Round(ratio*100)/100, math.Round(charsPerSecond*100)/100)))
+		signals := fmt.Sprintf(
+			"mode: %s\npasted_chars: %d\ntyped_chars: %d\nduration_ms: %d\ntotal_chars: %d\npaste_ratio: %.2f\nchars_per_second: %.2f",
+			mode, message.Entry.PastedChars, message.Entry.TypedChars, message.Entry.DurationMS, total,
+			math.Round(ratio*100)/100, math.Round(charsPerSecond*100)/100)
+		if message.Entry.FallbackReason != "" {
+			signals += fmt.Sprintf("\nfallback_reason: %s", message.Entry.FallbackReason)
+		}
+		b.WriteString(prompts.WrapUntrusted("entry_signals", signals))
 		b.WriteString("\n")
 	}
 	b.WriteString(`

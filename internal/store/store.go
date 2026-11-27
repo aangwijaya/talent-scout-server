@@ -67,6 +67,7 @@ type AudioUpload struct {
 	Transcript  string
 	Language    string
 	CostUSD     float64
+	Stored      bool
 	Counted     bool
 	MessageID   *string
 	UploadedAt  time.Time
@@ -123,12 +124,15 @@ type Store interface {
 	UpdateTopic(ctx context.Context, topic domain.Topic) error
 
 	CreateMessage(ctx context.Context, message domain.Message) error
+	CreateMessageWithAudioUpload(ctx context.Context, message domain.Message, audioUploadID string) error
 	ListMessagesBySession(ctx context.Context, sessionID string, includeSystem bool) ([]domain.Message, error)
 
 	CreateAudioUpload(ctx context.Context, upload AudioUpload) error
 	GetAudioUpload(ctx context.Context, id string) (AudioUpload, error)
 	GetAudioUsage(ctx context.Context, sessionID string) (AudioUsage, error)
 	AttachAudioUpload(ctx context.Context, id, messageID string) error
+	SetAudioUploadStored(ctx context.Context, id string, stored bool) error
+	ListAudioUploadsBySession(ctx context.Context, sessionID string) ([]AudioUpload, error)
 	ListAudioUploadsDue(ctx context.Context, sentBefore, unsentBefore time.Time) ([]AudioUpload, error)
 	MarkAudioUploadDeleted(ctx context.Context, id string, deletedAt time.Time) error
 

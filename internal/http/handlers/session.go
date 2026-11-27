@@ -337,6 +337,12 @@ func (h *Sessions) UploadAudio(w http.ResponseWriter, r *http.Request) {
 	if err := h.audioStorage.Upload(r.Context(), objectPath, audio, mediaType); err != nil {
 		stored = false
 	}
+	if stored {
+		if err := h.store.SetAudioUploadStored(r.Context(), audioID, true); err != nil {
+			slog.Default().Error("mark audio upload stored failed", "session_id", sess.ID, "error", err)
+			stored = false
+		}
+	}
 
 	apierror.JSON(w, http.StatusOK, audioUploadResponse{
 		AudioID:    audioID,
@@ -494,25 +500,33 @@ func (h *Sessions) Messages(w http.ResponseWriter, r *http.Request) {
 	if messages == nil {
 		messages = []domain.Message{}
 	}
-	// Entry signals are recruiter-only; the applicant's transcript never
-	// carries them.
+	// Entry and audio signals are recruiter-only; the applicant's transcript
+	// never carries them.
 	for i := range messages {
 		messages[i].Entry = nil
+		messages[i].Audio = nil
 	}
 	apierror.JSON(w, http.StatusOK, map[string]any{"items": messages})
 }
 
 type sendMessageRequest struct {
-	Content string            `json:"content"`
+	Content *string           `json:"content"`
+	AudioID *string           `json:"audio_id"`
 	Entry   *sendMessageEntry `json:"entry"`
 }
 
-// sendMessageEntry uses pointers so a present object must carry all three
-// counters; a missing counter is malformed rather than a silent zero.
+// sendMessageEntry uses pointers so a present object must carry the existing
+// counters; a missing counter is malformed rather than a silent zero. The voice
+// fields are optional.
 type sendMessageEntry struct {
-	PastedChars *int64 `json:"pasted_chars"`
-	TypedChars  *int64 `json:"typed_chars"`
-	DurationMS  *int64 `json:"duration_ms"`
+	PastedChars    *int64  `json:"pasted_chars"`
+	TypedChars     *int64  `json:"typed_chars"`
+	DurationMS     *int64  `json:"duration_ms"`
+	Mode           *string `json:"mode"`
+	FallbackReason *string `json:"fallback_reason"`
+	StartLatencyMS *int64  `json:"start_latency_ms"`
+	SpeakingMS     *int64  `json:"speaking_ms"`
+	RerecordCount  *int64  `json:"rerecord_count"`
 }
 
 const maxEntryCounter = 10_000_000
@@ -526,18 +540,55 @@ func (e *sendMessageEntry) validate() (*domain.MessageEntry, map[string]string) 
 		"entry.typed_chars":  e.TypedChars,
 		"entry.duration_ms":  e.DurationMS,
 	} {
-		if value == nil {
-			return nil, map[string]string{"field": field}
-		}
-		if *value < 0 || *value > maxEntryCounter {
+		if value == nil || *value < 0 || *value > maxEntryCounter {
 			return nil, map[string]string{"field": field}
 		}
 	}
-	return &domain.MessageEntry{
+	for field, value := range map[string]*int64{
+		"entry.start_latency_ms": e.StartLatencyMS,
+		"entry.speaking_ms":      e.SpeakingMS,
+		"entry.rerecord_count":   e.RerecordCount,
+	} {
+		if value != nil && (*value < 0 || *value > maxEntryCounter) {
+			return nil, map[string]string{"field": field}
+		}
+	}
+	entry := &domain.MessageEntry{
 		PastedChars: int(*e.PastedChars),
 		TypedChars:  int(*e.TypedChars),
 		DurationMS:  int(*e.DurationMS),
-	}, nil
+	}
+	if e.Mode != nil {
+		mode := domain.MessageEntryMode(*e.Mode)
+		switch mode {
+		case domain.MessageEntryModeTyped, domain.MessageEntryModeSpoken:
+			entry.Mode = mode
+		default:
+			return nil, map[string]string{"field": "entry.mode"}
+		}
+	}
+	if e.FallbackReason != nil {
+		reason := domain.MessageEntryFallbackReason(*e.FallbackReason)
+		switch reason {
+		case domain.MessageEntryFallbackChoseText,
+			domain.MessageEntryFallbackDeclinedRecording,
+			domain.MessageEntryFallbackMicrophoneUnavailable,
+			domain.MessageEntryFallbackTranscriptionFailed:
+			entry.FallbackReason = reason
+		default:
+			return nil, map[string]string{"field": "entry.fallback_reason"}
+		}
+	}
+	if e.StartLatencyMS != nil {
+		entry.StartLatencyMS = int(*e.StartLatencyMS)
+	}
+	if e.SpeakingMS != nil {
+		entry.SpeakingMS = int(*e.SpeakingMS)
+	}
+	if e.RerecordCount != nil {
+		entry.RerecordCount = int(*e.RerecordCount)
+	}
+	return entry, nil
 }
 
 type sendMessageResponse struct {
@@ -546,7 +597,8 @@ type sendMessageResponse struct {
 }
 
 // SendMessage stores one applicant answer and starts the next graph step. The
-// AI reply streams on the session SSE.
+// AI reply streams on the session SSE. A spoken answer is identified by
+// audio_id; its content is the server's stored transcript.
 func (h *Sessions) SendMessage(w http.ResponseWriter, r *http.Request) {
 	sess, ok := h.resolve(w, r, chi.URLParam(r, "token"))
 	if !ok {
@@ -568,15 +620,77 @@ func (h *Sessions) SendMessage(w http.ResponseWriter, r *http.Request) {
 		apierror.Write(w, http.StatusBadRequest, apierror.CodeValidationFailed, "invalid JSON body", nil)
 		return
 	}
-	content := strings.TrimSpace(req.Content)
-	if n := utf8.RuneCountInString(content); n < 1 || n > maxAnswerChars {
-		apierror.Write(w, http.StatusBadRequest, apierror.CodeValidationFailed, "content must be 1-2000 characters", map[string]string{"field": "content"})
+	hasContent := req.Content != nil
+	hasAudio := req.AudioID != nil
+	if hasContent == hasAudio {
+		apierror.Write(w, http.StatusBadRequest, apierror.CodeValidationFailed, "exactly one of content or audio_id is required", nil)
 		return
 	}
 	entry, details := req.Entry.validate()
 	if details != nil {
-		apierror.Write(w, http.StatusBadRequest, apierror.CodeValidationFailed, "entry must contain non-negative counters up to 10000000", details)
+		apierror.Write(w, http.StatusBadRequest, apierror.CodeValidationFailed, "entry must contain valid counters and voice fields", details)
 		return
+	}
+
+	var (
+		content       string
+		audioUploadID string
+	)
+	if hasAudio {
+		audioID := strings.TrimSpace(*req.AudioID)
+		if !uuidPattern.MatchString(audioID) {
+			apierror.Write(w, http.StatusBadRequest, apierror.CodeValidationFailed, "audio_id is not available", map[string]string{"field": "audio_id"})
+			return
+		}
+		if !sess.Voice {
+			apierror.Write(w, http.StatusConflict, apierror.CodeInvalidState, "spoken answers require a voice session", nil)
+			return
+		}
+		if sess.RecordingConsent == nil || !*sess.RecordingConsent {
+			apierror.Write(w, http.StatusConflict, apierror.CodeInvalidState, "recording is not permitted for this session", nil)
+			return
+		}
+		upload, err := h.store.GetAudioUpload(r.Context(), audioID)
+		if err != nil {
+			if errors.Is(err, store.ErrNotFound) {
+				apierror.Write(w, http.StatusBadRequest, apierror.CodeValidationFailed, "audio_id is not available", map[string]string{"field": "audio_id"})
+				return
+			}
+			apierror.Write(w, http.StatusInternalServerError, apierror.CodeInternalError, "could not load the audio upload", nil)
+			return
+		}
+		if upload.SessionID != sess.ID || !upload.Counted || upload.MessageID != nil {
+			apierror.Write(w, http.StatusBadRequest, apierror.CodeValidationFailed, "audio_id is not available", map[string]string{"field": "audio_id"})
+			return
+		}
+		content = strings.TrimSpace(upload.Transcript)
+		if content == "" {
+			apierror.Write(w, http.StatusBadRequest, apierror.CodeValidationFailed, "audio_id is not available", map[string]string{"field": "audio_id"})
+			return
+		}
+		if entry == nil {
+			entry = &domain.MessageEntry{}
+		}
+		entry.Mode = domain.MessageEntryModeSpoken
+		audioUploadID = upload.ID
+	} else {
+		content = strings.TrimSpace(*req.Content)
+		if n := utf8.RuneCountInString(content); n < 1 || n > maxAnswerChars {
+			apierror.Write(w, http.StatusBadRequest, apierror.CodeValidationFailed, "content must be 1-2000 characters", map[string]string{"field": "content"})
+			return
+		}
+		if sess.Voice {
+			if sess.RecordingConsent != nil && !*sess.RecordingConsent {
+				if entry == nil {
+					entry = &domain.MessageEntry{}
+				}
+				entry.Mode = domain.MessageEntryModeTyped
+				entry.FallbackReason = domain.MessageEntryFallbackDeclinedRecording
+			} else if entry == nil || entry.FallbackReason == "" {
+				apierror.Write(w, http.StatusBadRequest, apierror.CodeValidationFailed, "fallback_reason is required for a typed answer in a voice session", map[string]string{"field": "entry.fallback_reason"})
+				return
+			}
+		}
 	}
 
 	if ok, retryAfter := h.messageLimiter.AllowWithRetry(sess.ID); !ok {
@@ -584,8 +698,20 @@ func (h *Sessions) SendMessage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	message, err := h.manager.SubmitAnswerWithEntry(r.Context(), sess, content, entry)
+	var (
+		message domain.Message
+		err     error
+	)
+	if audioUploadID != "" {
+		message, err = h.manager.SubmitAnswerWithAudio(r.Context(), sess, content, entry, audioUploadID)
+	} else {
+		message, err = h.manager.SubmitAnswerWithEntry(r.Context(), sess, content, entry)
+	}
 	if err != nil {
+		if audioUploadID != "" && (errors.Is(err, store.ErrNotFound) || errors.Is(err, store.ErrConflict)) {
+			apierror.Write(w, http.StatusBadRequest, apierror.CodeValidationFailed, "audio_id is not available", map[string]string{"field": "audio_id"})
+			return
+		}
 		if errors.Is(err, graph.ErrInvalidState) {
 			apierror.Write(w, http.StatusConflict, apierror.CodeInvalidState, "the assistant is still replying", nil)
 			return
@@ -600,10 +726,11 @@ func (h *Sessions) SendMessage(w http.ResponseWriter, r *http.Request) {
 	apierror.JSON(w, http.StatusAccepted, sendMessageResponse{Message: applicantMessage(message), Awaiting: "assistant"})
 }
 
-// applicantMessage hides the recruiter-only entry signals from an applicant
-// response. The stored message keeps them.
+// applicantMessage hides the recruiter-only entry and audio signals from an
+// applicant response. The stored message keeps them.
 func applicantMessage(message domain.Message) domain.Message {
 	message.Entry = nil
+	message.Audio = nil
 	return message
 }
 

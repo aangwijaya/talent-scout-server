@@ -172,8 +172,17 @@ func TestSendSpokenAnswerValidation(t *testing.T) {
 		{
 			name: "rejected upload",
 			body: func(t *testing.T, f *chatFixture) map[string]any {
-				upload := seedSpokenUpload(t, f.store, f.session.ID, "rejected")
-				upload.Counted = false
+				upload := store.AudioUpload{
+					ID:         domain.NewID(),
+					SessionID:  f.session.ID,
+					ObjectPath: "sessions/" + f.session.ID + "/rejected.webm",
+					DurationMS: 18000,
+					Transcript: "rejected",
+					Language:   "en",
+					Stored:     false,
+					Counted:    false,
+					UploadedAt: time.Now().UTC(),
+				}
 				if err := f.store.CreateAudioUpload(context.Background(), upload); err != nil {
 					t.Fatalf("CreateAudioUpload: %v", err)
 				}

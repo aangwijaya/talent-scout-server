@@ -59,3 +59,14 @@ func TestAudioUploadsMigrationEnablesRLS(t *testing.T) {
 		}
 	}
 }
+
+func TestAudioStoredMigrationAddsStoredFlag(t *testing.T) {
+	data, err := migrations.FS.ReadFile("00008_audio_stored.sql")
+	if err != nil {
+		t.Fatalf("read migration: %v", err)
+	}
+	up := string(data)
+	if !strings.Contains(up, "ALTER TABLE audio_uploads ADD COLUMN stored boolean NOT NULL DEFAULT true") {
+		t.Errorf("migration does not add the stored flag with a default")
+	}
+}

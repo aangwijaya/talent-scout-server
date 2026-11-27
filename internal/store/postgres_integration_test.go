@@ -512,6 +512,7 @@ func testPostgresAudioUploads(ctx context.Context, t *testing.T, s *store.Postgr
 	rejected.DurationMS = 9000
 	rejected.CostUSD = 0.0002
 	rejected.Counted = false
+	rejected.Stored = false // the helper stores every upload; a rejected one never reached the bucket
 	for _, u := range []store.AudioUpload{sentOld, sentNew, unsentOld, unsentNew, deleted} {
 		if err := s.CreateAudioUpload(ctx, u); err != nil {
 			t.Fatalf("CreateAudioUpload: %v", err)

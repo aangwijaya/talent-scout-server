@@ -18,7 +18,12 @@ import (
 // the stored recording consent matches what the send path reads.
 func newVoiceChatFixture(t *testing.T, consent bool) *chatFixture {
 	t.Helper()
-	f := newChatFixture(t, false)
+	return newVoiceChatFixtureWrapped(t, consent, nil)
+}
+
+func newVoiceChatFixtureWrapped(t *testing.T, consent bool, wrap func(store.Store) store.Store) *chatFixture {
+	t.Helper()
+	f := newChatFixtureWrapped(t, false, wrap)
 	ctx := context.Background()
 	sess, err := f.store.GetSession(ctx, f.session.ID)
 	if err != nil {
@@ -273,6 +278,45 @@ func TestSendSameAudioTwiceConcurrentlyAcceptsExactlyOne(t *testing.T) {
 	if accepted != 1 {
 		t.Fatalf("statuses = %d and %d, want exactly one 202 (bodies: %s / %s)",
 			recorders[0].Code, recorders[1].Code, recorders[0].Body.String(), recorders[1].Body.String())
+	}
+}
+
+// staleUploadStore reports every upload as not yet sent, like a handler that read
+// the row just before a concurrent send attached it.
+type staleUploadStore struct{ store.Store }
+
+func (s staleUploadStore) GetAudioUpload(ctx context.Context, id string) (store.AudioUpload, error) {
+	upload, err := s.Store.GetAudioUpload(ctx, id)
+	upload.MessageID = nil
+	return upload, err
+}
+
+// The handler's "already sent" check can lose a race; the store must then refuse
+// the send as a whole, so no second answer is stored for the same recording.
+func TestSendSpokenAnswerLosingTheRaceStoresNothing(t *testing.T) {
+	f := newVoiceChatFixtureWrapped(t, true, func(s store.Store) store.Store { return staleUploadStore{s} })
+	upload := seedSpokenUpload(t, f.store, f.session.ID, "the winning send")
+	if err := f.store.AttachAudioUpload(context.Background(), upload.ID, domain.NewID()); err != nil {
+		t.Fatalf("AttachAudioUpload: %v", err)
+	}
+	before, err := f.store.ListMessagesBySession(context.Background(), f.session.ID, false)
+	if err != nil {
+		t.Fatalf("ListMessagesBySession: %v", err)
+	}
+
+	rec := sendSpoken(t, f, upload.ID, nil)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400 (body: %s)", rec.Code, rec.Body.String())
+	}
+	if code, _, details := decodeError(t, rec); code != "validation_failed" || details["field"] != "audio_id" {
+		t.Fatalf("error = %s %v, want validation_failed on audio_id", code, details)
+	}
+	after, err := f.store.ListMessagesBySession(context.Background(), f.session.ID, false)
+	if err != nil {
+		t.Fatalf("ListMessagesBySession: %v", err)
+	}
+	if len(after) != len(before) {
+		t.Fatalf("messages = %d, want %d: the losing send must store no answer", len(after), len(before))
 	}
 }
 

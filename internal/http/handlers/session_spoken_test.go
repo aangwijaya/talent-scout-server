@@ -314,3 +314,50 @@ func TestTypedAnswerInVoiceSessionStoresFallbackReason(t *testing.T) {
 		t.Fatalf("stored entry = %+v, want microphone_unavailable", answer.Entry)
 	}
 }
+
+// A typed answer is typed whatever the client claims. A pasted answer must not
+// be able to mark itself spoken and hide its paste signals from authenticity.
+func TestTypedAnswerCannotClaimSpokenMode(t *testing.T) {
+	makeBody := func(extra map[string]any) map[string]any {
+		entry := map[string]any{
+			"pasted_chars": 400, "typed_chars": 0, "duration_ms": 1000,
+			"mode": "spoken", "speaking_ms": 5000, "start_latency_ms": 10, "rerecord_count": 0,
+		}
+		for key, value := range extra {
+			entry[key] = value
+		}
+		return map[string]any{"content": "I pasted this whole answer from elsewhere.", "entry": entry}
+	}
+	tests := []struct {
+		name  string
+		voice bool
+		extra map[string]any
+	}{
+		{name: "text session"},
+		{name: "voice session with a fallback reason", voice: true, extra: map[string]any{"fallback_reason": "chose_text"}},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			var f *chatFixture
+			if tc.voice {
+				f = newVoiceChatFixture(t, true)
+			} else {
+				f = startChat(t)
+			}
+			payload, _ := json.Marshal(makeBody(tc.extra))
+			rec := httptest.NewRecorder()
+			f.handler.SendMessage(rec, chatRequest(http.MethodPost, f.raw, string(payload)))
+			if rec.Code != http.StatusAccepted {
+				t.Fatalf("status = %d, want 202 (body: %s)", rec.Code, rec.Body.String())
+			}
+
+			answer := lastApplicantMessage(t, f.store, f.session.ID)
+			if answer.Entry == nil {
+				t.Fatal("stored applicant message has no entry")
+			}
+			if answer.Entry.Mode != domain.MessageEntryModeTyped {
+				t.Errorf("stored mode = %q, want typed: a typed answer cannot claim to be spoken", answer.Entry.Mode)
+			}
+		})
+	}
+}

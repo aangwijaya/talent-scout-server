@@ -60,7 +60,7 @@ func TestSendMessageStoresEntryAndHidesItFromApplicant(t *testing.T) {
 	if answer.Entry == nil {
 		t.Fatal("stored applicant message has no entry")
 	}
-	want := domain.MessageEntry{PastedChars: 120, TypedChars: 80, DurationMS: 4000}
+	want := domain.MessageEntry{PastedChars: 120, TypedChars: 80, DurationMS: 4000, Mode: domain.MessageEntryModeTyped}
 	if *answer.Entry != want {
 		t.Errorf("stored entry = %+v, want %+v", *answer.Entry, want)
 	}

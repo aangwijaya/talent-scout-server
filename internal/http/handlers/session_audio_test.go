@@ -183,6 +183,9 @@ func TestUploadAudioSuccessStoresRecordingAndRaisesUsedSeconds(t *testing.T) {
 	if !upload.Counted {
 		t.Error("upload row counted = false, want true")
 	}
+	if !upload.Stored {
+		t.Error("upload row stored = false, want true after a successful object upload")
+	}
 	if want := audioModels().TranscriptionCostUSD(18000); upload.CostUSD != want {
 		t.Errorf("upload cost = %v, want %v", upload.CostUSD, want)
 	}

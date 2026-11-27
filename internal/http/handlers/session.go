@@ -679,6 +679,11 @@ func (h *Sessions) SendMessage(w http.ResponseWriter, r *http.Request) {
 			apierror.Write(w, http.StatusBadRequest, apierror.CodeValidationFailed, "content must be 1-2000 characters", map[string]string{"field": "content"})
 			return
 		}
+		// A typed answer is always typed, whatever the client claimed: a pasted
+		// answer must not hide its paste signals by labelling itself spoken.
+		if entry != nil {
+			entry.Mode = domain.MessageEntryModeTyped
+		}
 		if sess.Voice {
 			if sess.RecordingConsent != nil && !*sess.RecordingConsent {
 				if entry == nil {

@@ -57,6 +57,12 @@ func (h *GraphRuns) Get(w http.ResponseWriter, r *http.Request) {
 		apierror.Write(w, http.StatusInternalServerError, apierror.CodeInternalError, "could not load graph run events", nil)
 		return
 	}
+	usage, err := h.store.GetAudioUsage(r.Context(), run.SessionID)
+	if err != nil {
+		apierror.Write(w, http.StatusInternalServerError, apierror.CodeInternalError, "could not load audio cost", nil)
+		return
+	}
+	run.CostUSD += usage.CostUSD
 	apierror.JSON(w, http.StatusOK, graph.Snapshot(run, events))
 }
 

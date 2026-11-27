@@ -17,18 +17,21 @@ import (
 	"github.com/aangwijaya/talent-scout-server/internal/session"
 	"github.com/aangwijaya/talent-scout-server/internal/storage"
 	"github.com/aangwijaya/talent-scout-server/internal/store"
+	"github.com/aangwijaya/talent-scout-server/internal/transcribe"
 )
 
 // Deps bundles the dependencies a router needs beyond config.
 type Deps struct {
-	DB        handlers.DBPinger
-	Store     store.Store
-	Storage   storage.Storage
-	Extractor cv.Extractor
-	Mailer    email.Mailer
-	LLM       llm.Client
-	Models    config.ModelsConfig
-	Registry  *session.Registry
+	DB           handlers.DBPinger
+	Store        store.Store
+	Storage      storage.Storage
+	AudioStorage storage.Storage
+	Transcriber  transcribe.Transcriber
+	Extractor    cv.Extractor
+	Mailer       email.Mailer
+	LLM          llm.Client
+	Models       config.ModelsConfig
+	Registry     *session.Registry
 }
 
 func NewRouter(cfg config.Config, deps Deps) http.Handler {
@@ -74,8 +77,10 @@ func NewRouter(cfg config.Config, deps Deps) http.Handler {
 
 		sessions := handlers.NewSessions(cfg, deps.Store)
 		sessions.SetChat(manager, bus)
+		sessions.SetAudio(deps.AudioStorage, deps.Transcriber, deps.Models)
 		r.Method(http.MethodGet, "/sessions/{token}", http.HandlerFunc(sessions.Get))
 		r.Method(http.MethodPost, "/sessions/{token}/start", http.HandlerFunc(sessions.Start))
+		r.Method(http.MethodPost, "/sessions/{token}/audio", http.HandlerFunc(sessions.UploadAudio))
 		r.Method(http.MethodGet, "/sessions/{token}/messages", http.HandlerFunc(sessions.Messages))
 		r.Method(http.MethodPost, "/sessions/{token}/messages", http.HandlerFunc(sessions.SendMessage))
 		r.Method(http.MethodPost, "/sessions/{token}/retry", http.HandlerFunc(sessions.Retry))

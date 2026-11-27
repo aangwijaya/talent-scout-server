@@ -2,6 +2,7 @@ package config
 
 import (
 	"fmt"
+	"math"
 	"os"
 	"time"
 
@@ -9,11 +10,20 @@ import (
 )
 
 // ModelsConfig mirrors config/models.yaml: the model assigned to each graph node,
-// shared defaults, and per-model prices used to record cost.
+// shared defaults, per-model prices used to record cost, and the speech-to-text
+// model with its hourly price.
 type ModelsConfig struct {
-	Default Defaults         `yaml:"default"`
-	Nodes   map[string]Node  `yaml:"nodes"`
-	Prices  map[string]Price `yaml:"prices"`
+	Default     Defaults          `yaml:"default"`
+	Nodes       map[string]Node   `yaml:"nodes"`
+	Prices      map[string]Price  `yaml:"prices"`
+	Transcriber TranscriberConfig `yaml:"transcriber"`
+}
+
+// TranscriberConfig is the speech-to-text model and its billing rule.
+type TranscriberConfig struct {
+	Model            string  `yaml:"model"`
+	USDPerHour       float64 `yaml:"usd_per_hour"`
+	MinBilledSeconds int     `yaml:"min_billed_seconds"`
 }
 
 // Defaults are shared across nodes unless a node overrides them.
@@ -79,6 +89,14 @@ func (c ModelsConfig) validate() error {
 			return fmt.Errorf("prices.%s must be positive, got %+v", model, price)
 		}
 	}
+	if c.Transcriber.Model != "" {
+		if c.Transcriber.USDPerHour <= 0 {
+			return fmt.Errorf("transcriber.usd_per_hour must be positive, got %v", c.Transcriber.USDPerHour)
+		}
+		if c.Transcriber.MinBilledSeconds < 0 {
+			return fmt.Errorf("transcriber.min_billed_seconds must be >= 0, got %d", c.Transcriber.MinBilledSeconds)
+		}
+	}
 	return nil
 }
 
@@ -127,4 +145,17 @@ func (c ModelsConfig) CostUSD(model string, tokensIn, tokensOut int) float64 {
 		return 0
 	}
 	return (float64(tokensIn)*price.In + float64(tokensOut)*price.Out) / 1_000_000
+}
+
+// TranscriptionCostUSD bills a recording by whole seconds at the configured
+// hourly price, never below the provider's minimum billed seconds.
+func (c ModelsConfig) TranscriptionCostUSD(durationMS int) float64 {
+	if c.Transcriber.Model == "" || c.Transcriber.USDPerHour <= 0 {
+		return 0
+	}
+	billedSeconds := math.Ceil(float64(durationMS) / 1000)
+	if minimum := float64(c.Transcriber.MinBilledSeconds); billedSeconds < minimum {
+		billedSeconds = minimum
+	}
+	return billedSeconds / 3600 * c.Transcriber.USDPerHour
 }

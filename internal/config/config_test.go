@@ -9,6 +9,7 @@ var allEnv = []string{
 	"SUPABASE_SERVICE_ROLE_KEY", "SUPABASE_STORAGE_BUCKET", "SUPABASE_AUDIO_BUCKET", "PUBLIC_APP_URL",
 	"FRONTEND_ORIGIN", "BFF_SHARED_SECRET", "RECRUITER_PASSWORD", "AUTH_TOKEN_SECRET",
 	"LLM_MODE", "LLM_BASE_URL", "OPENROUTER_API_KEY", "MODELS_CONFIG_PATH",
+	"TRANSCRIBE_MODE", "GROQ_API_KEY",
 	"EMAIL_MODE", "GMAIL_CLIENT_ID", "GMAIL_CLIENT_SECRET", "GMAIL_REFRESH_TOKEN",
 	"EMAIL_FROM", "SESSION_TTL_HOURS", "SESSION_MAX_MINUTES", "SESSION_MAX_QUESTIONS",
 	"LOGIN_MAX_ATTEMPTS", "LOGIN_WINDOW_MINUTES", "MESSAGE_MAX_PER_WINDOW",
@@ -26,6 +27,7 @@ func clearEnv(t *testing.T) {
 func TestLoadDefaults(t *testing.T) {
 	clearEnv(t)
 	t.Setenv("AUTH_TOKEN_SECRET", validAuthTokenSecret)
+	t.Setenv("GROQ_API_KEY", "secret-groq-key")
 
 	cfg, err := Load()
 	if err != nil {
@@ -64,6 +66,7 @@ func TestLoadDefaults(t *testing.T) {
 func TestLoadDefaultsPublicAppURL(t *testing.T) {
 	clearEnv(t)
 	t.Setenv("AUTH_TOKEN_SECRET", validAuthTokenSecret)
+	t.Setenv("GROQ_API_KEY", "secret-groq-key")
 
 	cfg, err := Load()
 	if err != nil {

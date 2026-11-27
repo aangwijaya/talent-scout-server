@@ -259,7 +259,12 @@ func (h *Applications) Get(w http.ResponseWriter, r *http.Request) {
 		run, err := h.store.GetGraphRunBySession(ctx, sess.ID)
 		switch {
 		case err == nil:
-			detail.GraphRun = &graphRunSummary{ID: run.ID, Status: run.Status, CostUSD: run.CostUSD}
+			usage, usageErr := h.store.GetAudioUsage(ctx, sess.ID)
+			if usageErr != nil {
+				apierror.Write(w, http.StatusInternalServerError, apierror.CodeInternalError, "could not load audio cost", nil)
+				return
+			}
+			detail.GraphRun = &graphRunSummary{ID: run.ID, Status: run.Status, CostUSD: run.CostUSD + usage.CostUSD}
 		case !errors.Is(err, store.ErrNotFound):
 			apierror.Write(w, http.StatusInternalServerError, apierror.CodeInternalError, "could not load graph run", nil)
 			return

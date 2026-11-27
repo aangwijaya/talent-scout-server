@@ -52,6 +52,8 @@ func defaultGraphRunStatus(run *domain.GraphRun) {
 // AudioUpload is the internal metadata for a recording stored in the private
 // audio bucket. MessageID is nil until the upload is attached to an answer.
 // The table is not exposed through the API; retention only reads deleted_at.
+// CostUSD stays on this row because the graph runner rewrites graph_runs.cost_usd
+// as a whole value; API read paths add the row sum back.
 type AudioUpload struct {
 	ID          string
 	SessionID   string
@@ -59,9 +61,20 @@ type AudioUpload struct {
 	ContentType string
 	SizeBytes   int
 	DurationMS  int
+	Transcript  string
+	Language    string
+	CostUSD     float64
 	MessageID   *string
 	UploadedAt  time.Time
 	DeletedAt   *time.Time
+}
+
+// AudioUsage is the per-session sum of recorded audio and its transcription
+// cost. A re-recording counts too: the budget is for recorded audio, not sent
+// answers.
+type AudioUsage struct {
+	DurationMS int
+	CostUSD    float64
 }
 
 var (
@@ -110,6 +123,7 @@ type Store interface {
 
 	CreateAudioUpload(ctx context.Context, upload AudioUpload) error
 	GetAudioUpload(ctx context.Context, id string) (AudioUpload, error)
+	GetAudioUsage(ctx context.Context, sessionID string) (AudioUsage, error)
 	AttachAudioUpload(ctx context.Context, id, messageID string) error
 	ListAudioUploadsDue(ctx context.Context, sentBefore, unsentBefore time.Time) ([]AudioUpload, error)
 	MarkAudioUploadDeleted(ctx context.Context, id string, deletedAt time.Time) error

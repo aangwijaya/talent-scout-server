@@ -334,6 +334,16 @@ func (m *SessionManager) Retry(ctx context.Context, sess domain.Session) error {
 	return nil
 }
 
+// Awaiting reports whether the assistant's reply for the session is complete,
+// so the applicant may upload a spoken answer. It is false while a step is still
+// replying, while a retry is pending, or after the session ended.
+func (m *SessionManager) Awaiting(sessionID string) bool {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	st, ok := m.states[sessionID]
+	return ok && st.awaiting && !st.waitingRetry && !st.done && !st.externalFinish
+}
+
 // Wait blocks until the session has no step in flight. It is primarily used by
 // tests to observe an asynchronous run deterministically.
 func (m *SessionManager) Wait(ctx context.Context, sessionID string) error {

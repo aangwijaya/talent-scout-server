@@ -12,3 +12,7 @@ nodes:
 prices:
   deepseek/deepseek-v4.1-flash: { in: 0.045, out: 0.5 }
   z-ai/glm-5.3-flash:           { in: 0.15,  out: 0.50 }
+transcriber:
+  model: whisper-large-v3-turbo
+  usd_per_hour: 0.04
+  min_billed_seconds: 10

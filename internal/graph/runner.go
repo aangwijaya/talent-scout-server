@@ -2,6 +2,7 @@ package graph
 
 import (
 	"context"
+	"log/slog"
 	"time"
 	"unicode/utf8"
 
@@ -331,6 +332,7 @@ func (r *Runner) finishRun(ctx context.Context, status domain.GraphRunStatus, er
 func (r *Runner) transcriptionCost(ctx context.Context) float64 {
 	usage, err := r.store.GetAudioUsage(ctx, r.sessionID)
 	if err != nil {
+		slog.Default().Error("load transcription cost failed", "run_id", r.runID, "session_id", r.sessionID, "error", err)
 		return 0
 	}
 	return usage.CostUSD

@@ -34,6 +34,7 @@ func TestAudioTranscriptMigrationAddsMetadataAndUsageIndex(t *testing.T) {
 		"ALTER TABLE audio_uploads ADD COLUMN transcript text NOT NULL DEFAULT ''",
 		"ALTER TABLE audio_uploads ADD COLUMN language text NOT NULL DEFAULT ''",
 		"ALTER TABLE audio_uploads ADD COLUMN cost_usd numeric(10, 6) NOT NULL DEFAULT 0",
+		"ALTER TABLE audio_uploads ADD COLUMN counted boolean NOT NULL DEFAULT true",
 		"CREATE INDEX audio_uploads_session_id_idx ON audio_uploads (session_id)",
 	} {
 		if !strings.Contains(up, want) {

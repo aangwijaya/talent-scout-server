@@ -97,7 +97,42 @@ func (g *Groq) Transcribe(ctx context.Context, audio []byte, contentType string)
 	}
 	return Result{
 		Transcript: strings.TrimSpace(payload.Text),
-		Language:   payload.Language,
+		Language:   iso6391(payload.Language),
 		DurationMS: int(math.Round(payload.Duration * 1000)),
 	}, nil
+}
+
+// languageNames maps the language name Groq's verbose_json returns ("English")
+// to the ISO 639-1 code the API contract uses ("en").
+var languageNames = map[string]string{
+	"afrikaans": "af", "albanian": "sq", "amharic": "am", "arabic": "ar",
+	"armenian": "hy", "azerbaijani": "az", "basque": "eu", "belarusian": "be",
+	"bengali": "bn", "bosnian": "bs", "bulgarian": "bg", "catalan": "ca",
+	"chinese": "zh", "croatian": "hr", "czech": "cs", "danish": "da",
+	"dutch": "nl", "english": "en", "estonian": "et", "finnish": "fi",
+	"french": "fr", "galician": "gl", "georgian": "ka", "german": "de",
+	"greek": "el", "gujarati": "gu", "hebrew": "he", "hindi": "hi",
+	"hungarian": "hu", "icelandic": "is", "indonesian": "id", "irish": "ga",
+	"italian": "it", "japanese": "ja", "kannada": "kn", "kazakh": "kk",
+	"korean": "ko", "latvian": "lv", "lithuanian": "lt", "macedonian": "mk",
+	"malay": "ms", "malayalam": "ml", "marathi": "mr", "mongolian": "mn",
+	"nepali": "ne", "norwegian": "no", "persian": "fa", "polish": "pl",
+	"portuguese": "pt", "punjabi": "pa", "romanian": "ro", "russian": "ru",
+	"serbian": "sr", "slovak": "sk", "slovenian": "sl", "spanish": "es",
+	"swahili": "sw", "swedish": "sv", "tagalog": "tl", "tamil": "ta",
+	"telugu": "te", "thai": "th", "turkish": "tr", "ukrainian": "uk",
+	"urdu": "ur", "vietnamese": "vi", "welsh": "cy",
+}
+
+// iso6391 normalizes a provider language field. An unknown name is returned
+// unchanged so a contract value is never silently dropped.
+func iso6391(language string) string {
+	trimmed := strings.TrimSpace(language)
+	if trimmed == "" {
+		return ""
+	}
+	if code, ok := languageNames[strings.ToLower(trimmed)]; ok {
+		return code
+	}
+	return trimmed
 }

@@ -692,11 +692,11 @@ func (p *Postgres) CreateAudioUpload(ctx context.Context, upload AudioUpload) er
 		upload.UploadedAt = time.Now().UTC()
 	}
 	_, err := p.pool.Exec(ctx, `
-		INSERT INTO audio_uploads (id, session_id, object_path, content_type, size_bytes, duration_ms, transcript, language, cost_usd, message_id, uploaded_at)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`,
+		INSERT INTO audio_uploads (id, session_id, object_path, content_type, size_bytes, duration_ms, transcript, language, cost_usd, counted, message_id, uploaded_at)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)`,
 		upload.ID, upload.SessionID, upload.ObjectPath, upload.ContentType,
 		upload.SizeBytes, upload.DurationMS, upload.Transcript, upload.Language, upload.CostUSD,
-		upload.MessageID, upload.UploadedAt)
+		upload.Counted, upload.MessageID, upload.UploadedAt)
 	return mapError(err)
 }
 
@@ -715,7 +715,8 @@ func (p *Postgres) GetAudioUsage(ctx context.Context, sessionID string) (AudioUs
 		durationMillis int64
 	)
 	if err := p.pool.QueryRow(ctx, `
-		SELECT COALESCE(SUM(duration_ms), 0)::bigint, COALESCE(SUM(cost_usd), 0)::double precision
+		SELECT COALESCE(SUM(duration_ms) FILTER (WHERE counted), 0)::bigint,
+			COALESCE(SUM(cost_usd), 0)::double precision
 		FROM audio_uploads WHERE session_id = $1`, sessionID).Scan(&durationMillis, &usage.CostUSD); err != nil {
 		return AudioUsage{}, mapError(err)
 	}
@@ -978,7 +979,7 @@ const (
 	sessionColumns     = `id, application_id, token_hash, status, expires_at, started_at, ended_at, finish_reason, question_count, voice, recording_consent, created_at`
 	topicColumns       = `id, session_id, position, title, goal, rubric_keys, seed_question, status, follow_up_count`
 	messageColumns     = `id, session_id, topic_id, role, kind, content, entry, created_at`
-	audioUploadColumns = `id, session_id, object_path, content_type, size_bytes, duration_ms, transcript, language, cost_usd::double precision, message_id, uploaded_at, deleted_at`
+	audioUploadColumns = `id, session_id, object_path, content_type, size_bytes, duration_ms, transcript, language, cost_usd::double precision, counted, message_id, uploaded_at, deleted_at`
 	scoreColumns       = `id, application_id, rubric_key, score, rationale, evidence, status, attempts, created_at`
 	graphRunColumns    = `id, session_id, status, started_at, ended_at, total_tokens_in, total_tokens_out, cost_usd::double precision, error`
 	nodeEventColumns   = `id, run_id, seq, node_id, type, attempt, model, tokens_in, tokens_out, duration_ms, payload, created_at`
@@ -1066,7 +1067,7 @@ func scanAudioUpload(row rowScanner) (AudioUpload, error) {
 	var upload AudioUpload
 	if err := row.Scan(&upload.ID, &upload.SessionID, &upload.ObjectPath, &upload.ContentType,
 		&upload.SizeBytes, &upload.DurationMS, &upload.Transcript, &upload.Language, &upload.CostUSD,
-		&upload.MessageID, &upload.UploadedAt, &upload.DeletedAt); err != nil {
+		&upload.Counted, &upload.MessageID, &upload.UploadedAt, &upload.DeletedAt); err != nil {
 		return AudioUpload{}, err
 	}
 	return upload, nil

@@ -4,10 +4,12 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"math"
 	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
 	"net/textproto"
+	"sync"
 	"testing"
 	"time"
 
@@ -114,6 +116,7 @@ func seedAudioUsage(t *testing.T, st *store.Memory, sess domain.Session, duratio
 		SizeBytes:   1024,
 		DurationMS:  durationMS,
 		CostUSD:     costUSD,
+		Counted:     true,
 		UploadedAt:  time.Now().UTC(),
 	}); err != nil {
 		t.Fatalf("seed audio upload: %v", err)
@@ -174,6 +177,9 @@ func TestUploadAudioSuccessStoresRecordingAndRaisesUsedSeconds(t *testing.T) {
 	}
 	if upload.SessionID != f.sess.ID || upload.Transcript != "a spoken answer" || upload.Language != "en" || upload.DurationMS != 18000 {
 		t.Errorf("upload row = %+v, want transcript/language/duration", upload)
+	}
+	if !upload.Counted {
+		t.Error("upload row counted = false, want true")
 	}
 	if want := audioModels().TranscriptionCostUSD(18000); upload.CostUSD != want {
 		t.Errorf("upload cost = %v, want %v", upload.CostUSD, want)
@@ -272,8 +278,39 @@ func TestUploadAudioNoSpeech(t *testing.T) {
 	if code, _, _ := decodeError(t, rec); code != "no_speech" {
 		t.Errorf("code = %q, want no_speech", code)
 	}
-	if usage := audioUsage(t, f); usage.DurationMS != 0 {
-		t.Errorf("usage = %+v, want no recording counted", usage)
+	usage := audioUsage(t, f)
+	if usage.DurationMS != 0 {
+		t.Errorf("usage = %+v, want the no-speech recording not counted", usage)
+	}
+	if want := audioModels().TranscriptionCostUSD(18000); math.Abs(usage.CostUSD-want) > 1e-12 {
+		t.Errorf("cost = %v, want the billed no-speech transcription %v", usage.CostUSD, want)
+	}
+	if used := usedSeconds(t, f); used != 0 {
+		t.Errorf("used_seconds = %d, want 0", used)
+	}
+}
+
+func TestUploadAudioOverLengthIsBilledButNotCounted(t *testing.T) {
+	f := newAudioFixture(t, true, domain.SessionStatusActive, boolPtr(true), true)
+	f.fake.SetResult(transcribe.Result{Transcript: "a very long answer", Language: "en", DurationMS: 120001})
+	rec := httptest.NewRecorder()
+	f.handler.UploadAudio(rec, audioRequest(t, f.raw, []byte("audio"), "audio/webm"))
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400 (body: %s)", rec.Code, rec.Body.String())
+	}
+	if code, _, _ := decodeError(t, rec); code != "validation_failed" {
+		t.Errorf("code = %q, want validation_failed", code)
+	}
+	usage := audioUsage(t, f)
+	if usage.DurationMS != 0 {
+		t.Errorf("usage = %+v, want the over-length recording not counted", usage)
+	}
+	if want := audioModels().TranscriptionCostUSD(120001); math.Abs(usage.CostUSD-want) > 1e-12 {
+		t.Errorf("cost = %v, want the billed transcription %v", usage.CostUSD, want)
+	}
+	if used := usedSeconds(t, f); used != 0 {
+		t.Errorf("used_seconds = %d, want 0", used)
 	}
 }
 
@@ -338,8 +375,15 @@ func TestUploadAudioBudgetRejectsCrossingAndAcceptsExactlyTheLimit(t *testing.T)
 		if code, _, _ := decodeError(t, rec); code != "audio_budget_exceeded" {
 			t.Errorf("code = %q, want audio_budget_exceeded", code)
 		}
-		if usage := audioUsage(t, f); usage.DurationMS != 1190000 {
+		usage := audioUsage(t, f)
+		if usage.DurationMS != 1190000 {
 			t.Errorf("usage = %+v, want the rejected upload not counted", usage)
+		}
+		if want := audioModels().TranscriptionCostUSD(10001); math.Abs(usage.CostUSD-want) > 1e-12 {
+			t.Errorf("cost = %v, want the billed over-budget transcription %v", usage.CostUSD, want)
+		}
+		if used := usedSeconds(t, f); used != 1190 {
+			t.Errorf("used_seconds = %d, want 1190", used)
 		}
 	})
 
@@ -357,6 +401,119 @@ func TestUploadAudioBudgetRejectsCrossingAndAcceptsExactlyTheLimit(t *testing.T)
 			t.Errorf("used_seconds = %d, want 1200", used)
 		}
 	})
+}
+
+// barrierTranscriber holds every call until the expected number have arrived, so
+// two uploads are guaranteed to have finished transcribing before either checks
+// the budget.
+type barrierTranscriber struct {
+	result transcribe.Result
+	wg     sync.WaitGroup
+}
+
+func (b *barrierTranscriber) Transcribe(_ context.Context, _ []byte, _ string) (transcribe.Result, error) {
+	b.wg.Done()
+	b.wg.Wait()
+	return b.result, nil
+}
+
+// usageBarrierStore makes both uploads read the usage before either can return
+// it, reproducing the check-then-act window unless the handler serializes them.
+type usageBarrierStore struct {
+	store.Store
+
+	mu       sync.Mutex
+	reads    int
+	allReads chan struct{}
+}
+
+func newUsageBarrierStore(inner store.Store) *usageBarrierStore {
+	return &usageBarrierStore{Store: inner, allReads: make(chan struct{})}
+}
+
+func (s *usageBarrierStore) GetAudioUsage(ctx context.Context, sessionID string) (store.AudioUsage, error) {
+	usage, err := s.Store.GetAudioUsage(ctx, sessionID)
+
+	s.mu.Lock()
+	s.reads++
+	if s.reads == 2 {
+		close(s.allReads)
+	}
+	s.mu.Unlock()
+
+	select {
+	case <-s.allReads:
+	case <-time.After(200 * time.Millisecond):
+	}
+	return usage, err
+}
+
+func TestUploadAudioSerializesConcurrentBudgetChecks(t *testing.T) {
+	f := newAudioFixture(t, true, domain.SessionStatusActive, boolPtr(true), true)
+	seedAudioUsage(t, f.store, f.sess, 1190000, 0)
+	barrier := &barrierTranscriber{result: transcribe.Result{Transcript: "a concurrent answer", Language: "en", DurationMS: 10000}}
+	barrier.wg.Add(2)
+	h := handlers.NewSessions(sessionCfg(), newUsageBarrierStore(f.store))
+	h.SetAudio(f.objects, barrier, audioModels())
+	h.SetAwaiting(func(string) bool { return true })
+
+	requests := []*http.Request{
+		audioRequest(t, f.raw, []byte("audio"), "audio/webm"),
+		audioRequest(t, f.raw, []byte("audio"), "audio/webm"),
+	}
+	recorders := []*httptest.ResponseRecorder{httptest.NewRecorder(), httptest.NewRecorder()}
+	var wg sync.WaitGroup
+	for i := range requests {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			h.UploadAudio(recorders[i], requests[i])
+		}(i)
+	}
+	wg.Wait()
+
+	codes := []int{recorders[0].Code, recorders[1].Code}
+	okCount, conflictCount := 0, 0
+	for _, code := range codes {
+		switch code {
+		case http.StatusOK:
+			okCount++
+		case http.StatusConflict:
+			conflictCount++
+		}
+	}
+	if okCount != 1 || conflictCount != 1 {
+		t.Fatalf("statuses = %v, want exactly one 200 and one 409 (bodies: %s / %s)", codes, recorders[0].Body.String(), recorders[1].Body.String())
+	}
+	for i, code := range codes {
+		if code == http.StatusConflict {
+			if c, _, _ := decodeError(t, recorders[i]); c != "audio_budget_exceeded" {
+				t.Errorf("conflict code = %q, want audio_budget_exceeded", c)
+			}
+		}
+	}
+	if used := usedSeconds(t, f); used != 1200 {
+		t.Errorf("used_seconds = %d, want 1200 (one counted upload)", used)
+	}
+}
+
+func TestUploadAudioTimeUpReturnsGone(t *testing.T) {
+	f := newAudioFixture(t, true, domain.SessionStatusActive, boolPtr(true), true)
+	started := time.Now().UTC().Add(-time.Duration(sessionCfg().SessionMaxMinutes+1) * time.Minute)
+	sess := f.sess
+	sess.StartedAt = &started
+	if err := f.store.UpdateSession(context.Background(), sess); err != nil {
+		t.Fatalf("UpdateSession: %v", err)
+	}
+
+	rec := httptest.NewRecorder()
+	f.handler.UploadAudio(rec, audioRequest(t, f.raw, []byte("audio"), "audio/webm"))
+	if rec.Code != http.StatusGone {
+		t.Fatalf("status = %d, want 410 (body: %s)", rec.Code, rec.Body.String())
+	}
+	if usage := audioUsage(t, f); usage.DurationMS != 0 {
+		t.Errorf("usage = %+v, want no recording counted after time is up", usage)
+	}
 }
 
 func TestUploadAudioRateLimit(t *testing.T) {

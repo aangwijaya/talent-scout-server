@@ -690,7 +690,9 @@ func (m *Memory) GetAudioUsage(_ context.Context, sessionID string) (AudioUsage,
 		if upload.SessionID != sessionID {
 			continue
 		}
-		usage.DurationMS += upload.DurationMS
+		if upload.Counted {
+			usage.DurationMS += upload.DurationMS
+		}
 		usage.CostUSD += upload.CostUSD
 	}
 	return usage, nil

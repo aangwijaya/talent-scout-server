@@ -49,8 +49,11 @@ func defaultGraphRunStatus(run *domain.GraphRun) {
 	}
 }
 
-// AudioUpload is the internal metadata for a recording stored in the private
-// audio bucket. MessageID is nil until the upload is attached to an answer.
+// AudioUpload is the internal metadata for a recording in the private audio
+// bucket. MessageID is nil until the upload is attached to an answer. Counted
+// is false for a transcription the provider billed but the session rejected
+// (no speech, too long, over budget): its cost still belongs to the run, but
+// its duration does not consume the session's audio budget.
 // The table is not exposed through the API; retention only reads deleted_at.
 // CostUSD stays on this row because the graph runner rewrites graph_runs.cost_usd
 // as a whole value; API read paths add the row sum back.
@@ -64,6 +67,7 @@ type AudioUpload struct {
 	Transcript  string
 	Language    string
 	CostUSD     float64
+	Counted     bool
 	MessageID   *string
 	UploadedAt  time.Time
 	DeletedAt   *time.Time

@@ -39,7 +39,7 @@ func TestGroqSendsVerboseJSONRequestAndParsesResponse(t *testing.T) {
 		gotFile, _ = io.ReadAll(file)
 		_ = json.NewEncoder(w).Encode(map[string]any{
 			"text":     "  Hello from the recording.  ",
-			"language": "en",
+			"language": "English",
 			"duration": 18.24,
 		})
 	}))

@@ -33,6 +33,7 @@ func TestApplicationGraphRunCostIncludesTranscriptionAndSurvivesRunnerUpdate(t *
 		CostUSD:     0.004,
 		Transcript:  "a spoken answer",
 		Language:    "en",
+		Counted:     true,
 		UploadedAt:  time.Now().UTC(),
 	}); err != nil {
 		t.Fatalf("CreateAudioUpload: %v", err)
@@ -84,9 +85,23 @@ func TestGraphRunSnapshotCostIncludesTranscription(t *testing.T) {
 		SizeBytes:   1024,
 		DurationMS:  18000,
 		CostUSD:     0.001,
+		Counted:     true,
 		UploadedAt:  time.Now().UTC(),
 	}); err != nil {
 		t.Fatalf("CreateAudioUpload: %v", err)
+	}
+	// A transcription the session rejected is still billed by the provider, so
+	// its cost belongs to the run even though it does not consume the budget.
+	if err := st.CreateAudioUpload(context.Background(), store.AudioUpload{
+		ID:          domain.NewID(),
+		SessionID:   graphRunsRouterSessionID,
+		ContentType: "audio/webm",
+		DurationMS:  120000,
+		CostUSD:     0.002,
+		Counted:     false,
+		UploadedAt:  time.Now().UTC(),
+	}); err != nil {
+		t.Fatalf("CreateAudioUpload(rejected): %v", err)
 	}
 	access, _, err := auth.New(cfg.AuthTokenSecret).IssueAccessToken()
 	if err != nil {
@@ -106,7 +121,7 @@ func TestGraphRunSnapshotCostIncludesTranscription(t *testing.T) {
 	if err := json.Unmarshal(rec.Body.Bytes(), &snapshot); err != nil {
 		t.Fatalf("decode snapshot: %v", err)
 	}
-	if snapshot.CostUSD != 0.0031 {
-		t.Errorf("snapshot cost_usd = %v, want 0.0031", snapshot.CostUSD)
+	if snapshot.CostUSD != 0.0051 {
+		t.Errorf("snapshot cost_usd = %v, want 0.0051 (run + every transcription)", snapshot.CostUSD)
 	}
 }

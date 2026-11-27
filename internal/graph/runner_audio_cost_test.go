@@ -19,6 +19,7 @@ func TestRunCompletedCostIncludesTranscription(t *testing.T) {
 		SizeBytes:   1024,
 		DurationMS:  18000,
 		CostUSD:     0.002,
+		Counted:     true,
 		UploadedAt:  time.Now().UTC(),
 	}); err != nil {
 		t.Fatalf("CreateAudioUpload: %v", err)

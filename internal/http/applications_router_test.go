@@ -800,10 +800,11 @@ func TestApplicationDetailReturnsEntryAndAuthenticity(t *testing.T) {
 			t.Fatalf("seed message: %v", err)
 		}
 	}
+	assessedAt := time.Date(2026, 11, 28, 5, 0, 0, 0, time.UTC)
 	auth := domain.Authenticity{
 		Level:      domain.AuthenticityLevelPossible,
 		Reasons:    []string{"1 of 1 answers were pasted in full"},
-		AssessedAt: time.Now().UTC().Truncate(time.Microsecond),
+		AssessedAt: assessedAt,
 	}
 	if err := f.store.SetApplicationAuthenticity(ctx, app.ID, &auth); err != nil {
 		t.Fatalf("SetApplicationAuthenticity: %v", err)
@@ -817,7 +818,7 @@ func TestApplicationDetailReturnsEntryAndAuthenticity(t *testing.T) {
 		Summary:              "Steady pace with a few short pauses.",
 		SpokenAnswers:        1,
 		TypedAnswers:         0,
-		AssessedAt:           time.Now().UTC().Truncate(time.Microsecond),
+		AssessedAt:           assessedAt,
 	}
 	if err := f.store.SetApplicationFluency(ctx, app.ID, &fluency); err != nil {
 		t.Fatalf("SetApplicationFluency: %v", err)

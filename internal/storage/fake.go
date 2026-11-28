@@ -7,9 +7,10 @@ import (
 
 // Fake is an in-memory Storage for tests.
 type Fake struct {
-	mu      sync.Mutex
-	objects map[string][]byte
-	err     error
+	mu        sync.Mutex
+	objects   map[string][]byte
+	err       error
+	downloads int
 }
 
 func NewFake() *Fake {
@@ -40,9 +41,18 @@ func (f *Fake) Get(path string) ([]byte, bool) {
 	return data, ok
 }
 
+// DownloadCount returns how many Download calls the fake has seen, so a test
+// can prove an endpoint did not touch storage.
+func (f *Fake) DownloadCount() int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.downloads
+}
+
 func (f *Fake) Download(_ context.Context, path string) ([]byte, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	f.downloads++
 	if f.err != nil {
 		return nil, f.err
 	}

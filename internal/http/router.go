@@ -68,7 +68,7 @@ func NewRouter(cfg config.Config, deps Deps) http.Handler {
 		limiter := middleware.NewRateLimiter(middleware.ApplyRateLimit, middleware.ApplyRateLimitWindow)
 		r.With(middleware.RateLimit(limiter, cfg.BFFSharedSecret)).Method(http.MethodPost, "/jobs/{jobId}/applications", apply)
 
-		applications := handlers.NewApplications(cfg, deps.Store, deps.Storage, deps.Mailer)
+		applications := handlers.NewApplications(cfg, deps.Store, deps.Storage, deps.AudioStorage, deps.Mailer)
 		r.With(requireRecruiter).Method(http.MethodGet, "/jobs/{jobId}/applications", http.HandlerFunc(applications.ListByJob))
 		r.With(requireRecruiter).Method(http.MethodGet, "/applications/{applicationId}", http.HandlerFunc(applications.Get))
 		r.With(requireRecruiter).Method(http.MethodGet, "/applications/{applicationId}/cv", http.HandlerFunc(applications.DownloadCV))

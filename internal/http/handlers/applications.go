@@ -30,14 +30,15 @@ const (
 )
 
 type Applications struct {
-	cfg     config.Config
-	store   store.Store
-	storage storage.Storage
-	mailer  email.Mailer
+	cfg          config.Config
+	store        store.Store
+	storage      storage.Storage
+	audioStorage storage.Storage
+	mailer       email.Mailer
 }
 
-func NewApplications(cfg config.Config, st store.Store, s storage.Storage, m email.Mailer) *Applications {
-	return &Applications{cfg: cfg, store: st, storage: s, mailer: m}
+func NewApplications(cfg config.Config, st store.Store, s storage.Storage, audioStorage storage.Storage, m email.Mailer) *Applications {
+	return &Applications{cfg: cfg, store: st, storage: s, audioStorage: audioStorage, mailer: m}
 }
 
 type applicationSummary struct {
@@ -420,12 +421,12 @@ func (h *Applications) DownloadMessageAudio(w http.ResponseWriter, r *http.Reque
 		apierror.Write(w, http.StatusGone, apierror.CodeRecordingDeleted, "recording is no longer available", nil)
 		return
 	}
-	if h.storage == nil {
+	if h.audioStorage == nil {
 		apierror.Write(w, http.StatusInternalServerError, apierror.CodeInternalError, "storage is unavailable", nil)
 		return
 	}
 
-	data, err := h.storage.Download(r.Context(), upload.ObjectPath)
+	data, err := h.audioStorage.Download(r.Context(), upload.ObjectPath)
 	if err != nil {
 		if errors.Is(err, storage.ErrNotFound) {
 			slog.Default().Warn("audio object missing for an available upload", "message_id", messageID)
@@ -438,7 +439,7 @@ func (h *Applications) DownloadMessageAudio(w http.ResponseWriter, r *http.Reque
 
 	w.Header().Set("Content-Type", upload.ContentType)
 	w.Header().Set("Cache-Control", "private, no-store")
-	http.ServeContent(w, r, "", upload.UploadedAt, bytes.NewReader(data))
+	http.ServeContent(w, r, "", time.Time{}, bytes.NewReader(data))
 }
 
 func (h *Applications) Decide(w http.ResponseWriter, r *http.Request) {

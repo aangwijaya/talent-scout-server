@@ -108,7 +108,7 @@ func TestDownloadMessageAudioServesUploadedType(t *testing.T) {
 			sess, _ := f.seedSession(t, app, domain.SessionStatusCompleted)
 			data := []byte("recording bytes for " + tc.contentType)
 			message, upload := seedPlaybackAnswer(t, f, sess, tc.contentType, data, nil)
-			if err := f.storage.Upload(context.Background(), upload.ObjectPath, data, tc.contentType); err != nil {
+			if err := f.audioStorage.Upload(context.Background(), upload.ObjectPath, data, tc.contentType); err != nil {
 				t.Fatalf("seed object: %v", err)
 			}
 
@@ -145,7 +145,7 @@ func TestDownloadMessageAudioServesByteRanges(t *testing.T) {
 	sess, _ := f.seedSession(t, app, domain.SessionStatusCompleted)
 	data := []byte("0123456789")
 	message, upload := seedPlaybackAnswer(t, f, sess, "audio/webm", data, nil)
-	if err := f.storage.Upload(context.Background(), upload.ObjectPath, data, "audio/webm"); err != nil {
+	if err := f.audioStorage.Upload(context.Background(), upload.ObjectPath, data, "audio/webm"); err != nil {
 		t.Fatalf("seed object: %v", err)
 	}
 
@@ -185,6 +185,36 @@ func TestDownloadMessageAudioServesByteRanges(t *testing.T) {
 			validator.ValidateResponse(t, req, rec.Result())
 		})
 	}
+}
+
+func TestDownloadMessageAudioIgnoresConditionalRequests(t *testing.T) {
+	f := newApplicationsFixture(t, "log")
+	validator := conformance.New(t)
+	app := f.seedApplication(t, "budi@example.com", domain.ApplicationStatusReview)
+	sess, _ := f.seedSession(t, app, domain.SessionStatusCompleted)
+	data := []byte("0123456789")
+	message, upload := seedPlaybackAnswer(t, f, sess, "audio/webm", data, nil)
+	if err := f.audioStorage.Upload(context.Background(), upload.ObjectPath, data, "audio/webm"); err != nil {
+		t.Fatalf("seed object: %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/applications/"+app.ID+"/messages/"+message.ID+"/audio", nil)
+	req.Header.Set("Authorization", "Bearer "+f.token)
+	req.Header.Set("If-Modified-Since", time.Now().Add(24*time.Hour).UTC().Format(http.TimeFormat))
+	rec := httptest.NewRecorder()
+	f.router.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200 (body: %s)", rec.Code, rec.Body.String())
+	}
+	if got := rec.Header().Get("Last-Modified"); got != "" {
+		t.Errorf("last-modified = %q, want empty", got)
+	}
+	if got := rec.Body.String(); got != string(data) {
+		t.Errorf("body = %q, want %q", got, data)
+	}
+	assertNoObjectPathLeak(t, rec, upload.ObjectPath)
+	validator.ValidateResponse(t, req, rec.Result())
 }
 
 func TestDownloadMessageAudioNotFound(t *testing.T) {
@@ -242,8 +272,8 @@ func TestDownloadMessageAudioRecordingGone(t *testing.T) {
 		mutate     func(*store.AudioUpload)
 		storeBytes bool
 	}{
-		{name: "retention deleted the row", mutate: func(upload *store.AudioUpload) { upload.DeletedAt = &deletedAt }},
-		{name: "recording was never stored", mutate: func(upload *store.AudioUpload) { upload.Stored = false }},
+		{name: "retention deleted the row", mutate: func(upload *store.AudioUpload) { upload.DeletedAt = &deletedAt }, storeBytes: true},
+		{name: "recording was never stored", mutate: func(upload *store.AudioUpload) { upload.Stored = false }, storeBytes: true},
 		{name: "available row but storage object missing", storeBytes: false},
 	}
 
@@ -255,7 +285,7 @@ func TestDownloadMessageAudioRecordingGone(t *testing.T) {
 			data := []byte("audio")
 			message, upload := seedPlaybackAnswer(t, f, sess, "audio/webm", data, tc.mutate)
 			if tc.storeBytes {
-				if err := f.storage.Upload(context.Background(), upload.ObjectPath, data, "audio/webm"); err != nil {
+				if err := f.audioStorage.Upload(context.Background(), upload.ObjectPath, data, "audio/webm"); err != nil {
 					t.Fatalf("seed object: %v", err)
 				}
 			}
@@ -278,11 +308,11 @@ func TestDownloadMessageAudioRequiresBearerWithoutStorageCall(t *testing.T) {
 	sess, _ := f.seedSession(t, app, domain.SessionStatusCompleted)
 	data := []byte("audio")
 	message, upload := seedPlaybackAnswer(t, f, sess, "audio/webm", data, nil)
-	if err := f.storage.Upload(context.Background(), upload.ObjectPath, data, "audio/webm"); err != nil {
+	if err := f.audioStorage.Upload(context.Background(), upload.ObjectPath, data, "audio/webm"); err != nil {
 		t.Fatalf("seed object: %v", err)
 	}
 
-	before := f.storage.DownloadCount()
+	before := f.audioStorage.DownloadCount()
 	rec := f.downloadAudio(t, app.ID, message.ID, "", false)
 	if rec.Code != http.StatusUnauthorized {
 		t.Fatalf("status = %d, want 401 (body: %s)", rec.Code, rec.Body.String())
@@ -290,7 +320,7 @@ func TestDownloadMessageAudioRequiresBearerWithoutStorageCall(t *testing.T) {
 	if code := decodeErrorCode(t, rec); code != "unauthorized" {
 		t.Errorf("code = %q, want unauthorized", code)
 	}
-	if got := f.storage.DownloadCount(); got != before {
+	if got := f.audioStorage.DownloadCount(); got != before {
 		t.Errorf("storage downloads = %d, want %d (no storage call without auth)", got, before)
 	}
 }

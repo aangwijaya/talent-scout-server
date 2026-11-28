@@ -43,12 +43,13 @@ func (m *recordingMailer) SendInvite(_ context.Context, to, name, link string) e
 }
 
 type applicationsFixture struct {
-	store   *store.Memory
-	storage *storage.Fake
-	mailer  *recordingMailer
-	router  http.Handler
-	token   string
-	cfg     config.Config
+	store        *store.Memory
+	storage      *storage.Fake
+	audioStorage *storage.Fake
+	mailer       *recordingMailer
+	router       http.Handler
+	token        string
+	cfg          config.Config
 }
 
 func newApplicationsFixture(t *testing.T, emailMode string) *applicationsFixture {
@@ -79,15 +80,17 @@ func newApplicationsFixture(t *testing.T, emailMode string) *applicationsFixture
 		SessionMaxQuestions: 15,
 	}
 	fakeStorage := storage.NewFake()
+	audioStorage := storage.NewFake()
 	mailer := &recordingMailer{}
-	router := httpapi.NewRouter(cfg, httpapi.Deps{Store: st, Storage: fakeStorage, Mailer: mailer})
+	router := httpapi.NewRouter(cfg, httpapi.Deps{Store: st, Storage: fakeStorage, AudioStorage: audioStorage, Mailer: mailer})
 	return &applicationsFixture{
-		store:   st,
-		storage: fakeStorage,
-		mailer:  mailer,
-		router:  router,
-		token:   login(t, router),
-		cfg:     cfg,
+		store:        st,
+		storage:      fakeStorage,
+		audioStorage: audioStorage,
+		mailer:       mailer,
+		router:       router,
+		token:        login(t, router),
+		cfg:          cfg,
 	}
 }
 

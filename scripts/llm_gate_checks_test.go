@@ -25,6 +25,7 @@ var liveGateFloors = map[string]int{
 	"judge":            2400,
 	"scorer":           8000,
 	"authenticity":     2000,
+	"fluency":          2000,
 	"rubric_suggester": 3000,
 }
 

@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -355,6 +356,89 @@ func (h *Applications) DownloadCV(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Disposition", `attachment; filename="`+app.ID+`.pdf"`)
 	w.WriteHeader(http.StatusOK)
 	_, _ = w.Write(data)
+}
+
+// DownloadMessageAudio streams a spoken answer from the private audio bucket.
+// The stored upload is the source of truth: a message without an attached
+// recording is not a spoken answer, and a recording retention removed or the
+// upload never stored is gone rather than missing.
+func (h *Applications) DownloadMessageAudio(w http.ResponseWriter, r *http.Request) {
+	app, ok := h.getApplication(w, r)
+	if !ok {
+		return
+	}
+	messageID := chi.URLParam(r, "messageId")
+	if !uuidPattern.MatchString(messageID) {
+		apierror.Write(w, http.StatusNotFound, apierror.CodeNotFound, "message not found", nil)
+		return
+	}
+
+	message, err := h.store.GetMessage(r.Context(), messageID)
+	if err != nil {
+		if errors.Is(err, store.ErrNotFound) {
+			apierror.Write(w, http.StatusNotFound, apierror.CodeNotFound, "message not found", nil)
+			return
+		}
+		apierror.Write(w, http.StatusInternalServerError, apierror.CodeInternalError, "could not load message", nil)
+		return
+	}
+	if message.Role != domain.MessageRoleApplicant {
+		apierror.Write(w, http.StatusNotFound, apierror.CodeNotFound, "message is not a spoken answer", nil)
+		return
+	}
+	sess, err := h.store.GetSession(r.Context(), message.SessionID)
+	if err != nil {
+		if errors.Is(err, store.ErrNotFound) {
+			apierror.Write(w, http.StatusNotFound, apierror.CodeNotFound, "message not found", nil)
+			return
+		}
+		apierror.Write(w, http.StatusInternalServerError, apierror.CodeInternalError, "could not load session", nil)
+		return
+	}
+	if sess.ApplicationID != app.ID {
+		apierror.Write(w, http.StatusNotFound, apierror.CodeNotFound, "message not found", nil)
+		return
+	}
+
+	uploads, err := h.store.ListAudioUploadsBySession(r.Context(), sess.ID)
+	if err != nil {
+		apierror.Write(w, http.StatusInternalServerError, apierror.CodeInternalError, "could not load the recording", nil)
+		return
+	}
+	var upload *store.AudioUpload
+	for i := range uploads {
+		if uploads[i].MessageID != nil && *uploads[i].MessageID == messageID {
+			upload = &uploads[i]
+			break
+		}
+	}
+	if upload == nil {
+		apierror.Write(w, http.StatusNotFound, apierror.CodeNotFound, "message is not a spoken answer", nil)
+		return
+	}
+	if upload.DeletedAt != nil || !upload.Stored {
+		apierror.Write(w, http.StatusGone, apierror.CodeRecordingDeleted, "recording is no longer available", nil)
+		return
+	}
+	if h.storage == nil {
+		apierror.Write(w, http.StatusInternalServerError, apierror.CodeInternalError, "storage is unavailable", nil)
+		return
+	}
+
+	data, err := h.storage.Download(r.Context(), upload.ObjectPath)
+	if err != nil {
+		if errors.Is(err, storage.ErrNotFound) {
+			slog.Default().Warn("audio object missing for an available upload", "message_id", messageID)
+			apierror.Write(w, http.StatusGone, apierror.CodeRecordingDeleted, "recording is no longer available", nil)
+			return
+		}
+		apierror.Write(w, http.StatusInternalServerError, apierror.CodeInternalError, "could not load the recording", nil)
+		return
+	}
+
+	w.Header().Set("Content-Type", upload.ContentType)
+	w.Header().Set("Cache-Control", "private, no-store")
+	http.ServeContent(w, r, "", upload.UploadedAt, bytes.NewReader(data))
 }
 
 func (h *Applications) Decide(w http.ResponseWriter, r *http.Request) {

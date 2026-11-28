@@ -128,6 +128,7 @@ type Store interface {
 
 	CreateMessage(ctx context.Context, message domain.Message) error
 	CreateMessageWithAudioUpload(ctx context.Context, message domain.Message, audioUploadID string) error
+	GetMessage(ctx context.Context, id string) (domain.Message, error)
 	ListMessagesBySession(ctx context.Context, sessionID string, includeSystem bool) ([]domain.Message, error)
 
 	CreateAudioUpload(ctx context.Context, upload AudioUpload) error

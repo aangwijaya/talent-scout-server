@@ -731,6 +731,15 @@ func (p *Postgres) CreateMessageWithAudioUpload(ctx context.Context, message dom
 	return mapError(tx.Commit(ctx))
 }
 
+func (p *Postgres) GetMessage(ctx context.Context, id string) (domain.Message, error) {
+	row := p.pool.QueryRow(ctx, `SELECT `+messageColumns+` FROM messages WHERE id = $1`, id)
+	message, err := scanMessage(row)
+	if err != nil {
+		return domain.Message{}, mapError(err)
+	}
+	return message, nil
+}
+
 func (p *Postgres) ListMessagesBySession(ctx context.Context, sessionID string, includeSystem bool) ([]domain.Message, error) {
 	query := `SELECT ` + messageColumns + ` FROM messages WHERE session_id = $1`
 	if !includeSystem {

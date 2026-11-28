@@ -668,6 +668,17 @@ func (m *Memory) CreateMessageWithAudioUpload(_ context.Context, message domain.
 	return nil
 }
 
+func (m *Memory) GetMessage(_ context.Context, id string) (domain.Message, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	message, ok := m.messages[id]
+	if !ok {
+		return domain.Message{}, ErrNotFound
+	}
+	return cloneMessage(message), nil
+}
+
 func (m *Memory) ListMessagesBySession(_ context.Context, sessionID string, includeSystem bool) ([]domain.Message, error) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()

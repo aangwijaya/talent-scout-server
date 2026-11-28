@@ -408,6 +408,26 @@ paths:
               schema:
                 type: string
                 format: binary
+        "206":
+          description: A byte range of the spoken answer recording.
+          headers:
+            Content-Range:
+              description: The byte range returned.
+              schema:
+                type: string
+          content:
+            audio/webm:
+              schema:
+                type: string
+                format: binary
+            audio/ogg:
+              schema:
+                type: string
+                format: binary
+            audio/mp4:
+              schema:
+                type: string
+                format: binary
         "401":
           $ref: "#/components/responses/Unauthorized"
         "404":
@@ -1239,7 +1259,7 @@ components:
       allOf:
         - $ref: "#/components/schemas/Message"
         - type: object
-          required: [entry]
+          required: [entry, audio]
           properties:
             entry:
               oneOf:

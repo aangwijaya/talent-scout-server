@@ -20,6 +20,7 @@ const (
 	CodeInvalidState             = "invalid_state"
 	CodeSessionExpired           = "session_expired"
 	CodeSessionCompleted         = "session_completed"
+	CodeRecordingDeleted         = "recording_deleted"
 	CodeFileTooLarge             = "file_too_large"
 	CodeRateLimited              = "rate_limited"
 	CodeAudioBudgetExceeded      = "audio_budget_exceeded"

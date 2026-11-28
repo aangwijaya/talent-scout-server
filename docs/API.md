@@ -200,7 +200,7 @@ Error: 400 `validation_failed`/`invalid_file` (not a PDF / text cannot be extrac
 The server fetches the file from Supabase Storage (private bucket) and streams it to the recruiter. No Storage URL/signed URL is sent to the client.
 
 ### `GET /applications/{applicationId}/messages/{messageId}/audio` → 200 `audio/webm` | `audio/ogg` | `audio/mp4`
-The server fetches the spoken answer recording from the private `audio` bucket and streams it to the recruiter. No Storage URL/signed URL is sent to the client; the response `Content-Type` is the uploaded type. 404 `not_found` when the application or message is unknown, or the message is not a spoken answer. 410 `recording_deleted` when retention deleted the recording or it was not stored (`Message.audio.status` = `deleted` or `not_stored`).
+The server fetches the spoken answer recording from the private `audio` bucket and streams it to the recruiter. No Storage URL/signed URL is sent to the client; the response `Content-Type` is the uploaded type. A `Range` request returns `206 Partial Content` with `Content-Range` and `Accept-Ranges: bytes`, so browsers can seek. 404 `not_found` when the application or message is unknown, or the message is not a spoken answer. 410 `recording_deleted` when retention deleted the recording or it was not stored (`Message.audio.status` = `deleted` or `not_stored`).
 
 ### `POST /applications/{applicationId}/decision`
 Req `{ "decision": "shortlist" | "reject", "note": "optional, ≤ 1000" }` → 200 `ApplicationSummary` (status `shortlisted`/`rejected`). 409 `invalid_state` if the status is not `review` yet (may be changed again between `shortlisted`↔`rejected`).

@@ -11,6 +11,8 @@ import (
 	"net/http"
 	"strings"
 	"time"
+
+	"github.com/aangwijaya/talent-scout-server/internal/domain"
 )
 
 const defaultGroqBaseURL = "https://api.groq.com/openai/v1"
@@ -64,6 +66,19 @@ func (g *Groq) Transcribe(ctx context.Context, audio []byte, contentType string)
 	if err := writer.WriteField("response_format", "verbose_json"); err != nil {
 		return Result{}, fmt.Errorf("%w: write response_format: %v", ErrUnavailable, err)
 	}
+	// Word timings feed the advisory fluency metrics; segments carry the
+	// avg_logprob used for the transcript confidence.
+	if err := writer.WriteField("timestamp_granularities[]", "word"); err != nil {
+		return Result{}, fmt.Errorf("%w: write word granularity: %v", ErrUnavailable, err)
+	}
+	if err := writer.WriteField("timestamp_granularities[]", "segment"); err != nil {
+		return Result{}, fmt.Errorf("%w: write segment granularity: %v", ErrUnavailable, err)
+	}
+	// Whisper-style models drop disfluencies unless the prompt keeps them, so
+	// filler_rate is a lower bound even with this prompt.
+	if err := writer.WriteField("prompt", disfluencyPrompt); err != nil {
+		return Result{}, fmt.Errorf("%w: write prompt: %v", ErrUnavailable, err)
+	}
 	if err := writer.Close(); err != nil {
 		return Result{}, fmt.Errorf("%w: close upload: %v", ErrUnavailable, err)
 	}
@@ -91,16 +106,59 @@ func (g *Groq) Transcribe(ctx context.Context, audio []byte, contentType string)
 		Text     string  `json:"text"`
 		Language string  `json:"language"`
 		Duration float64 `json:"duration"`
+		Words    []struct {
+			Word  string  `json:"word"`
+			Start float64 `json:"start"`
+			End   float64 `json:"end"`
+		} `json:"words"`
+		Segments []struct {
+			Start      float64  `json:"start"`
+			End        float64  `json:"end"`
+			AvgLogProb *float64 `json:"avg_logprob"`
+		} `json:"segments"`
 	}
 	if err := json.NewDecoder(io.LimitReader(resp.Body, 1<<20)).Decode(&payload); err != nil {
 		return Result{}, fmt.Errorf("%w: decode response: %v", ErrUnavailable, err)
+	}
+	words := make([]domain.TranscriptWord, 0, len(payload.Words))
+	for _, word := range payload.Words {
+		words = append(words, domain.TranscriptWord{
+			Word:  strings.TrimSpace(word.Word),
+			Start: word.Start,
+			End:   word.End,
+		})
+	}
+	var confidence float64
+	var weight float64
+	for _, segment := range payload.Segments {
+		if segment.AvgLogProb == nil {
+			continue
+		}
+		length := segment.End - segment.Start
+		if length <= 0 {
+			length = 1
+		}
+		probability := math.Exp(*segment.AvgLogProb)
+		probability = math.Max(0, math.Min(1, probability))
+		confidence += probability * length
+		weight += length
+	}
+	if weight > 0 {
+		confidence /= weight
 	}
 	return Result{
 		Transcript: strings.TrimSpace(payload.Text),
 		Language:   iso6391(payload.Language),
 		DurationMS: int(math.Round(payload.Duration * 1000)),
+		Words:      words,
+		Confidence: confidence,
 	}, nil
 }
+
+// disfluencyPrompt keeps filler words in the transcript so filler_rate is not
+// artificially zero. Whisper-style models still drop some disfluencies, so the
+// metric remains a lower bound (documented beside computeFluency).
+const disfluencyPrompt = "Umm, let me think, uh, so, hmm."
 
 // languageNames maps the language name Groq's verbose_json returns ("English")
 // to the ISO 639-1 code the API contract uses ("en").

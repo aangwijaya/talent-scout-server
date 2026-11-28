@@ -191,7 +191,7 @@ func TestReconcileSkipsMachineNodesThatNeverExecuted(t *testing.T) {
 		}
 	}
 
-	for _, nodeID := range []string{"plan_check", "judge", "guard", "scorer", "evidence_check"} {
+	for _, nodeID := range []string{"plan_check", "judge", "guard", "scorer", "evidence_check", "authenticity", "fluency"} {
 		if skips[nodeID] != 1 {
 			t.Errorf("node.skipped(%s) = %d, want exactly 1 (never executed)", nodeID, skips[nodeID])
 		}
@@ -285,29 +285,29 @@ func TestReconcileFailsScoringApplicationAfterAbandonedSession(t *testing.T) {
 		t.Fatalf("ListNodeEvents: %v", err)
 	}
 	// Boot-appended tail: node.failed(scorer) → node.skipped(evidence_check) →
-	// node.skipped(authenticity) → run.failed.
+	// node.skipped(authenticity) → node.skipped(fluency) → run.failed.
 	var tail []string
-	for _, event := range events[len(events)-4:] {
+	for _, event := range events[len(events)-5:] {
 		node := "-"
 		if event.NodeID != nil {
 			node = *event.NodeID
 		}
 		tail = append(tail, event.Type+":"+node)
 	}
-	want := []string{EventNodeFailed + ":scorer", EventNodeSkipped + ":evidence_check", EventNodeSkipped + ":authenticity", EventRunFailed + ":-"}
+	want := []string{EventNodeFailed + ":scorer", EventNodeSkipped + ":evidence_check", EventNodeSkipped + ":authenticity", EventNodeSkipped + ":fluency", EventRunFailed + ":-"}
 	for i := range want {
 		if tail[i] != want[i] {
 			t.Fatalf("boot events = %v, want %v", tail, want)
 		}
 	}
 	var failed NodeFailed
-	if err := json.Unmarshal(events[len(events)-4].Payload, &failed); err != nil {
+	if err := json.Unmarshal(events[len(events)-5].Payload, &failed); err != nil {
 		t.Fatalf("unmarshal node.failed: %v", err)
 	}
 	if failed.Error != restartFailureReason || failed.WillRetry {
 		t.Errorf("node.failed = %+v, want server_restart/will_retry=false", failed)
 	}
-	if a := events[len(events)-4].Attempt; a == nil || *a != 1 {
+	if a := events[len(events)-5].Attempt; a == nil || *a != 1 {
 		t.Errorf("node.failed attempt = %v, want 1", a)
 	}
 	var skipped NodeSkipped

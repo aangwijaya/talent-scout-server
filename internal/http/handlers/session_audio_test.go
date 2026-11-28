@@ -65,7 +65,15 @@ func newAudioFixture(t *testing.T, voice bool, status domain.SessionStatus, cons
 	}
 
 	fake := transcribe.NewFake()
-	fake.SetResult(transcribe.Result{Transcript: "a spoken answer", Language: "en", DurationMS: 18000})
+	fake.SetResult(transcribe.Result{
+		Transcript: "a spoken answer", Language: "en", DurationMS: 18000,
+		Words: []domain.TranscriptWord{
+			{Word: "a", Start: 0, End: 0.2},
+			{Word: "spoken", Start: 0.2, End: 0.7},
+			{Word: "answer", Start: 0.7, End: 1.2},
+		},
+		Confidence: 0.92,
+	})
 	objects := storage.NewFake()
 	h := handlers.NewSessions(sessionCfg(), st)
 	h.SetAudio(objects, fake, audioModels())
@@ -179,6 +187,12 @@ func TestUploadAudioSuccessStoresRecordingAndRaisesUsedSeconds(t *testing.T) {
 	}
 	if upload.SessionID != f.sess.ID || upload.Transcript != "a spoken answer" || upload.Language != "en" || upload.DurationMS != 18000 {
 		t.Errorf("upload row = %+v, want transcript/language/duration", upload)
+	}
+	if len(upload.Words) != 3 || upload.Words[0].Word != "a" || upload.Words[2].End != 1.2 {
+		t.Errorf("upload words = %+v, want the transcriber's word timings", upload.Words)
+	}
+	if upload.Confidence != 0.92 {
+		t.Errorf("upload confidence = %v, want 0.92", upload.Confidence)
 	}
 	if !upload.Counted {
 		t.Error("upload row counted = false, want true")

@@ -311,6 +311,19 @@ func (m *Memory) SetApplicationAuthenticity(_ context.Context, id string, authen
 	return nil
 }
 
+func (m *Memory) SetApplicationFluency(_ context.Context, id string, fluency *domain.Fluency) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	app, ok := m.applications[id]
+	if !ok {
+		return ErrNotFound
+	}
+	app.Fluency = cloneFluency(fluency)
+	m.applications[id] = app
+	return nil
+}
+
 func (m *Memory) CreateSession(_ context.Context, session domain.Session) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -995,7 +1008,17 @@ func cloneTopic(topic domain.Topic) domain.Topic {
 
 func cloneApplication(app domain.Application) domain.Application {
 	app.Authenticity = cloneAuthenticity(app.Authenticity)
+	app.Fluency = cloneFluency(app.Fluency)
 	return app
+}
+
+func cloneFluency(fluency *domain.Fluency) *domain.Fluency {
+	if fluency == nil {
+		return nil
+	}
+	clone := *fluency
+	clone.Languages = append([]string(nil), fluency.Languages...)
+	return &clone
 }
 
 func cloneAuthenticity(auth *domain.Authenticity) *domain.Authenticity {
@@ -1016,6 +1039,7 @@ func cloneMessage(message domain.Message) domain.Message {
 }
 
 func cloneAudioUpload(upload AudioUpload) AudioUpload {
+	upload.Words = append([]domain.TranscriptWord(nil), upload.Words...)
 	if upload.MessageID != nil {
 		messageID := *upload.MessageID
 		upload.MessageID = &messageID

@@ -321,6 +321,25 @@ func (p *Postgres) SetApplicationAuthenticity(ctx context.Context, id string, au
 	return nil
 }
 
+func (p *Postgres) SetApplicationFluency(ctx context.Context, id string, fluency *domain.Fluency) error {
+	var payload any
+	if fluency != nil {
+		encoded, err := json.Marshal(fluency)
+		if err != nil {
+			return fmt.Errorf("marshal fluency: %w", err)
+		}
+		payload = string(encoded)
+	}
+	tag, err := p.pool.Exec(ctx, `UPDATE applications SET fluency = $2 WHERE id = $1`, id, payload)
+	if err != nil {
+		return mapError(err)
+	}
+	if tag.RowsAffected() == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
 func (p *Postgres) CreateSession(ctx context.Context, session domain.Session) error {
 	defaultSessionStatus(&session)
 	if session.CreatedAt.IsZero() {
@@ -743,13 +762,34 @@ func (p *Postgres) CreateAudioUpload(ctx context.Context, upload AudioUpload) er
 	if upload.UploadedAt.IsZero() {
 		upload.UploadedAt = time.Now().UTC()
 	}
-	_, err := p.pool.Exec(ctx, `
-		INSERT INTO audio_uploads (id, session_id, object_path, content_type, size_bytes, duration_ms, transcript, language, cost_usd, stored, counted, message_id, uploaded_at)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)`,
+	words, err := encodeTranscriptWords(upload)
+	if err != nil {
+		return err
+	}
+	_, err = p.pool.Exec(ctx, `
+		INSERT INTO audio_uploads (id, session_id, object_path, content_type, size_bytes, duration_ms, transcript, language, transcript_words, cost_usd, stored, counted, message_id, uploaded_at)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)`,
 		upload.ID, upload.SessionID, upload.ObjectPath, upload.ContentType,
-		upload.SizeBytes, upload.DurationMS, upload.Transcript, upload.Language, upload.CostUSD,
+		upload.SizeBytes, upload.DurationMS, upload.Transcript, upload.Language, words, upload.CostUSD,
 		upload.Stored, upload.Counted, upload.MessageID, upload.UploadedAt)
 	return mapError(err)
+}
+
+// encodeTranscriptWords stores the word timings and the segment-weighted
+// confidence in the single nullable jsonb column. They are internal: no API
+// response exposes them.
+func encodeTranscriptWords(upload AudioUpload) (any, error) {
+	if len(upload.Words) == 0 && upload.Confidence == 0 {
+		return nil, nil
+	}
+	encoded, err := json.Marshal(struct {
+		Words      []domain.TranscriptWord `json:"words"`
+		Confidence float64                 `json:"confidence"`
+	}{Words: upload.Words, Confidence: upload.Confidence})
+	if err != nil {
+		return nil, fmt.Errorf("marshal transcript words: %w", err)
+	}
+	return string(encoded), nil
 }
 
 func (p *Postgres) GetAudioUpload(ctx context.Context, id string) (AudioUpload, error) {
@@ -1059,11 +1099,11 @@ func (p *Postgres) ListNodeEvents(ctx context.Context, runID string, sinceSeq in
 
 const (
 	jobColumns         = `id, title, description, rubric, status, spoken_english_required, created_at, updated_at`
-	applicationColumns = `id, job_id, name, email, cv_object_path, cv_text, status, decision_note, decided_at, authenticity, created_at`
+	applicationColumns = `id, job_id, name, email, cv_object_path, cv_text, status, decision_note, decided_at, authenticity, fluency, created_at`
 	sessionColumns     = `id, application_id, token_hash, status, expires_at, started_at, ended_at, finish_reason, question_count, voice, recording_consent, created_at`
 	topicColumns       = `id, session_id, position, title, goal, rubric_keys, seed_question, status, follow_up_count`
 	messageColumns     = `id, session_id, topic_id, role, kind, content, entry, created_at`
-	audioUploadColumns = `id, session_id, object_path, content_type, size_bytes, duration_ms, transcript, language, cost_usd::double precision, stored, counted, message_id, uploaded_at, deleted_at`
+	audioUploadColumns = `id, session_id, object_path, content_type, size_bytes, duration_ms, transcript, language, transcript_words, cost_usd::double precision, stored, counted, message_id, uploaded_at, deleted_at`
 	scoreColumns       = `id, application_id, rubric_key, score, rationale, evidence, status, attempts, created_at`
 	graphRunColumns    = `id, session_id, status, started_at, ended_at, total_tokens_in, total_tokens_out, cost_usd::double precision, error`
 	nodeEventColumns   = `id, run_id, seq, node_id, type, attempt, model, tokens_in, tokens_out, duration_ms, payload, created_at`
@@ -1087,9 +1127,9 @@ func scanJob(row rowScanner) (domain.Job, error) {
 
 func scanApplication(row rowScanner) (domain.Application, error) {
 	var app domain.Application
-	var authenticity []byte
+	var authenticity, fluency []byte
 	if err := row.Scan(&app.ID, &app.JobID, &app.Name, &app.Email, &app.CVObjectPath, &app.CVText,
-		&app.Status, &app.DecisionNote, &app.DecidedAt, &authenticity, &app.CreatedAt); err != nil {
+		&app.Status, &app.DecisionNote, &app.DecidedAt, &authenticity, &fluency, &app.CreatedAt); err != nil {
 		return domain.Application{}, err
 	}
 	if len(authenticity) > 0 {
@@ -1098,6 +1138,13 @@ func scanApplication(row rowScanner) (domain.Application, error) {
 			return domain.Application{}, fmt.Errorf("unmarshal authenticity: %w", err)
 		}
 		app.Authenticity = &auth
+	}
+	if len(fluency) > 0 {
+		var assessment domain.Fluency
+		if err := json.Unmarshal(fluency, &assessment); err != nil {
+			return domain.Application{}, fmt.Errorf("unmarshal fluency: %w", err)
+		}
+		app.Fluency = &assessment
 	}
 	return app, nil
 }
@@ -1149,10 +1196,22 @@ func scanMessage(row rowScanner) (domain.Message, error) {
 
 func scanAudioUpload(row rowScanner) (AudioUpload, error) {
 	var upload AudioUpload
+	var words []byte
 	if err := row.Scan(&upload.ID, &upload.SessionID, &upload.ObjectPath, &upload.ContentType,
-		&upload.SizeBytes, &upload.DurationMS, &upload.Transcript, &upload.Language, &upload.CostUSD,
+		&upload.SizeBytes, &upload.DurationMS, &upload.Transcript, &upload.Language, &words, &upload.CostUSD,
 		&upload.Stored, &upload.Counted, &upload.MessageID, &upload.UploadedAt, &upload.DeletedAt); err != nil {
 		return AudioUpload{}, err
+	}
+	if len(words) > 0 {
+		var detail struct {
+			Words      []domain.TranscriptWord `json:"words"`
+			Confidence float64                 `json:"confidence"`
+		}
+		if err := json.Unmarshal(words, &detail); err != nil {
+			return AudioUpload{}, fmt.Errorf("unmarshal transcript words: %w", err)
+		}
+		upload.Words = detail.Words
+		upload.Confidence = detail.Confidence
 	}
 	return upload, nil
 }

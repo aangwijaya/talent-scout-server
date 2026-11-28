@@ -925,7 +925,7 @@ func (m *SessionManager) abortExternalTurn(st *liveSession) {
 // ended, so only the run and application state change here.
 func (m *SessionManager) failScoring(ctx context.Context, sess domain.Session, st *liveSession, err error) {
 	m.logger.Error("scoring failed", "session_id", sess.ID, "error", err)
-	for _, nodeID := range []string{"evidence_check", "authenticity"} {
+	for _, nodeID := range []string{"evidence_check", "authenticity", "fluency"} {
 		if !st.executed[nodeID] {
 			_ = st.runner.EmitNodeSkipped(ctx, nodeID, "run_failed")
 		}

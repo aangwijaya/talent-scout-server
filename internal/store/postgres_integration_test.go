@@ -419,6 +419,36 @@ func TestPostgresStore(t *testing.T) {
 		t.Fatalf("assessed_at = %s, want %s", assessed.Authenticity.AssessedAt, assessedAt)
 	}
 
+	fluency := domain.Fluency{
+		WordsPerMinute:       132.4,
+		PauseRatio:           0.18,
+		FillerRate:           0.03,
+		TranscriptConfidence: 0.94,
+		Languages:            []string{"en", "id"},
+		Summary:              "Steady pace with a few pauses.",
+		SpokenAnswers:        2,
+		TypedAnswers:         1,
+		AssessedAt:           assessedAt,
+	}
+	if err := s.SetApplicationFluency(ctx, app.ID, &fluency); err != nil {
+		t.Fatalf("SetApplicationFluency: %v", err)
+	}
+	withFluency, err := s.GetApplication(ctx, app.ID)
+	if err != nil {
+		t.Fatalf("GetApplication after fluency: %v", err)
+	}
+	if withFluency.Fluency == nil || withFluency.Fluency.WordsPerMinute != 132.4 ||
+		withFluency.Fluency.TranscriptConfidence != 0.94 || len(withFluency.Fluency.Languages) != 2 ||
+		!withFluency.Fluency.AssessedAt.Equal(assessedAt) {
+		t.Fatalf("stored fluency = %+v, want the measured assessment", withFluency.Fluency)
+	}
+	if err := s.SetApplicationFluency(ctx, app.ID, nil); err != nil {
+		t.Fatalf("clear SetApplicationFluency: %v", err)
+	}
+	if cleared, err := s.GetApplication(ctx, app.ID); err != nil || cleared.Fluency != nil {
+		t.Fatalf("cleared fluency = %+v, %v; want null", cleared.Fluency, err)
+	}
+
 	scoreValue := 4
 	if err := s.UpsertScores(ctx, []domain.Score{{
 		ApplicationID: app.ID,
@@ -513,6 +543,11 @@ func testPostgresAudioUploads(ctx context.Context, t *testing.T, s *store.Postgr
 	rejected.CostUSD = 0.0002
 	rejected.Counted = false
 	rejected.Stored = false // the helper stores every upload; a rejected one never reached the bucket
+	rejected.Confidence = 0.93
+	rejected.Words = []domain.TranscriptWord{
+		{Word: "I", Start: 0.0, End: 0.2},
+		{Word: "spoke", Start: 0.3, End: 0.8},
+	}
 	for _, u := range []store.AudioUpload{sentOld, sentNew, unsentOld, unsentNew, deleted} {
 		if err := s.CreateAudioUpload(ctx, u); err != nil {
 			t.Fatalf("CreateAudioUpload: %v", err)
@@ -534,6 +569,9 @@ func testPostgresAudioUploads(ctx context.Context, t *testing.T, s *store.Postgr
 	}
 	if stored.Stored {
 		t.Fatal("rejected upload stored = true, want false")
+	}
+	if len(stored.Words) != 2 || stored.Words[1].Word != "spoke" || stored.Words[1].End != 0.8 || stored.Confidence != 0.93 {
+		t.Fatalf("stored words = %+v confidence=%v, want the word timings", stored.Words, stored.Confidence)
 	}
 	if err := s.SetAudioUploadStored(ctx, rejected.ID, true); err != nil {
 		t.Fatalf("SetAudioUploadStored: %v", err)

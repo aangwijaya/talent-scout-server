@@ -12,6 +12,7 @@ var promptNodes = []prompts.Node{
 	prompts.NodeJudge,
 	prompts.NodeScorer,
 	prompts.NodeAuthenticity,
+	prompts.NodeFluency,
 	prompts.NodeRubricSuggester,
 }
 

@@ -26,6 +26,7 @@ func testModels() config.ModelsConfig {
 			"judge":        {Model: "deepseek/deepseek-v4.1-flash", MaxTokens: 200},
 			"scorer":       {Model: "deepseek/deepseek-v4.1-flash", MaxTokens: 1200},
 			"authenticity": {Model: "deepseek/deepseek-v4.1-flash", MaxTokens: 1200},
+			"fluency":      {Model: "deepseek/deepseek-v4.1-flash", MaxTokens: 1200},
 		},
 		Prices: map[string]config.Price{
 			"deepseek/deepseek-v4.1-flash": {In: 0.045, Out: 0.5},

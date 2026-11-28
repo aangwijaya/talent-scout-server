@@ -3,6 +3,8 @@ package transcribe
 import (
 	"context"
 	"sync"
+
+	"github.com/aangwijaya/talent-scout-server/internal/domain"
 )
 
 // Fake is the deterministic, network-free transcriber used by tests and by
@@ -15,7 +17,16 @@ type Fake struct {
 }
 
 func NewFake() *Fake {
-	return &Fake{result: Result{Transcript: "fake transcript", Language: "en", DurationMS: 5000}}
+	return &Fake{result: Result{
+		Transcript: "fake transcript",
+		Language:   "en",
+		DurationMS: 5000,
+		Words: []domain.TranscriptWord{
+			{Word: "fake", Start: 0, End: 0.4},
+			{Word: "transcript", Start: 0.5, End: 1.2},
+		},
+		Confidence: 0.9,
+	}}
 }
 
 func (f *Fake) SetResult(result Result) {

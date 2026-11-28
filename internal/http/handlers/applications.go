@@ -94,6 +94,7 @@ type applicationDetail struct {
 	Messages     []recruiterMessage   `json:"messages"`
 	Scores       []domain.Score       `json:"scores"`
 	Authenticity *domain.Authenticity `json:"authenticity"`
+	Fluency      *domain.Fluency      `json:"fluency"`
 }
 
 // recruiterMessage is the recruiter's Message view: the applicant entry signals
@@ -249,6 +250,7 @@ func (h *Applications) Get(w http.ResponseWriter, r *http.Request) {
 		Messages:     []recruiterMessage{},
 		Scores:       []domain.Score{},
 		Authenticity: app.Authenticity,
+		Fluency:      app.Fluency,
 	}
 
 	scores, err := h.store.ListScoresByApplication(ctx, app.ID)

@@ -56,6 +56,12 @@ func TestLiveGroqTranscription(t *testing.T) {
 	if result.Language != "en" {
 		t.Errorf("language = %q, want en", result.Language)
 	}
+	if len(result.Words) == 0 {
+		t.Error("words = 0, want Groq word timings (timestamp_granularities[]=word)")
+	}
+	if result.Confidence <= 0 || result.Confidence > 1 {
+		t.Errorf("confidence = %v, want a 0-1 transcript confidence", result.Confidence)
+	}
 	gotSeconds := float64(result.DurationMS) / 1000
 	tolerance := math.Max(1, expectedSeconds*0.1)
 	if math.Abs(gotSeconds-expectedSeconds) > tolerance {

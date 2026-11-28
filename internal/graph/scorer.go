@@ -190,10 +190,6 @@ func (m *SessionManager) runScoring(ctx context.Context, sess domain.Session, st
 	if err != nil {
 		return err
 	}
-	uploads, err := m.store.ListAudioUploadsBySession(ctx, sess.ID)
-	if err != nil {
-		return err
-	}
 
 	aliases := newAliasTable(messages)
 	scorable, scorableKeys, unscorable := splitScorable(job.Rubric, topics, messages)
@@ -319,7 +315,7 @@ func (m *SessionManager) runScoring(ctx context.Context, sess domain.Session, st
 	if err := st.runner.EmitEdge(ctx, "authenticity", "fluency", "scored"); err != nil {
 		return err
 	}
-	m.runFluency(ctx, sess, st, messages, uploads)
+	m.runFluency(ctx, sess, st, messages)
 	if err := st.runner.EmitEdge(ctx, "fluency", "recruiter_gate", "scored"); err != nil {
 		return err
 	}

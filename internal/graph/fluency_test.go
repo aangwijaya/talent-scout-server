@@ -86,6 +86,26 @@ func TestComputeFluencyMetrics(t *testing.T) {
 			},
 		},
 		{
+			name:     "gap under the pause threshold",
+			messages: []domain.Message{spoken("a")},
+			uploads: []store.AudioUpload{upload("a", "en", 0.9, 1900,
+				word("I", 0, 0.5), word("built", 0.9, 1.4), word("this", 1.4, 1.9))},
+			want: domain.Fluency{
+				WordsPerMinute: 94.74, PauseRatio: 0, FillerRate: 0,
+				TranscriptConfidence: 0.9, Languages: []string{"en"}, SpokenAnswers: 1,
+			},
+		},
+		{
+			name:     "gap over the pause threshold",
+			messages: []domain.Message{spoken("a")},
+			uploads: []store.AudioUpload{upload("a", "en", 0.9, 2100,
+				word("I", 0, 0.5), word("built", 1.1, 1.6), word("this", 1.6, 2.1))},
+			want: domain.Fluency{
+				WordsPerMinute: 85.71, PauseRatio: 0.29, FillerRate: 0,
+				TranscriptConfidence: 0.9, Languages: []string{"en"}, SpokenAnswers: 1,
+			},
+		},
+		{
 			name:     "mixed languages",
 			messages: []domain.Message{spoken("a"), spoken("b")},
 			uploads: []store.AudioUpload{
@@ -152,6 +172,14 @@ func timing(text string, start, end float64) domain.TranscriptWord {
 // uploaded and attached before sending, so the run has word timings at scoring.
 func runFluencyScenario(t *testing.T, voice bool, answers []fluencyAnswer, reply string, fluencyErr error) fluencyScenario {
 	t.Helper()
+	return runFluencyScenarioWithStore(t, voice, answers, reply, fluencyErr, nil)
+}
+
+// runFluencyScenarioWithStore is runFluencyScenario with an optional wrapper
+// around the store the session manager uses. The fixture keeps the underlying
+// memory store for assertions.
+func runFluencyScenarioWithStore(t *testing.T, voice bool, answers []fluencyAnswer, reply string, fluencyErr error, wrap func(store.Store) store.Store) fluencyScenario {
+	t.Helper()
 	st, sess := seedGraphSession(t)
 	if voice {
 		sess.Voice = true
@@ -183,7 +211,11 @@ func runFluencyScenario(t *testing.T, voice bool, answers []fluencyAnswer, reply
 			}
 		},
 	}
-	manager := scoringManager(t, st, client, 15)
+	var managerStore store.Store = st
+	if wrap != nil {
+		managerStore = wrap(st)
+	}
+	manager := scoringManager(t, managerStore, client, 15)
 	if err := manager.Start(context.Background(), sess); err != nil {
 		t.Fatalf("Start: %v", err)
 	}
@@ -362,9 +394,17 @@ func TestFluencyVoiceSessionStoresCodeMetricsNotModelOnes(t *testing.T) {
 		}
 		fluencyCall = true
 		input := call.Messages[len(call.Messages)-1].Content
+		outside := input
 		for _, answer := range answers {
-			if !strings.Contains(input, prompts.WrapUntrusted("spoken_transcript", answer.text)) {
+			wrapped := prompts.WrapUntrusted("spoken_transcript", answer.text)
+			if !strings.Contains(input, wrapped) {
 				t.Errorf("fluency input does not wrap transcript %q as untrusted data:\n%s", answer.text, input)
+			}
+			outside = strings.ReplaceAll(outside, wrapped, "")
+		}
+		for _, answer := range answers {
+			if strings.Contains(outside, answer.text) {
+				t.Errorf("transcript %q appears outside its untrusted block:\n%s", answer.text, input)
 			}
 		}
 		if !strings.Contains(input, "words_per_minute:") {
@@ -497,5 +537,105 @@ func TestFluencyDoesNotChangeScores(t *testing.T) {
 	}
 	if weightedOverall(withScores, job.Rubric) != weightedOverall(withoutScores, job.Rubric) {
 		t.Errorf("overall score changed: %v with fluency, %v without", weightedOverall(withScores, job.Rubric), weightedOverall(withoutScores, job.Rubric))
+	}
+
+	for _, scenario := range []fluencyScenario{withFluency, withoutFluency} {
+		for _, call := range scenario.client.Calls() {
+			if call.Node != "scorer" {
+				continue
+			}
+			for _, message := range call.Messages {
+				for _, banned := range []string{"words_per_minute", "pause_ratio", "filler_rate", "fluency"} {
+					if strings.Contains(message.Content, banned) {
+						t.Errorf("scorer request contains %q; fluency must not reach the scorer", banned)
+					}
+				}
+			}
+		}
+	}
+}
+
+// failingUploadStore fails the session's upload load, as a store outage would.
+type failingUploadStore struct {
+	store.Store
+}
+
+func (s *failingUploadStore) ListAudioUploadsBySession(context.Context, string) ([]store.AudioUpload, error) {
+	return nil, errors.New("upload store unavailable")
+}
+
+// An upload-load error is advisory only: the run still succeeds, the application
+// reaches review, and fluency stays null for both text and voice sessions.
+func TestFluencyUploadLoadErrorLeavesRunSucceededAndNull(t *testing.T) {
+	tests := []struct {
+		name    string
+		voice   bool
+		answers []fluencyAnswer
+	}{
+		{
+			name:  "text session",
+			voice: false,
+			answers: []fluencyAnswer{
+				{text: "answer one"}, {text: "answer two"}, {text: "answer three"},
+			},
+		},
+		{
+			name:    "voice session",
+			voice:   true,
+			answers: spokenAnswers(),
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			wrap := func(base store.Store) store.Store {
+				return &failingUploadStore{Store: base}
+			}
+			scenario := runFluencyScenarioWithStore(t, tc.voice, tc.answers, FakeReplies["fluency"], nil, wrap)
+
+			app, err := scenario.store.GetApplication(context.Background(), scenario.session.ApplicationID)
+			if err != nil {
+				t.Fatalf("GetApplication: %v", err)
+			}
+			if app.Fluency != nil {
+				t.Errorf("fluency = %+v, want null after the upload load failed", app.Fluency)
+			}
+			if app.Status != domain.ApplicationStatusReview {
+				t.Errorf("application status = %q, want review", app.Status)
+			}
+			run, err := scenario.store.GetGraphRunBySession(context.Background(), scenario.session.ID)
+			if err != nil {
+				t.Fatalf("GetGraphRunBySession: %v", err)
+			}
+			if run.Status != domain.GraphRunStatusSucceeded {
+				t.Errorf("run status = %q, want succeeded", run.Status)
+			}
+
+			var started, failed bool
+			for _, event := range scenario.events {
+				if event.NodeID == nil || *event.NodeID != "fluency" {
+					continue
+				}
+				switch event.Type {
+				case EventNodeStarted:
+					started = true
+				case EventNodeFailed:
+					var payload NodeFailed
+					if err := json.Unmarshal(event.Payload, &payload); err != nil {
+						t.Fatalf("unmarshal node.failed: %v", err)
+					}
+					failed = true
+					if payload.Error != "llm_error" || payload.WillRetry {
+						t.Errorf("node.failed = %+v, want llm_error with will_retry=false", payload)
+					}
+				}
+			}
+			if tc.voice {
+				if !started || !failed {
+					t.Errorf("fluency started=%v failed=%v, want both", started, failed)
+				}
+			} else if started || failed {
+				t.Errorf("fluency started=%v failed=%v, want the text-session skip only", started, failed)
+			}
+		})
 	}
 }

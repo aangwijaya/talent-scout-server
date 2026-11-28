@@ -218,7 +218,7 @@ func fluencyResponseFormat() *llm.ResponseFormat {
 // recruiter gate. A text session is skipped with reason text_session. Any
 // failure is safe: the run still completes and the application's fluency stays
 // null (ADR 0001).
-func (m *SessionManager) runFluency(ctx context.Context, sess domain.Session, st *liveSession, messages []domain.Message, uploads []store.AudioUpload) {
+func (m *SessionManager) runFluency(ctx context.Context, sess domain.Session, st *liveSession, messages []domain.Message) {
 	st.executed["fluency"] = true
 	// Clear an earlier assessment first, so a failed check on a rescore leaves null.
 	if err := m.store.SetApplicationFluency(ctx, sess.ApplicationID, nil); err != nil {
@@ -231,10 +231,23 @@ func (m *SessionManager) runFluency(ctx context.Context, sess domain.Session, st
 		return
 	}
 
+	uploads, err := m.store.ListAudioUploadsBySession(ctx, sess.ID)
+	if err != nil {
+		// The assessment is advisory: a store error must not fail the run (ADR 0001).
+		m.logger.Error("load fluency audio uploads failed", "session_id", sess.ID, "error", err)
+		var model *string
+		if node, nodeErr := m.models.Node("fluency"); nodeErr == nil {
+			model = &node.Model
+		}
+		_ = st.runner.emitNodeStarted(ctx, "fluency", 1, model, "session audio uploads")
+		_ = st.runner.emitNodeFailed(ctx, "fluency", 1, model, "llm_error", false)
+		return
+	}
+
 	metrics := computeFluency(messages, uploads)
 	var summary string
 	var parseErr error
-	_, _, err := st.runner.runLLMNodeWithSummary(ctx, "fluency", 1, llm.Request{
+	_, _, err = st.runner.runLLMNodeWithSummary(ctx, "fluency", 1, llm.Request{
 		Messages:       fluencyMessages(metrics, messages, uploads),
 		ResponseFormat: fluencyResponseFormat(),
 	}, "voice metrics and spoken transcripts", nil, func(resp llm.Response) string {

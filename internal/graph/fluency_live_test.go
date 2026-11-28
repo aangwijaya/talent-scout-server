@@ -92,4 +92,5 @@ func TestLiveFluencySummary(t *testing.T) {
 		}
 	}
 	t.Logf("fluency summary: %q", summary)
+	t.Logf("fluency usage: prompt=%d completion=%d tokens (liveGateFloors[fluency]=2000)", resp.Usage.PromptTokens, resp.Usage.CompletionTokens)
 }

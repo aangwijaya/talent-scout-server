@@ -808,6 +808,20 @@ func TestApplicationDetailReturnsEntryAndAuthenticity(t *testing.T) {
 	if err := f.store.SetApplicationAuthenticity(ctx, app.ID, &auth); err != nil {
 		t.Fatalf("SetApplicationAuthenticity: %v", err)
 	}
+	fluency := domain.Fluency{
+		WordsPerMinute:       132.4,
+		PauseRatio:           0.18,
+		FillerRate:           0.03,
+		TranscriptConfidence: 0.94,
+		Languages:            []string{"en"},
+		Summary:              "Steady pace with a few short pauses.",
+		SpokenAnswers:        1,
+		TypedAnswers:         0,
+		AssessedAt:           time.Now().UTC().Truncate(time.Microsecond),
+	}
+	if err := f.store.SetApplicationFluency(ctx, app.ID, &fluency); err != nil {
+		t.Fatalf("SetApplicationFluency: %v", err)
+	}
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/applications/"+app.ID, nil)
 	req.Header.Set("Authorization", "Bearer "+f.token)
@@ -824,6 +838,17 @@ func TestApplicationDetailReturnsEntryAndAuthenticity(t *testing.T) {
 			Reasons    []string  `json:"reasons"`
 			AssessedAt time.Time `json:"assessed_at"`
 		} `json:"authenticity"`
+		Fluency *struct {
+			WordsPerMinute       float64   `json:"words_per_minute"`
+			PauseRatio           float64   `json:"pause_ratio"`
+			FillerRate           float64   `json:"filler_rate"`
+			TranscriptConfidence float64   `json:"transcript_confidence"`
+			Languages            []string  `json:"languages"`
+			Summary              string    `json:"summary"`
+			SpokenAnswers        int       `json:"spoken_answers"`
+			TypedAnswers         int       `json:"typed_answers"`
+			AssessedAt           time.Time `json:"assessed_at"`
+		} `json:"fluency"`
 		Messages []struct {
 			Role  string `json:"role"`
 			Entry *struct {
@@ -838,6 +863,10 @@ func TestApplicationDetailReturnsEntryAndAuthenticity(t *testing.T) {
 	}
 	if got.Authenticity == nil || got.Authenticity.Level != "possible" || len(got.Authenticity.Reasons) != 1 {
 		t.Fatalf("authenticity = %+v, want possible with its reason", got.Authenticity)
+	}
+	if got.Fluency == nil || got.Fluency.WordsPerMinute != 132.4 || got.Fluency.SpokenAnswers != 1 ||
+		len(got.Fluency.Languages) != 1 || got.Fluency.Languages[0] != "en" || got.Fluency.AssessedAt.IsZero() {
+		t.Fatalf("fluency = %+v, want the stored assessment", got.Fluency)
 	}
 	var applicantEntry, assistantEntry bool
 	for _, message := range got.Messages {

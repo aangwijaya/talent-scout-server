@@ -66,6 +66,8 @@ type AudioUpload struct {
 	DurationMS  int
 	Transcript  string
 	Language    string
+	Words       []domain.TranscriptWord
+	Confidence  float64
 	CostUSD     float64
 	Stored      bool
 	Counted     bool
@@ -105,6 +107,7 @@ type Store interface {
 	UpdateApplicationStatus(ctx context.Context, id string, status domain.ApplicationStatus) error
 	SetApplicationDecision(ctx context.Context, id string, status domain.ApplicationStatus, note string, decidedAt time.Time) (domain.Application, error)
 	SetApplicationAuthenticity(ctx context.Context, id string, authenticity *domain.Authenticity) error
+	SetApplicationFluency(ctx context.Context, id string, fluency *domain.Fluency) error
 
 	CreateSession(ctx context.Context, session domain.Session) error
 	GetSession(ctx context.Context, id string) (domain.Session, error)

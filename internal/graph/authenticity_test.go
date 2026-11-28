@@ -284,6 +284,9 @@ func assertAuthenticityEventOrder(t *testing.T, events []domain.NodeEvent) {
 		case EventNodeCompleted:
 			name := "node.completed." + derefNodeID(event.NodeID)
 			names = append(names, name)
+		case EventNodeSkipped:
+			name := "node.skipped." + derefNodeID(event.NodeID)
+			names = append(names, name)
 		case EventEdgeTraversed:
 			var payload EdgeTraversed
 			if err := json.Unmarshal(event.Payload, &payload); err != nil {
@@ -305,13 +308,16 @@ func assertAuthenticityEventOrder(t *testing.T, events []domain.NodeEvent) {
 	evidenceToAuth := indexOf("edge.evidence_check-authenticity")
 	authStart := indexOf("node.started.authenticity")
 	authDone := indexOf("node.completed.authenticity")
-	authToGate := indexOf("edge.authenticity-recruiter_gate")
+	authToFluency := indexOf("edge.authenticity-fluency")
+	fluencySkipped := indexOf("node.skipped.fluency")
+	fluencyToGate := indexOf("edge.fluency-recruiter_gate")
 	completed := indexOf("run.completed")
-	if evidenceToAuth < 0 || authStart < 0 || authDone < 0 || authToGate < 0 || completed < 0 {
-		t.Fatalf("missing authenticity events: %v", names)
+	if evidenceToAuth < 0 || authStart < 0 || authDone < 0 || authToFluency < 0 || fluencySkipped < 0 || fluencyToGate < 0 || completed < 0 {
+		t.Fatalf("missing authenticity/fluency events: %v", names)
 	}
-	if !(evidenceToAuth < authStart && authStart < authDone && authDone < authToGate && authToGate < completed) {
-		t.Errorf("authenticity events out of order: %v", names)
+	if !(evidenceToAuth < authStart && authStart < authDone && authDone < authToFluency &&
+		authToFluency < fluencySkipped && fluencySkipped < fluencyToGate && fluencyToGate < completed) {
+		t.Errorf("authenticity/fluency events out of order: %v", names)
 	}
 }
 

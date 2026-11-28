@@ -170,3 +170,37 @@ func TestMemoryMarkAudioUploadDeletedIsIdempotent(t *testing.T) {
 		t.Fatalf("deleted_at = %v, want the first timestamp", got.DeletedAt)
 	}
 }
+
+func TestMemoryAudioUploadWordTimingsRoundTrip(t *testing.T) {
+	st := store.NewMemory()
+	ctx := context.Background()
+	upload := audioUpload("upload-words", time.Now().UTC(), nil)
+	upload.Words = []domain.TranscriptWord{
+		{Word: "I", Start: 0, End: 0.3},
+		{Word: "built", Start: 0.4, End: 0.9},
+	}
+	upload.Confidence = 0.87
+	if err := st.CreateAudioUpload(ctx, upload); err != nil {
+		t.Fatalf("CreateAudioUpload: %v", err)
+	}
+
+	got, err := st.GetAudioUpload(ctx, upload.ID)
+	if err != nil {
+		t.Fatalf("GetAudioUpload: %v", err)
+	}
+	if len(got.Words) != 2 || got.Words[1].Word != "built" || got.Words[1].Start != 0.4 || got.Words[1].End != 0.9 {
+		t.Fatalf("words = %+v, want the stored timings", got.Words)
+	}
+	if got.Confidence != 0.87 {
+		t.Fatalf("confidence = %v, want 0.87", got.Confidence)
+	}
+
+	got.Words[0].Word = "mutated"
+	fresh, err := st.GetAudioUpload(ctx, upload.ID)
+	if err != nil {
+		t.Fatalf("second GetAudioUpload: %v", err)
+	}
+	if fresh.Words[0].Word != "I" {
+		t.Errorf("stored words were mutated through the returned slice: %+v", fresh.Words)
+	}
+}

@@ -117,6 +117,7 @@ type Application struct {
 	DecisionNote string            `json:"decision_note"`
 	DecidedAt    *time.Time        `json:"decided_at"`
 	Authenticity *Authenticity     `json:"authenticity"`
+	Fluency      *Fluency          `json:"fluency"`
 	CreatedAt    time.Time         `json:"created_at"`
 }
 
@@ -220,6 +221,30 @@ type Authenticity struct {
 	Level      AuthenticityLevel `json:"level"`
 	Reasons    []string          `json:"reasons"`
 	AssessedAt time.Time         `json:"assessed_at"`
+}
+
+// TranscriptWord is one word with its start and end time in seconds, as the
+// speech-to-text provider reports it. Word timings are stored with the upload
+// but never exposed through the API.
+type TranscriptWord struct {
+	Word  string  `json:"word"`
+	Start float64 `json:"start"`
+	End   float64 `json:"end"`
+}
+
+// Fluency is the advisory spoken-English assessment shown to the recruiter. The
+// metrics are computed in code from word timings; the model only writes Summary.
+// It is null for a text session, before the run ends, or when the check failed.
+type Fluency struct {
+	WordsPerMinute       float64   `json:"words_per_minute"`
+	PauseRatio           float64   `json:"pause_ratio"`
+	FillerRate           float64   `json:"filler_rate"`
+	TranscriptConfidence float64   `json:"transcript_confidence"`
+	Languages            []string  `json:"languages"`
+	Summary              string    `json:"summary"`
+	SpokenAnswers        int       `json:"spoken_answers"`
+	TypedAnswers         int       `json:"typed_answers"`
+	AssessedAt           time.Time `json:"assessed_at"`
 }
 
 type ScoreEvidence struct {

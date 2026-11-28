@@ -248,3 +248,50 @@ func TestMemoryResendInviteForFailedApplicationOnlyOnce(t *testing.T) {
 		t.Fatalf("second session was stored (GetSession err = %v)", err)
 	}
 }
+
+func TestMemorySetApplicationFluencyRoundTripsAndClears(t *testing.T) {
+	ctx := context.Background()
+	s := store.NewMemory()
+	app := domain.Application{
+		ID:     domain.NewID(),
+		JobID:  domain.NewID(),
+		Name:   "Budi",
+		Email:  "budi@example.com",
+		Status: domain.ApplicationStatusReview,
+	}
+	if err := s.CreateApplication(ctx, app); err != nil {
+		t.Fatalf("CreateApplication: %v", err)
+	}
+	assessedAt := time.Now().UTC().Truncate(time.Microsecond)
+	fluency := domain.Fluency{
+		WordsPerMinute:       132.4,
+		PauseRatio:           0.18,
+		FillerRate:           0.03,
+		TranscriptConfidence: 0.94,
+		Languages:            []string{"en", "id"},
+		Summary:              "Steady pace with a few pauses.",
+		SpokenAnswers:        6,
+		TypedAnswers:         1,
+		AssessedAt:           assessedAt,
+	}
+	if err := s.SetApplicationFluency(ctx, app.ID, &fluency); err != nil {
+		t.Fatalf("SetApplicationFluency: %v", err)
+	}
+	got, err := s.GetApplication(ctx, app.ID)
+	if err != nil {
+		t.Fatalf("GetApplication: %v", err)
+	}
+	if got.Fluency == nil || got.Fluency.WordsPerMinute != 132.4 || len(got.Fluency.Languages) != 2 || !got.Fluency.AssessedAt.Equal(assessedAt) {
+		t.Fatalf("fluency = %+v, want the stored assessment", got.Fluency)
+	}
+	if err := s.SetApplicationFluency(ctx, app.ID, nil); err != nil {
+		t.Fatalf("clear SetApplicationFluency: %v", err)
+	}
+	cleared, err := s.GetApplication(ctx, app.ID)
+	if err != nil {
+		t.Fatalf("GetApplication after clear: %v", err)
+	}
+	if cleared.Fluency != nil {
+		t.Fatalf("fluency = %+v, want null after clearing", cleared.Fluency)
+	}
+}

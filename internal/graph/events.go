@@ -54,7 +54,7 @@ type EdgeRef struct {
 // NodeIDs is the ordered machine-node list. recruiter_gate is a human gate
 // outside the runner and emits no node events, but it is reported in run.started.
 var NodeIDs = []string{
-	"planner", "plan_check", "interviewer", "judge", "guard", "scorer", "evidence_check", "authenticity", "recruiter_gate",
+	"planner", "plan_check", "interviewer", "judge", "guard", "scorer", "evidence_check", "authenticity", "fluency", "recruiter_gate",
 }
 
 var nodeTypes = map[string]NodeType{
@@ -66,6 +66,7 @@ var nodeTypes = map[string]NodeType{
 	"scorer":         NodeTypeWorker,
 	"evidence_check": NodeTypeCode,
 	"authenticity":   NodeTypeWorker,
+	"fluency":        NodeTypeWorker,
 	"recruiter_gate": NodeTypeHumanGate,
 }
 
@@ -85,7 +86,8 @@ var Edges = []EdgeRef{
 	{From: "scorer", To: "evidence_check"},
 	{From: "evidence_check", To: "scorer"},
 	{From: "evidence_check", To: "authenticity"},
-	{From: "authenticity", To: "recruiter_gate"},
+	{From: "authenticity", To: "fluency"},
+	{From: "fluency", To: "recruiter_gate"},
 }
 
 // Nodes returns the run.started nodes list.

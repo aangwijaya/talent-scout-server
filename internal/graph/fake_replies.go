@@ -17,6 +17,7 @@ var FakeReplies = map[string]string{
 	"interviewer":  "Tell me about a frontend performance problem you solved. What did you measure before and after, and what trade-offs did you accept?",
 	"judge":        `{"verdict":"follow_up","reason":"The answer needs a concrete example with measured outcomes.","missing":["specific project","before/after metrics"]}`,
 	"authenticity": `{"level":"likely","reasons":["4 of 6 answers were pasted in full","answers read as generic and template-like, with no first-hand detail"]}`,
+	"fluency":      `{"summary":"The applicant spoke at a steady pace with a few short pauses and occasional filler words. The transcripts are clear and use relevant technical vocabulary."}`,
 	"rubric_suggester": `{"rubric":[
 		{"key":"frontend_depth","label":"Frontend depth","description":"Svelte, React and rendering depth.","weight":3},
 		{"key":"system_design","label":"System design","description":"Component boundaries and data flow.","weight":2},

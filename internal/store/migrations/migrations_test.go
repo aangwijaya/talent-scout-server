@@ -60,6 +60,24 @@ func TestAudioUploadsMigrationEnablesRLS(t *testing.T) {
 	}
 }
 
+func TestFluencyMigrationAddsNullableAssessments(t *testing.T) {
+	data, err := migrations.FS.ReadFile("00009_fluency.sql")
+	if err != nil {
+		t.Fatalf("read migration: %v", err)
+	}
+	up := string(data)
+	for _, want := range []string{
+		"ALTER TABLE applications ADD COLUMN fluency jsonb",
+		"ALTER TABLE audio_uploads ADD COLUMN transcript_words jsonb",
+		"applications_fluency_object_check",
+		"audio_uploads_transcript_words_object_check",
+	} {
+		if !strings.Contains(up, want) {
+			t.Errorf("migration is missing %q", want)
+		}
+	}
+}
+
 func TestAudioStoredMigrationAddsStoredFlag(t *testing.T) {
 	data, err := migrations.FS.ReadFile("00008_audio_stored.sql")
 	if err != nil {

@@ -39,6 +39,8 @@ func nodeFromRequest(req llmRequestInfo) string {
 			return "scorer"
 		case strings.Contains(message.Content, "You are the authenticity reviewer"):
 			return "authenticity"
+		case strings.Contains(message.Content, "You are the fluency reviewer"):
+			return "fluency"
 		case strings.Contains(message.Content, "You are a hiring rubric assistant"):
 			return "rubric_suggester"
 		}

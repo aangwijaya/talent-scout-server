@@ -8,6 +8,7 @@ nodes:
   judge:       { model: deepseek/deepseek-v4.1-flash, temperature: 0.0, max_tokens: 2400 }
   scorer:      { model: deepseek/deepseek-v4.1-flash, temperature: 0.0, max_tokens: 8000 }
   authenticity: { model: deepseek/deepseek-v4.1-flash, temperature: 0.0, max_tokens: 2000 }
+  fluency:      { model: deepseek/deepseek-v4.1-flash, temperature: 0.2, max_tokens: 2000 }
   rubric_suggester: { model: deepseek/deepseek-v4.1-flash, temperature: 0.3, max_tokens: 3000 }
 prices:
   deepseek/deepseek-v4.1-flash: { in: 0.045, out: 0.5 }
